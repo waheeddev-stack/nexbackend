@@ -129,5 +129,13 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
+userrouter.get("/products", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM products ORDER BY created_at DESC");
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 export default userrouter;
