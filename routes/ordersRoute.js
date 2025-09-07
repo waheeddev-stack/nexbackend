@@ -9,9 +9,8 @@ const router = express.Router();
  */
 router.post("/addorders", verifyToken, async (req, res) => {
   try {
-    const { shopkeeper_id, items } = req.body;
-    // Expected items structure: [{product_id, quantity, price}]
-    const user_id = req.user.id;
+    const { items } = req.body;
+    const user_id = req.user.id; // from token
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "No items provided" });
@@ -22,8 +21,8 @@ router.post("/addorders", verifyToken, async (req, res) => {
 
     // Insert order
     const [orderResult] = await pool.query(
-      "INSERT INTO orders (user_id, shopkeeper_id, total_amount, status) VALUES (?, ?, ?, ?)",
-      [user_id, shopkeeper_id, total, 'Pending']
+      "INSERT INTO orders (user_id, total_amount, status) VALUES (?, ?, ?)",
+      [user_id, total, "Pending"] // Default ENUM
     );
 
     const orderId = orderResult.insertId;
@@ -44,14 +43,16 @@ router.post("/addorders", verifyToken, async (req, res) => {
 });
 
 /**
- * Update order status (Shopkeeper only)
+ * Update order status (Admin/Shopkeeper role in future)
  */
 router.put("/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
 
-    if (!["pending", "confirmed", "shipped", "delivered", "cancelled"].includes(status)) {
+    // Match ENUM values in DB
+    const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
 
@@ -65,18 +66,15 @@ router.put("/:id/status", verifyToken, async (req, res) => {
 });
 
 /**
- * Get all orders for shopkeeper
+ * Get all orders (Admin / Dashboard)
  */
-router.get("/shopkeeper/:id", verifyToken, async (req, res) => {
+router.get("/", verifyToken, async (req, res) => {
   try {
-    const { id } = req.params;
     const [orders] = await pool.query(
-      `SELECT o.*, c.name AS customer_name
+      `SELECT o.*, u.name AS customer_name
        FROM orders o
-       JOIN customers c ON o.customer_id = c.id
-       WHERE o.shopkeeper_id = ?
-       ORDER BY o.created_at DESC`,
-      [id]
+       JOIN users u ON o.user_id = u.id
+       ORDER BY o.created_at DESC`
     );
     res.json({ success: true, orders });
   } catch (err) {
@@ -85,17 +83,23 @@ router.get("/shopkeeper/:id", verifyToken, async (req, res) => {
   }
 });
 
+//  add Shopkeepers orders fetching
+
+
+
+
+
 /**
- * Get all orders for customer
+ * Get all orders for a specific customer
  */
 router.get("/customer/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const [orders] = await pool.query(
-      `SELECT o.*, s.shop_name
+      `SELECT o.*, u.name AS customer_name
        FROM orders o
-       JOIN shopkeepers s ON o.shopkeeper_id = s.id
-       WHERE o.customer_id = ?
+       JOIN users u ON o.user_id = u.id
+       WHERE o.user_id = ?
        ORDER BY o.created_at DESC`,
       [id]
     );
