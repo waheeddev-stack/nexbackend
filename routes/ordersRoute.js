@@ -7,10 +7,11 @@ const router = express.Router();
 /**
  * Create new order (Customer)
  */
-router.post("/", verifyToken, async (req, res) => {
+router.post("/addorders", verifyToken, async (req, res) => {
   try {
-    const { shopkeeper_id, items } = req.body; // items = [{product_id, quantity, price}]
-    const customer_id = req.user.id;
+    const { shopkeeper_id, items } = req.body;
+    // Expected items structure: [{product_id, quantity, price}]
+    const user_id = req.user.id;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "No items provided" });
@@ -21,8 +22,8 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Insert order
     const [orderResult] = await pool.query(
-      "INSERT INTO orders (customer_id, shopkeeper_id, total_amount) VALUES (?, ?, ?)",
-      [customer_id, shopkeeper_id, total]
+      "INSERT INTO orders (user_id, shopkeeper_id, total_amount, status) VALUES (?, ?, ?, ?)",
+      [user_id, shopkeeper_id, total, 'Pending']
     );
 
     const orderId = orderResult.insertId;
