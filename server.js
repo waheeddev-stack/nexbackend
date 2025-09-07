@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
-import router from "./routes/ordersRoute.js";
+import ordersRouter from "./routes/ordersRoute.js";
 
 
 dotenv.config();
@@ -19,7 +19,7 @@ app.use(express.json());
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
-app.use("/api/orders", router);
+app.use("/api/orders", ordersRouter);
 
 
 // Default route

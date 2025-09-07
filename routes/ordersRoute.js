@@ -2,12 +2,12 @@ import express from "express";
 import pool from "../config/db.js";
 import { verifyToken } from "../middleware/auth.js";
 
-const router = express.Router();
+const ordersRouter = express.Router();
 
 /**
- * Create new order (Customer)
+Create new order (Customer)
  */
-router.post("/addorders", verifyToken, async (req, res) => {
+ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   try {
     const { items } = req.body;
     const user_id = req.user.id; // from token
@@ -45,7 +45,7 @@ router.post("/addorders", verifyToken, async (req, res) => {
 /**
  * Update order status (Admin/Shopkeeper role in future)
  */
-router.put("/:id/status", verifyToken, async (req, res) => {
+ordersRouter.put("/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -68,7 +68,7 @@ router.put("/:id/status", verifyToken, async (req, res) => {
 /**
  * Get all orders (Admin / Dashboard)
  */
-router.get("/", verifyToken, async (req, res) => {
+ordersRouter.get("/", verifyToken, async (req, res) => {
   try {
     const [orders] = await pool.query(
       `SELECT o.*, u.name AS customer_name
@@ -85,14 +85,10 @@ router.get("/", verifyToken, async (req, res) => {
 
 //  add Shopkeepers orders fetching
 
-
-
-
-
 /**
  * Get all orders for a specific customer
  */
-router.get("/customer/:id", verifyToken, async (req, res) => {
+ordersRouter.get("/customer/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const [orders] = await pool.query(
@@ -110,4 +106,4 @@ router.get("/customer/:id", verifyToken, async (req, res) => {
   }
 });
 
-export default router;
+export default ordersRouter;
