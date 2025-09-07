@@ -1,3 +1,5 @@
+// PLACE ORDER (user checkout)
+// GET all orders for users
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -138,4 +140,43 @@ userrouter.get("/products", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+userrouter.get("/orders", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM orders ORDER BY created_at DESC");
+    res.json({ success: true, orders: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+userrouter.post("/orders", async (req, res) => {
+  try {
+    const { user_id, products, total, address } = req.body;
+    if (!user_id || !Array.isArray(products) || products.length === 0 || !total || !address) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Insert order
+    const [orderResult] = await pool.query(
+      "INSERT INTO orders (user_id, total, address, status) VALUES (?, ?, ?, ?)",
+      [user_id, total, address, "Pending"]
+    );
+    const orderId = orderResult.insertId;
+
+    // Insert order items
+    for (const item of products) {
+      await pool.query(
+        "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
+        [orderId, item.product_id, item.quantity, item.price]
+      );
+    }
+
+    res.json({ success: true, order_id: orderId, message: "Order placed successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default userrouter;
