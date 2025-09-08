@@ -112,66 +112,64 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 	}
 });
 
-// Add a new product with image upload
+// Add a new product with image upload (category as string)
 adminRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
-	const { name, price, stock, description } = req.body;
-	if (!name || !price) {
-		return res.status(400).json({ message: "Name and price are required" });
-	}
-	let imageUrl = null;
-	try {
-		if (req.file) {
-			// Upload image to Cloudinary
-			const streamUpload = () =>
-				new Promise((resolve, reject) => {
-					const stream = cloudinary.uploader.upload_stream((error, result) => {
-						if (result) resolve(result);
-						else reject(error);
-					});
-					streamifier.createReadStream(req.file.buffer).pipe(stream);
-				});
-			const result = await streamUpload();
-			imageUrl = result.secure_url;
-		}
-		const [dbResult] = await pool.query(
-			"INSERT INTO products (name, price, stock, description, image) VALUES (?, ?, ?, ?, ?)",
-			[name, price, stock || 0, description || '', imageUrl]
-		);
-		res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl });
-	} catch (err) {
-		res.status(500).json({ message: "Server error", error: err.message });
-	}
+  const { name, price, stock, description, category } = req.body;
+  if (!name || !price) {
+    return res.status(400).json({ message: "Name and price are required" });
+  }
+  let imageUrl = null;
+  try {
+    if (req.file) {
+      const streamUpload = () =>
+        new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream((error, result) => {
+            if (result) resolve(result);
+            else reject(error);
+          });
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+      const result = await streamUpload();
+      imageUrl = result.secure_url;
+    }
+    const [dbResult] = await pool.query(
+      "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, price, stock || 0, description || '', imageUrl, category || null]
+    );
+    res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl, category });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 });
 
-// Update a product with optional image upload
+// Update a product (category as string)
 adminRouter.put("/products/:id", verifyToken, upload.single("image"), async (req, res) => {
-	const { name, price, stock, description } = req.body;
-	let imageUrl = req.body.image || null;
-	try {
-		if (req.file) {
-			// Upload new image to Cloudinary
-			const streamUpload = () =>
-				new Promise((resolve, reject) => {
-					const stream = cloudinary.uploader.upload_stream((error, result) => {
-						if (result) resolve(result);
-						else reject(error);
-					});
-					streamifier.createReadStream(req.file.buffer).pipe(stream);
-				});
-			const result = await streamUpload();
-			imageUrl = result.secure_url;
-		}
-		const [dbResult] = await pool.query(
-			"UPDATE products SET name=?, price=?, stock=?, description=?, image=? WHERE id=?",
-			[name, price, stock, description, imageUrl, req.params.id]
-		);
-		if (dbResult.affectedRows === 0) {
-			return res.status(404).json({ message: "Product not found" });
-		}
-		res.json({ message: "Product updated" });
-	} catch (err) {
-		res.status(500).json({ message: "Server error", error: err.message });
-	}
+  const { name, price, stock, description, category } = req.body;
+  let imageUrl = req.body.image || null;
+  try {
+    if (req.file) {
+      const streamUpload = () =>
+        new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream((error, result) => {
+            if (result) resolve(result);
+            else reject(error);
+          });
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+      const result = await streamUpload();
+      imageUrl = result.secure_url;
+    }
+    const [dbResult] = await pool.query(
+      "UPDATE products SET name=?, price=?, stock=?, description=?, image=?, category=? WHERE id=?",
+      [name, price, stock, description, imageUrl, category || null, req.params.id]
+    );
+    if (dbResult.affectedRows === 0) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+    res.json({ message: "Product updated" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 });
 
 // Delete a product
@@ -185,6 +183,66 @@ adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
 	} catch (err) {
 		res.status(500).json({ message: "Server error", error: err.message });
 	}
+});
+
+// Get all categories
+adminRouter.get("/categories", verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM categories ORDER BY created_at DESC");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Add a new category
+adminRouter.post("/categories", verifyToken, async (req, res) => {
+  const { name, description } = req.body;
+  if (!name) {
+    return res.status(400).json({ message: "Category name is required" });
+  }
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO categories (name, description) VALUES (?, ?)",
+      [name, description || '']
+    );
+    res.status(201).json({ id: result.insertId, name, description });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Update a category
+adminRouter.put("/categories/:id", verifyToken, async (req, res) => {
+  const { name, description } = req.body;
+  if (!name) {
+    return res.status(400).json({ message: "Category name is required" });
+  }
+  try {
+    const [result] = await pool.query(
+      "UPDATE categories SET name=?, description=? WHERE id=?",
+      [name, description || '', req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+    res.json({ message: "Category updated" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Delete a category
+adminRouter.delete("/categories/:id", verifyToken, async (req, res) => {
+  try {
+    const [result] = await pool.query("DELETE FROM categories WHERE id=?", [req.params.id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+    res.json({ message: "Category deleted" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 });
 
 // Get admin by ID (protected) - keep this at the end
@@ -337,67 +395,64 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 	}
 });
 
-// Add a new product with image upload
+// Add a new product with image upload (category as string)
 adminRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
-	const { name, price, stock, description } = req.body;
-	if (!name || !price) {
-		return res.status(400).json({ message: "Name and price are required" });
-	}
-	let imageUrl = null;
-	try {
-		if (req.file) {
-			// Upload image to Cloudinary
-			const streamUpload = () =>
-				new Promise((resolve, reject) => {
-					const stream = cloudinary.uploader.upload_stream((error, result) => {
-						if (result) resolve(result);
-						else reject(error);
-					});
-					streamifier.createReadStream(req.file.buffer).pipe(stream);
-				});
-			const result = await streamUpload();
-			imageUrl = result.secure_url;
-		}
-		const [dbResult] = await pool.query(
-			"INSERT INTO products (name, price, stock, description, image) VALUES (?, ?, ?, ?, ?)",
-			[name, price, stock || 0, description || '', imageUrl]
-		);
-		res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl });
-	} catch (err) {
-		res.status(500).json({ message: "Server error", error: err.message });
-	}
+  const { name, price, stock, description, category } = req.body;
+  if (!name || !price) {
+    return res.status(400).json({ message: "Name and price are required" });
+  }
+  let imageUrl = null;
+  try {
+    if (req.file) {
+      const streamUpload = () =>
+        new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream((error, result) => {
+            if (result) resolve(result);
+            else reject(error);
+          });
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+      const result = await streamUpload();
+      imageUrl = result.secure_url;
+    }
+    const [dbResult] = await pool.query(
+      "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, price, stock || 0, description || '', imageUrl, category || null]
+    );
+    res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl, category });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 });
 
-// Update a product
-// Update a product with optional image upload
+// Update a product (category as string)
 adminRouter.put("/products/:id", verifyToken, upload.single("image"), async (req, res) => {
-	const { name, price, stock, description } = req.body;
-	let imageUrl = req.body.image || null;
-	try {
-		if (req.file) {
-			// Upload new image to Cloudinary
-			const streamUpload = () =>
-				new Promise((resolve, reject) => {
-					const stream = cloudinary.uploader.upload_stream((error, result) => {
-						if (result) resolve(result);
-						else reject(error);
-					});
-					streamifier.createReadStream(req.file.buffer).pipe(stream);
-				});
-			const result = await streamUpload();
-			imageUrl = result.secure_url;
-		}
-		const [dbResult] = await pool.query(
-			"UPDATE products SET name=?, price=?, stock=?, description=?, image=? WHERE id=?",
-			[name, price, stock, description, imageUrl, req.params.id]
-		);
-		if (dbResult.affectedRows === 0) {
-			return res.status(404).json({ message: "Product not found" });
-		}
-		res.json({ message: "Product updated" });
-	} catch (err) {
-		res.status(500).json({ message: "Server error", error: err.message });
-	}
+  const { name, price, stock, description, category } = req.body;
+  let imageUrl = req.body.image || null;
+  try {
+    if (req.file) {
+      const streamUpload = () =>
+        new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream((error, result) => {
+            if (result) resolve(result);
+            else reject(error);
+          });
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+      const result = await streamUpload();
+      imageUrl = result.secure_url;
+    }
+    const [dbResult] = await pool.query(
+      "UPDATE products SET name=?, price=?, stock=?, description=?, image=?, category=? WHERE id=?",
+      [name, price, stock, description, imageUrl, category || null, req.params.id]
+    );
+    if (dbResult.affectedRows === 0) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+    res.json({ message: "Product updated" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 });
 
 // Delete a product
