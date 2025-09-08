@@ -35,6 +35,11 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       );
     }
 
+    // 🔥 Emit event to shopkeepers room
+    if (req.io) {
+      req.io.emit("newOrder", { orderId, user_id, total });
+    }
+
     res.status(201).json({ success: true, message: "Order created", orderId });
   } catch (err) {
     console.error(err);
@@ -43,27 +48,67 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 });
 
 /**
- * Update order status (Admin/Shopkeeper role in future)
+ * Update order status (Shopkeeper role in future)
  */
-ordersRouter.put("/:id/status", verifyToken, async (req, res) => {
+ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
 
-    // Match ENUM values in DB
     const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: "Invalid status" });
+      return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
-    await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, id]);
+    const [result] = await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, id]);
 
-    res.json({ success: true, message: `Order status updated to ${status}` });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (req.io) {
+      req.io.emit("orderStatusUpdate", { orderId: id, status });
+    }
+
+    res.json({ success: true, message: `Order status updated to ${status}`, status });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// ✅ Get all orders of the logged-in user
+ordersRouter.get("/myorders", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id; // from verifyToken middleware
+
+    const [orders] = await pool.query(
+      `SELECT o.id, o.status, o.total_amount, o.created_at,
+              JSON_ARRAYAGG(
+                JSON_OBJECT(
+                  'id', oi.product_id,
+                  'quantity', oi.quantity,
+                  'price', oi.price,
+                  'name', p.name,
+                  'image', p.image
+                )
+              ) AS items
+       FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       WHERE o.user_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [userId]
+    );
+
+    res.json({ success: true, orders });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to fetch orders" });
+  }
+});
+
 
 /**
  * Get all orders (Admin / Dashboard)
