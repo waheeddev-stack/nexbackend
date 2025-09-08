@@ -55,6 +55,11 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
     const { status } = req.body;
     const { id } = req.params;
 
+    // Validate order ID
+    if (!id || isNaN(Number(id))) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+      console.log("Invalid order ID");
+    }
     const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
     if (!validStatuses.includes(status)) {
       return res
@@ -142,23 +147,60 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
  * Get all live orders for shopkeepers
  * Returns orders with status "Pending" or "Processing"
  */
+// ordersRouter.get("/live", verifyToken, async (req, res) => {
+//   try {
+//     // Optional: check if the user has shopkeeper role
+//     // if (req.user.role !== "shopkeeper") return res.status(403).json({ message: "Forbidden" });
+
+//     const [orders] = await pool.query(
+//       `SELECT o.id AS order_id, o.status, o.total_amount, o.created_at,
+//               JSON_ARRAYAGG(
+//                 JSON_OBJECT(
+//                   'id', oi.product_id,
+//                   'name', p.name,
+//                   'quantity', oi.quantity,
+//                   'price', oi.price,
+//                   'image', p.image
+//                 )
+//               ) AS items,
+//               u.name AS customer_name, u.address AS delivery_address
+//        FROM orders o
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN products p ON oi.product_id = p.id
+//        JOIN users u ON o.user_id = u.id
+//        WHERE o.status IN ('Pending', 'Processing')
+//        GROUP BY o.id
+//        ORDER BY o.created_at ASC`
+//     );
+
+//     res.json({ success: true, orders });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
-    // Optional: check if the user has shopkeeper role
-    // if (req.user.role !== "shopkeeper") return res.status(403).json({ message: "Forbidden" });
 
     const [orders] = await pool.query(
-      `SELECT o.id AS order_id, o.status, o.total_amount, o.created_at,
-              JSON_ARRAYAGG(
-                JSON_OBJECT(
-                  'id', oi.product_id,
-                  'name', p.name,
-                  'quantity', oi.quantity,
-                  'price', oi.price,
-                  'image', p.image
-                )
-              ) AS items,
-              u.name AS customer_name, u.address AS delivery_address
+      `SELECT 
+          o.id AS order_id, 
+          o.status, 
+          o.total_amount, 
+          o.created_at,
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', oi.product_id,
+              'name', p.name,
+              'quantity', oi.quantity,
+              'price', oi.price,
+              'image', p.image
+            )
+          ) AS items,
+          u.name AS customer_name, 
+          u.address AS delivery_address,
+          u.phone AS customer_phone   -- ✅ Added phone number
        FROM orders o
        JOIN order_items oi ON o.id = oi.order_id
        JOIN products p ON oi.product_id = p.id
@@ -174,6 +216,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 /**
  * Get all orders for a specific customer
