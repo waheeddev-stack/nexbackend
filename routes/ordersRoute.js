@@ -226,7 +226,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
        JOIN order_items oi ON o.id = oi.order_id
        JOIN products p ON oi.product_id = p.id
        JOIN users u ON o.user_id = u.id
-       WHERE o.status IN ('Pending', 'Processing')
+       WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
        GROUP BY o.id
        ORDER BY o.created_at ASC`
     );
