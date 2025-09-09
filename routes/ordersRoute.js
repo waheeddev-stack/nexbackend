@@ -1,8 +1,25 @@
 import express from "express";
 import pool from "../config/db.js";
 import { verifyToken } from "../middleware/auth.js";
+import axios from "axios";
 
 const ordersRouter = express.Router();
+
+// Helper: Send Expo push notification
+async function sendExpoNotification(expoPushToken, title, body, data = {}) {
+  if (!expoPushToken) return;
+  try {
+    await axios.post("https://exp.host/--/api/v2/push/send", {
+      to: expoPushToken,
+      sound: "default",
+      title,
+      body,
+      data,
+    });
+  } catch (err) {
+    console.error("Expo notification error:", err.message);
+  }
+}
 
 /**
 Create new order (Customer)
@@ -92,6 +109,21 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
     }
 
+    // 🔔 Push notification to all shopkeepers (with expo_push_token)
+    const [shopkeepers] = await pool.query(
+      "SELECT expo_push_token FROM shopkeepers WHERE expo_push_token IS NOT NULL"
+    );
+    for (const sk of shopkeepers) {
+      if (sk.expo_push_token) {
+        await sendExpoNotification(
+          sk.expo_push_token,
+          "New Order Placed",
+          `A new order #${orderId} has been placed!`,
+          { orderId }
+        );
+      }
+    }
+
     res.status(201).json({ success: true, message: "Order created", orderId });
   } catch (err) {
     console.error("Error creating order:", err);
@@ -133,6 +165,20 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
+    }
+
+    // Fetch user's Expo push token
+    const [[user]] = await pool.query(
+      `SELECT u.expo_push_token, u.name, u.email FROM users u JOIN orders o ON u.id = o.user_id WHERE o.id = ?`,
+      [orderId]
+    );
+    if (user && user.expo_push_token) {
+      await sendExpoNotification(
+        user.expo_push_token,
+        "Order Status Updated",
+        `Your order #${orderId} status is now ${status}`,
+        { orderId, status }
+      );
     }
 
     // Emit status update to all connected clients

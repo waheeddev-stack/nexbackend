@@ -7,5 +7,6 @@ CREATE TABLE shopkeepers (
   phone VARCHAR(20),
   address VARCHAR(255),
   img VARCHAR(255),
+  expo_push_token VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

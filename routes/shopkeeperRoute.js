@@ -5,6 +5,7 @@ import pool from "../config/db.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
+import {verifyToken} from "../middleware/auth.js";
 
 dotenv.config();
 
@@ -122,6 +123,26 @@ shopkeeperRouter.post("/signin", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
+
+shopkeeperRouter.put('/push-token', verifyToken, async (req, res) => {
+  try {
+    const { expo_push_token } = req.body;
+    const shopkeeperId = req.user.id;
+
+    await pool.query('UPDATE shopkeepers SET expo_push_token = ? WHERE id = ?', [
+      expo_push_token,
+      shopkeeperId,
+    ]);
+
+    res.json({ success: true, message: 'Shopkeeper push token updated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 
 // SHOPKEEPER PROFILE
 shopkeeperRouter.get("/profile/:id", async (req, res) => {
