@@ -178,37 +178,6 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   }
 });
 
-// ordersRouter.get("/myorders", verifyToken, async (req, res) => {
-//   try {
-//     const userId = req.user.id; // from verifyToken middleware
-
-//     const [orders] = await pool.query(
-//       `SELECT o.id, o.status, o.total_amount, o.created_at,
-//               JSON_ARRAYAGG(
-//                 JSON_OBJECT(
-//                   'id', oi.product_id,
-//                   'quantity', oi.quantity,
-//                   'price', oi.price,
-//                   'name', p.name,
-//                   'image', p.image
-//                 )
-//               ) AS items
-//        FROM orders o
-//        JOIN order_items oi ON o.id = oi.order_id
-//        JOIN products p ON oi.product_id = p.id
-//        WHERE o.user_id = ?
-//        GROUP BY o.id
-//        ORDER BY o.created_at DESC`,
-//       [userId]
-//     );
-
-//     res.json({ success: true, orders });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ success: false, message: "Failed to fetch orders" });
-//   }
-// });
-
 
 
 ordersRouter.get("/myorders", verifyToken, async (req, res) => {
