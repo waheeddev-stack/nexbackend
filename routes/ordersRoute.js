@@ -165,6 +165,27 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
     // Emit status update to all connected clients
     if (req.io) {
       req.io.emit("orderStatusUpdate", { orderId, status });
+
+      // Optional: emit updated dashboard stats
+      const [[{ totalOrders }]] = await pool.query(
+        "SELECT COUNT(*) AS totalOrders FROM orders"
+      );
+      const [[{ totalRevenue }]] = await pool.query(
+        "SELECT SUM(total_amount) AS totalRevenue FROM orders"
+      );
+      const [[{ totalUsers }]] = await pool.query(
+        "SELECT COUNT(*) AS totalUsers FROM users"
+      );
+      const [ordersByStatus] = await pool.query(
+        "SELECT status, COUNT(*) AS count FROM orders GROUP BY status"
+      );
+
+      req.io.emit("dashboardStatsUpdate", {
+        totalOrders,
+        totalRevenue,
+        totalUsers,
+        ordersByStatus,
+      });
     }
 
     res.json({

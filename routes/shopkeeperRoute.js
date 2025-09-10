@@ -5,10 +5,45 @@ import pool from "../config/db.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
+import verifyToken from "../middleware/auth.js";
 
 dotenv.config();
 
 const shopkeeperRouter = express.Router();
+
+
+
+shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
+  try {
+    const [[topProduct]] = await pool.query(`
+      SELECT p.name, SUM(oi.quantity) AS sold
+      FROM order_items oi
+      JOIN products p ON oi.product_id = p.id
+      GROUP BY oi.product_id
+      ORDER BY sold DESC
+      LIMIT 1
+    `);
+
+    const [[totalSales]] = await pool.query("SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Delivered'");
+    const [[totalDelivered]] = await pool.query("SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Delivered'");
+    const [[totalPending]] = await pool.query("SELECT COUNT(*) AS totalPending FROM orders WHERE status='Pending'");
+    const [[totalCancelled]] = await pool.query("SELECT COUNT(*) AS totalCancelled FROM orders WHERE status='Cancelled'");
+    const [[totalCompleted]] = await pool.query("SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Delivered','Cancelled')");
+
+    res.json({
+      success: true,
+      topSellingProduct: topProduct || { name: "-", sold: 0 },
+      totalSales: totalSales?.totalSales || 0,
+      totalDelivered: totalDelivered?.totalDelivered || 0,
+      totalPending: totalPending?.totalPending || 0,
+      totalCancelled: totalCancelled?.totalCancelled || 0,
+      totalCompleted: totalCompleted?.totalCompleted || 0
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // SHOPKEEPER REGISTER
 shopkeeperRouter.post("/signup", async (req, res) => {
