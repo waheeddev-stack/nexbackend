@@ -8,6 +8,14 @@ const ordersRouter = express.Router();
 Create new order (Customer)
  */
 
+
+function calculateCredits(amount) {
+  if (amount >= 100 && amount <= 300) return 10;
+  if (amount > 300 && amount <= 500) return 25;
+  if (amount > 500) return 50;
+  return 0;
+}
+
 ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   try {
     const { items } = req.body;
@@ -17,18 +25,21 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "No items provided" });
     }
 
-    // Calculate total
+    // ✅ Calculate total
     const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-    // Insert order
+    // ✅ Calculate earned credits
+    const earnedCredits = calculateCredits(total);
+
+    // ✅ Insert order (save earned credits too)
     const [orderResult] = await pool.query(
-      "INSERT INTO orders (user_id, total_amount, status) VALUES (?, ?, ?)",
-      [user_id, total, "Pending"]
+      "INSERT INTO orders (user_id, total_amount, status, credits_earned) VALUES (?, ?, ?, ?)",
+      [user_id, total, "Pending", earnedCredits]
     );
 
     const orderId = orderResult.insertId;
 
-    // Insert order items
+    // ✅ Insert order items
     for (let item of items) {
       await pool.query(
         "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
@@ -36,12 +47,21 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       );
     }
 
-    // Fetch full order details
+    // ✅ Update user's store credits balance
+    if (earnedCredits > 0) {
+      await pool.query(
+        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+        [earnedCredits, user_id]
+      );
+    }
+
+    // ✅ Fetch full order details
     const [orderDetails] = await pool.query(
       `SELECT 
           o.id AS orderId, 
           o.total_amount, 
           o.status, 
+          o.credits_earned,
           o.created_at,
           u.id AS customer_id, 
           u.name AS customer_name, 
@@ -61,7 +81,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       [orderId]
     );
 
-    // Group items into a single order object
+    // ✅ Group items into a single order object
     const orderPayload = {
       orderId,
       customer: {
@@ -72,6 +92,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         address: orderDetails[0].delivery_address,
       },
       total: orderDetails[0].total_amount,
+      credits_earned: earnedCredits,
+      credits_value: earnedCredits * 0.5, // ✅ 1 credit = 0.5 INR
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
       items: orderDetails.map((row) => ({
@@ -83,7 +105,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       })),
     };
 
-    // Emit live update
+    // ✅ Emit live update
     if (req.io) {
       // To shopkeepers (all)
       req.io.emit("newOrder", orderPayload);
@@ -92,12 +114,17 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
     }
 
-    res.status(201).json({ success: true, message: "Order created", orderId });
+    res.status(201).json({
+      success: true,
+      message: "Order created & credits awarded",
+      order: orderPayload,
+    });
   } catch (err) {
     console.error("Error creating order:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 /**
  * Update order status (Shopkeeper role in future)
@@ -151,12 +178,45 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   }
 });
 
+// ordersRouter.get("/myorders", verifyToken, async (req, res) => {
+//   try {
+//     const userId = req.user.id; // from verifyToken middleware
+
+//     const [orders] = await pool.query(
+//       `SELECT o.id, o.status, o.total_amount, o.created_at,
+//               JSON_ARRAYAGG(
+//                 JSON_OBJECT(
+//                   'id', oi.product_id,
+//                   'quantity', oi.quantity,
+//                   'price', oi.price,
+//                   'name', p.name,
+//                   'image', p.image
+//                 )
+//               ) AS items
+//        FROM orders o
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN products p ON oi.product_id = p.id
+//        WHERE o.user_id = ?
+//        GROUP BY o.id
+//        ORDER BY o.created_at DESC`,
+//       [userId]
+//     );
+
+//     res.json({ success: true, orders });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ success: false, message: "Failed to fetch orders" });
+//   }
+// });
+
+
+
 ordersRouter.get("/myorders", verifyToken, async (req, res) => {
   try {
-    const userId = req.user.id; // from verifyToken middleware
+    const userId = req.user.id;
 
     const [orders] = await pool.query(
-      `SELECT o.id, o.status, o.total_amount, o.created_at,
+      `SELECT o.id, o.status, o.total_amount, o.credits_earned,
               JSON_ARRAYAGG(
                 JSON_OBJECT(
                   'id', oi.product_id,
@@ -175,7 +235,13 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
       [userId]
     );
 
-    res.json({ success: true, orders });
+    // Optional: calculate credits value (e.g., 1 credit = 0.5 INR)
+    const ordersWithCreditsValue = orders.map((o) => ({
+      ...o,
+      credits_value: o.credits_earned * 0.5,
+    }));
+
+    res.json({ success: true, orders: ordersWithCreditsValue });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to fetch orders" });
