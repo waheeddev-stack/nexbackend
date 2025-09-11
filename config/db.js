@@ -1,18 +1,23 @@
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import fs from "fs";
 
 dotenv.config();
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || "localhost",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASS || "960901",
-  database: process.env.DB_NAME || "myappdb",
+  host: process.env.DB_HOST,     // TiDB host
+  port: process.env.DB_PORT || 4000, // TiDB default port
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  ssl: {
+    ca: fs.readFileSync("/etc/secrets/ca.pem"), // ✅ secure CA file
+    rejectUnauthorized: true, // extra safety
+  },
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
-
 (async () => {
   try {
     const connection = await pool.getConnection();
