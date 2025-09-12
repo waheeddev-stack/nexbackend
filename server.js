@@ -16,8 +16,7 @@ const server = http.createServer(app); // ⬅ create server
 const io = new Server(server, {
   cors: {
     origin: [
-      "http://10.60.26.149:8081", // Shopkeeper app
-      "http://10.60.26.149:8082", // Customer app
+       "*"
     ],
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
