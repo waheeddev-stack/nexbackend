@@ -285,34 +285,34 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
 
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
-    const [orders] = await pool.query(
-      `SELECT 
-          o.id AS order_id, 
-          o.status, 
-          o.total_amount, 
-          o.created_at,
-          COALESCE(
-            JSON_ARRAYAGG(
-              JSON_OBJECT(
-                'id', oi.product_id,
-                'name', p.name,
-                'quantity', oi.quantity,
-                'price', oi.price,
-                'image', p.image
-              )
-            ), JSON_ARRAY()
-          ) AS items,
-          u.name AS customer_name, 
-          u.address AS delivery_address,
-          u.phone AS customer_phone
-       FROM orders o
-       JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
-       JOIN users u ON o.user_id = u.id
-       WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
-       GROUP BY o.id
-       ORDER BY o.created_at ASC`
-    );
+const [orders] = await pool.query(
+  `SELECT 
+      o.id AS order_id, 
+      o.status, 
+      o.total_amount, 
+      o.created_at,
+      COALESCE(
+        JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'id', oi.product_id,
+            'name', p.name,
+            'quantity', oi.quantity,
+            'price', oi.price,
+            'image', p.image
+          )
+        ), JSON_ARRAY()
+      ) AS items,
+      ANY_VALUE(u.name) AS customer_name, 
+      ANY_VALUE(u.address) AS delivery_address,
+      ANY_VALUE(u.phone) AS customer_phone
+   FROM orders o
+   JOIN order_items oi ON o.id = oi.order_id
+   JOIN products p ON oi.product_id = p.id
+   JOIN users u ON o.user_id = u.id
+   WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
+   GROUP BY o.id
+   ORDER BY o.created_at ASC`
+);
 
     res.json({ success: true, orders });
   } catch (err) {
