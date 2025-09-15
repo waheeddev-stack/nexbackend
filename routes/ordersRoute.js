@@ -15,13 +15,128 @@ function calculateCredits(amount) {
   return 0;
 }
 
+// ordersRouter.post("/addorders", verifyToken, async (req, res) => {
+//   try {
+//     const { items } = req.body;
+//     const user_id = req.user.id;
+
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({ message: "No items provided" });
+//     }
+
+//     // ✅ Calculate total
+//     const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+//     // ✅ Calculate earned credits
+//     const earnedCredits = calculateCredits(total);
+
+//     // ✅ Insert order (save earned credits too)
+//     const [orderResult] = await pool.query(
+//       "INSERT INTO orders (user_id, total_amount, status, credits_earned) VALUES (?, ?, ?, ?)",
+//       [user_id, total, "Pending", earnedCredits]
+//     );
+
+//     const orderId = orderResult.insertId;
+
+//     // ✅ Insert order items
+//     for (let item of items) {
+//       await pool.query(
+//         "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
+//         [orderId, item.product_id, item.quantity, item.price]
+//       );
+//     }
+
+//     // ✅ Update user's store credits balance
+//     if (earnedCredits > 0) {
+//       await pool.query(
+//         "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+//         [earnedCredits, user_id]
+//       );
+//     }
+
+//     // ✅ Fetch full order details
+//     const [orderDetails] = await pool.query(
+//       `SELECT 
+//           o.id AS orderId, 
+//           o.total_amount, 
+//           o.status, 
+//           o.credits_earned,
+//           o.created_at,
+//           u.id AS customer_id, 
+//           u.name AS customer_name, 
+//           u.email AS customer_email,
+//           u.phone AS customer_phone,
+//           u.address AS delivery_address,
+//           oi.product_id, 
+//           p.name AS product_name, 
+//           p.image AS product_image,
+//           oi.quantity, 
+//           oi.price
+//        FROM orders o
+//        JOIN users u ON o.user_id = u.id
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN products p ON oi.product_id = p.id
+//        WHERE o.id = ?`,
+//       [orderId]
+//     );
+
+//     // ✅ Group items into a single order object
+//     const orderPayload = {
+//       orderId,
+//       customer: {
+//         id: orderDetails[0].customer_id,
+//         name: orderDetails[0].customer_name,
+//         email: orderDetails[0].customer_email,
+//         phone: orderDetails[0].customer_phone,
+//         address: orderDetails[0].delivery_address,
+//       },
+//       total: orderDetails[0].total_amount,
+//       credits_earned: earnedCredits,
+//       credits_value: earnedCredits * 0.5, // ✅ 1 credit = 0.5 INR
+//       status: orderDetails[0].status,
+//       created_at: orderDetails[0].created_at,
+//       items: orderDetails.map((row) => ({
+//         product_id: row.product_id,
+//         product_name: row.product_name,
+//         product_image: row.product_image,
+//         quantity: row.quantity,
+//         price: row.price,
+//       })),
+//     };
+
+//     // ✅ Emit live update
+//     if (req.io) {
+//       // To shopkeepers (all)
+//       req.io.emit("newOrder", orderPayload);
+
+//       // To the specific customer
+//       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Order created & credits awarded",
+//       order: orderPayload,
+//     });
+//   } catch (err) {
+//     console.error("Error creating order:", err);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+/* Create new order (Customer) with location
+ */
 ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   try {
-    const { items } = req.body;
+    const { items, latitude, longitude } = req.body;
     const user_id = req.user.id;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ message: "No items provided" });
+    }
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: "Delivery location required" });
     }
 
     // ✅ Calculate total
@@ -30,10 +145,12 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     // ✅ Calculate earned credits
     const earnedCredits = calculateCredits(total);
 
-    // ✅ Insert order (save earned credits too)
+    // ✅ Insert order with location
     const [orderResult] = await pool.query(
-      "INSERT INTO orders (user_id, total_amount, status, credits_earned) VALUES (?, ?, ?, ?)",
-      [user_id, total, "Pending", earnedCredits]
+      `INSERT INTO orders 
+       (user_id, total_amount, status, credits_earned, latitude, longitude) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [user_id, total, "Pending", earnedCredits, latitude, longitude]
     );
 
     const orderId = orderResult.insertId;
@@ -41,7 +158,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     // ✅ Insert order items
     for (let item of items) {
       await pool.query(
-        "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
+        `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)`,
         [orderId, item.product_id, item.quantity, item.price]
       );
     }
@@ -61,6 +178,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           o.total_amount, 
           o.status, 
           o.credits_earned,
+          o.latitude,
+          o.longitude,
           o.created_at,
           u.id AS customer_id, 
           u.name AS customer_name, 
@@ -92,9 +211,11 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       },
       total: orderDetails[0].total_amount,
       credits_earned: earnedCredits,
-      credits_value: earnedCredits * 0.5, // ✅ 1 credit = 0.5 INR
+      credits_value: earnedCredits * 0.5, // 1 credit = 0.5 INR
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
+      latitude: orderDetails[0].latitude,
+      longitude: orderDetails[0].longitude,
       items: orderDetails.map((row) => ({
         product_id: row.product_id,
         product_name: row.product_name,
@@ -106,11 +227,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     // ✅ Emit live update
     if (req.io) {
-      // To shopkeepers (all)
-      req.io.emit("newOrder", orderPayload);
-
-      // To the specific customer
-      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+      req.io.emit("newOrder", orderPayload); // To all shopkeepers
+      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload); // To the customer
     }
 
     res.status(201).json({
@@ -123,6 +241,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 /**
  * Update order status (Shopkeeper role in future)
