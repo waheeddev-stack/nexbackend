@@ -11,8 +11,6 @@ dotenv.config();
 
 const shopkeeperRouter = express.Router();
 
-
-
 shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
   try {
     const [[topProduct]] = await pool.query(`
@@ -24,11 +22,21 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
       LIMIT 1
     `);
 
-    const [[totalSales]] = await pool.query("SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Delivered'");
-    const [[totalDelivered]] = await pool.query("SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Delivered'");
-    const [[totalPending]] = await pool.query("SELECT COUNT(*) AS totalPending FROM orders WHERE status='Pending'");
-    const [[totalCancelled]] = await pool.query("SELECT COUNT(*) AS totalCancelled FROM orders WHERE status='Cancelled'");
-    const [[totalCompleted]] = await pool.query("SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Delivered','Cancelled')");
+    const [[totalSales]] = await pool.query(
+      "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Delivered'"
+    );
+    const [[totalDelivered]] = await pool.query(
+      "SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Delivered'"
+    );
+    const [[totalPending]] = await pool.query(
+      "SELECT COUNT(*) AS totalPending FROM orders WHERE status='Pending'"
+    );
+    const [[totalCancelled]] = await pool.query(
+      "SELECT COUNT(*) AS totalCancelled FROM orders WHERE status='Cancelled'"
+    );
+    const [[totalCompleted]] = await pool.query(
+      "SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Delivered','Cancelled')"
+    );
 
     res.json({
       success: true,
@@ -37,7 +45,7 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
       totalDelivered: totalDelivered?.totalDelivered || 0,
       totalPending: totalPending?.totalPending || 0,
       totalCancelled: totalCancelled?.totalCancelled || 0,
-      totalCompleted: totalCompleted?.totalCompleted || 0
+      totalCompleted: totalCompleted?.totalCompleted || 0,
     });
   } catch (err) {
     console.error(err);
@@ -46,41 +54,121 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
 });
 
 // SHOPKEEPER REGISTER
+// shopkeeperRouter.post("/signup", async (req, res) => {
+//   try {
+//     const { name, email, password, phone, address, shop_name } = req.body;
+
+//     // Validate required fields
+//     if (!name || !email || !password || !phone || !address || !shop_name) {
+//       return res
+//         .status(400)
+//         .json({
+//           success: false,
+//           message: "Name, email, and password are required",
+//         });
+//     }
+
+//     if (password.length < 6) {
+//       return res
+//         .status(400)
+//         .json({
+//           success: false,
+//           message: "Password must be at least 6 characters",
+//         });
+//     }
+//     if (phone && !/^\d{10}$/.test(phone)) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Phone number must be 10 digits" });
+//     }
+//     // if (address && address.length < 10) {
+//     //   return res
+//     //     .status(400)
+//     //     .json({
+//     //       success: false,
+//     //       message: "Address must be at least 10 characters",
+//     //     });
+//     // }
+
+//     // Check if shopkeeper already exists
+//     const [existingUser] = await pool.query(
+//       "SELECT * FROM shopkeepers WHERE email = ?",
+//       [email]
+//     );
+//     if (existingUser.length > 0) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Shopkeeper already exists" });
+//     }
+
+//     // Hash password
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     // Insert new shopkeeper (shop_name can be NULL if not provided)
+//     const [result] = await pool.query(
+//       "INSERT INTO shopkeepers (name, email, password, phone, address, shop_name) VALUES (?, ?, ?, ?, ?, ?)",
+//       [
+//         name,
+//         email,
+//         hashedPassword,
+//         phone ,
+//         address ,
+//         shop_name ,
+//       ]
+//     );
+
+//     // Fetch created shopkeeper
+//     const [userRows] = await pool.query(
+//       "SELECT id, name, email, phone, address, shop_name, created_at FROM shopkeepers WHERE id = ?",
+//       [result.insertId]
+//     );
+
+//     const user = userRows[0];
+//     return res.json({
+//       success: true,
+//       user,
+//       message: "Shopkeeper registered successfully",
+//     });
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 shopkeeperRouter.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, phone, address, shop_name } = req.body;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      address,
+      shop_name,
+      latitude,
+      longitude,
+    } = req.body;
 
     // Validate required fields
     if (!name || !email || !password || !phone || !address || !shop_name) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Name, email, and password are required",
-        });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name, email, password, phone, address, and shop_name are required",
+      });
     }
 
     if (password.length < 6) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Password must be at least 6 characters",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
     }
+
     if (phone && !/^\d{10}$/.test(phone)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Phone number must be 10 digits" });
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be 10 digits",
+      });
     }
-    // if (address && address.length < 10) {
-    //   return res
-    //     .status(400)
-    //     .json({
-    //       success: false,
-    //       message: "Address must be at least 10 characters",
-    //     });
-    // }
 
     // Check if shopkeeper already exists
     const [existingUser] = await pool.query(
@@ -88,30 +176,35 @@ shopkeeperRouter.post("/signup", async (req, res) => {
       [email]
     );
     if (existingUser.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Shopkeeper already exists" });
+      return res.status(400).json({
+        success: false,
+        message: "Shopkeeper already exists",
+      });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new shopkeeper (shop_name can be NULL if not provided)
+    // Insert new shopkeeper including latitude and longitude
     const [result] = await pool.query(
-      "INSERT INTO shopkeepers (name, email, password, phone, address, shop_name) VALUES (?, ?, ?, ?, ?, ?)",
+      `INSERT INTO shopkeepers 
+       (name, email, password, phone, address, shop_name, latitude, longitude) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         email,
         hashedPassword,
-        phone ,
-        address ,
-        shop_name ,
+        phone,
+        address,
+        shop_name,
+        latitude || null,
+        longitude || null,
       ]
     );
 
     // Fetch created shopkeeper
     const [userRows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, name, email, phone, address, shop_name, latitude, longitude, created_at FROM shopkeepers WHERE id = ?",
       [result.insertId]
     );
 

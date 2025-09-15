@@ -285,8 +285,8 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
 
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
-const [orders] = await pool.query(
-  `SELECT 
+    const [orders] = await pool.query(
+      `SELECT 
       o.id AS order_id, 
       o.status, 
       o.total_amount, 
@@ -312,7 +312,7 @@ const [orders] = await pool.query(
    WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
    GROUP BY o.id
    ORDER BY o.created_at ASC`
-);
+    );
 
     res.json({ success: true, orders });
   } catch (err) {
