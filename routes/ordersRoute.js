@@ -1,13 +1,12 @@
 import express from "express";
 import pool from "../config/db.js";
-import  verifyToken from "../middleware/auth.js";
+import verifyToken from "../middleware/auth.js";
 
 const ordersRouter = express.Router();
 
 /**
 Create new order (Customer)
  */
-
 
 function calculateCredits(amount) {
   if (amount >= 100 && amount <= 300) return 10;
@@ -125,7 +124,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   }
 });
 
-
 /**
  * Update order status (Shopkeeper role in future)
  */
@@ -230,14 +228,12 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
 //   }
 // });
 
-
-
 ordersRouter.get("/myorders", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
     const [orders] = await pool.query(
-      `SELECT o.id, o.status, o.total_amount, o.credits_earned,
+      `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
               JSON_ARRAYAGG(
                 JSON_OBJECT(
                   'id', oi.product_id,
