@@ -42,10 +42,13 @@ userrouter.post("/signup", async (req, res) => {
     );
 
     // Fetch the newly created user
-  const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
-  const user = userRows[0];
+    const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
+    const user = userRows[0];
 
-  return res.json({ success: true, user, message: "User registered successfully" });
+    // Generate JWT token for the new user
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
+
+    return res.json({ success: true, token, user, message: "User registered successfully" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -65,7 +68,7 @@ userrouter.post("/signin", async (req, res) => {
     if (!validPass)
       return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
     res.json({ success: true, token, user: { id: user[0].id, email: user[0].email } });
   } catch (err) {
     console.error(err);

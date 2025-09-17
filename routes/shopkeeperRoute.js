@@ -209,8 +209,12 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     );
 
     const user = userRows[0];
+    // Generate JWT token for the new shopkeeper
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
+
     return res.json({
       success: true,
+      token,
       user,
       message: "Shopkeeper registered successfully",
     });
@@ -237,9 +241,7 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
     res.json({
       success: true,
       token,
@@ -292,13 +294,13 @@ shopkeeperRouter.put("/profile/:id", upload.single("img"), async (req, res) => {
         .json({ success: false, message: "Phone number must be 10 digits" });
     }
     // if (address && address.length < 6) {
-    //   return res
-    //     .status(400)
-    //     .json({
-    //       success: false,
-    //       message: "Address must be at least 10 characters",
-    //     });
-    // }
+//       return res
+//         .status(400)
+//         .json({
+//           success: false,
+//           message: "Address must be at least 10 characters",
+//         });
+//     }
 
     if (!phone || !address) {
       return res.status(400).json({
