@@ -13,15 +13,58 @@ dotenv.config();
 const userrouter = express.Router();
 
 // REGISTER
+// userrouter.post("/signup", async (req, res) => {
+//   try {
+//     const { name, email, password } = req.body;
+
+//     // Validate inputs
+//     if (!name || !email || !password) {
+//       return res.status(400).json({ success: false, message: "All fields are required" });
+//     }
+
+//     if (password.length < 6) {
+//       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+//     }
+
+//     // Check if user already exists
+//     const [existingUser] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+//     if (existingUser.length > 0) {
+//       return res.status(400).json({ success: false, message: "User already exists" });
+//     }
+
+//     // Hash the password
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     // Insert new user into database
+//     const [result] = await pool.query(
+//       "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
+//       [name, email, hashedPassword]
+//     );
+
+//     // Fetch the newly created user
+//     const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
+//     const user = userRows[0];
+
+//     // Generate JWT token for the new user
+//     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
+
+//     return res.json({ success: true, token, user, message: "User registered successfully" });
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
+
 userrouter.post("/signup", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, latitude = null, longitude = null, address = null } = req.body;
 
-    // Validate inputs
+    // Validate required fields
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
+    // Validate password length
     if (password.length < 6) {
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
@@ -35,25 +78,35 @@ userrouter.post("/signup", async (req, res) => {
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new user into database
+    // Insert new user
     const [result] = await pool.query(
-      "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-      [name, email, hashedPassword]
+      `INSERT INTO users (name, email, password, latitude, longitude, address) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [name, email, hashedPassword, latitude, longitude, address]
     );
 
-    // Fetch the newly created user
-    const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
+    // Fetch newly created user
+    const [userRows] = await pool.query(
+      "SELECT id, name, email, latitude, longitude, address, created_at FROM users WHERE id = ?",
+      [result.insertId]
+    );
     const user = userRows[0];
 
-    // Generate JWT token for the new user
+    // Generate JWT token
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
 
-    return res.json({ success: true, token, user, message: "User registered successfully" });
+    return res.status(201).json({
+      success: true,
+      token,
+      user,
+      message: "User registered successfully",
+    });
   } catch (err) {
-    console.error(err);
+    console.error("Signup error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 // LOGIN
 userrouter.post("/signin", async (req, res) => {
