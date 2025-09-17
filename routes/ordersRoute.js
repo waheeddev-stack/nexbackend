@@ -1,12 +1,22 @@
 import express from "express";
 import pool from "../config/db.js";
 import verifyToken from "../middleware/auth.js";
+import fetch from "node-fetch";
 
 const ordersRouter = express.Router();
 
 /**
 Create new order (Customer)
  */
+
+
+async function getAddressFromCoords(latitude, longitude) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`;
+  const res = await fetch(url, { headers: { "User-Agent": "nexkirana" } });
+  const data = await res.json();
+  return data.display_name || null;
+}
+
 
 function calculateCredits(amount) {
   if (amount >= 100 && amount <= 300) return 10;
@@ -15,13 +25,20 @@ function calculateCredits(amount) {
   return 0;
 }
 
+/* Create new order (Customer) with location
+ */
+
 // ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 //   try {
-//     const { items } = req.body;
+//     const { items, latitude, longitude } = req.body;
 //     const user_id = req.user.id;
 
 //     if (!items || items.length === 0) {
 //       return res.status(400).json({ message: "No items provided" });
+//     }
+
+//     if (!latitude || !longitude) {
+//       return res.status(400).json({ message: "Delivery location required" });
 //     }
 
 //     // ✅ Calculate total
@@ -30,10 +47,12 @@ function calculateCredits(amount) {
 //     // ✅ Calculate earned credits
 //     const earnedCredits = calculateCredits(total);
 
-//     // ✅ Insert order (save earned credits too)
+//     // ✅ Insert order with location
 //     const [orderResult] = await pool.query(
-//       "INSERT INTO orders (user_id, total_amount, status, credits_earned) VALUES (?, ?, ?, ?)",
-//       [user_id, total, "Pending", earnedCredits]
+//       `INSERT INTO orders 
+//        (user_id, total_amount, status, credits_earned, latitude, longitude) 
+//        VALUES (?, ?, ?, ?, ?, ?)`,
+//       [user_id, total, "Pending", earnedCredits, latitude, longitude]
 //     );
 
 //     const orderId = orderResult.insertId;
@@ -41,7 +60,7 @@ function calculateCredits(amount) {
 //     // ✅ Insert order items
 //     for (let item of items) {
 //       await pool.query(
-//         "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
+//         `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)`,
 //         [orderId, item.product_id, item.quantity, item.price]
 //       );
 //     }
@@ -61,6 +80,8 @@ function calculateCredits(amount) {
 //           o.total_amount, 
 //           o.status, 
 //           o.credits_earned,
+//           o.latitude,
+//           o.longitude,
 //           o.created_at,
 //           u.id AS customer_id, 
 //           u.name AS customer_name, 
@@ -92,9 +113,11 @@ function calculateCredits(amount) {
 //       },
 //       total: orderDetails[0].total_amount,
 //       credits_earned: earnedCredits,
-//       credits_value: earnedCredits * 0.5, // ✅ 1 credit = 0.5 INR
+//       credits_value: earnedCredits * 0.5, // 1 credit = 0.5 INR
 //       status: orderDetails[0].status,
 //       created_at: orderDetails[0].created_at,
+//       latitude: orderDetails[0].latitude,
+//       longitude: orderDetails[0].longitude,
 //       items: orderDetails.map((row) => ({
 //         product_id: row.product_id,
 //         product_name: row.product_name,
@@ -106,11 +129,8 @@ function calculateCredits(amount) {
 
 //     // ✅ Emit live update
 //     if (req.io) {
-//       // To shopkeepers (all)
-//       req.io.emit("newOrder", orderPayload);
-
-//       // To the specific customer
-//       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+//       req.io.emit("newOrder", orderPayload); // To all shopkeepers
+//       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload); // To the customer
 //     }
 
 //     res.status(201).json({
@@ -124,8 +144,7 @@ function calculateCredits(amount) {
 //   }
 // });
 
-/* Create new order (Customer) with location
- */
+
 ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   try {
     const { items, latitude, longitude } = req.body;
@@ -139,18 +158,21 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Delivery location required" });
     }
 
+    // ✅ Convert lat/lng → readable address
+    const deliveryAddress = await getAddressFromCoords(latitude, longitude);
+
     // ✅ Calculate total
     const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
     // ✅ Calculate earned credits
     const earnedCredits = calculateCredits(total);
 
-    // ✅ Insert order with location
+    // ✅ Insert order with location + address
     const [orderResult] = await pool.query(
       `INSERT INTO orders 
-       (user_id, total_amount, status, credits_earned, latitude, longitude) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [user_id, total, "Pending", earnedCredits, latitude, longitude]
+       (user_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [user_id, total, "Pending", earnedCredits, latitude, longitude, deliveryAddress]
     );
 
     const orderId = orderResult.insertId;
@@ -159,6 +181,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     for (let item of items) {
       await pool.query(
         `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)`,
+
         [orderId, item.product_id, item.quantity, item.price]
       );
     }
@@ -180,12 +203,12 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           o.credits_earned,
           o.latitude,
           o.longitude,
+          o.delivery_address,
           o.created_at,
           u.id AS customer_id, 
           u.name AS customer_name, 
           u.email AS customer_email,
           u.phone AS customer_phone,
-          u.address AS delivery_address,
           oi.product_id, 
           p.name AS product_name, 
           p.image AS product_image,
@@ -207,7 +230,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         name: orderDetails[0].customer_name,
         email: orderDetails[0].customer_email,
         phone: orderDetails[0].customer_phone,
-        address: orderDetails[0].delivery_address,
+        address: orderDetails[0].delivery_address, // ✅ now live address
       },
       total: orderDetails[0].total_amount,
       credits_earned: earnedCredits,
@@ -227,13 +250,13 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     // ✅ Emit live update
     if (req.io) {
-      req.io.emit("newOrder", orderPayload); // To all shopkeepers
-      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload); // To the customer
+      req.io.emit("newOrder", orderPayload);
+      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
     }
 
     res.status(201).json({
       success: true,
-      message: "Order created & credits awarded",
+      message: "Order created with live delivery address",
       order: orderPayload,
     });
   } catch (err) {
@@ -402,35 +425,75 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
   }
 });
 
+// ordersRouter.get("/live", verifyToken, async (req, res) => {
+//   try {
+//     const [orders] = await pool.query(
+//       `SELECT 
+//       o.id AS order_id, 
+//       o.status, 
+//       o.total_amount, 
+//       o.created_at,
+//       COALESCE(
+//         JSON_ARRAYAGG(
+//           JSON_OBJECT(
+//             'id', oi.product_id,
+//             'name', p.name,
+//             'quantity', oi.quantity,
+//             'price', oi.price,
+//             'image', p.image
+//           )
+//         ), JSON_ARRAY()
+//       ) AS items,
+//       ANY_VALUE(u.name) AS customer_name, 
+//       ANY_VALUE(u.address) AS delivery_address,
+//       ANY_VALUE(u.phone) AS customer_phone
+//    FROM orders o
+//    JOIN order_items oi ON o.id = oi.order_id
+//    JOIN products p ON oi.product_id = p.id
+//    JOIN users u ON o.user_id = u.id
+//    WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
+//    GROUP BY o.id
+//    ORDER BY o.created_at ASC`
+//     );
+
+//     res.json({ success: true, orders });
+//   } catch (err) {
+//     console.error("❌ Error fetching live orders:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
+
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
     const [orders] = await pool.query(
       `SELECT 
-      o.id AS order_id, 
-      o.status, 
-      o.total_amount, 
-      o.created_at,
-      COALESCE(
-        JSON_ARRAYAGG(
-          JSON_OBJECT(
-            'id', oi.product_id,
-            'name', p.name,
-            'quantity', oi.quantity,
-            'price', oi.price,
-            'image', p.image
-          )
-        ), JSON_ARRAY()
-      ) AS items,
-      ANY_VALUE(u.name) AS customer_name, 
-      ANY_VALUE(u.address) AS delivery_address,
-      ANY_VALUE(u.phone) AS customer_phone
-   FROM orders o
-   JOIN order_items oi ON o.id = oi.order_id
-   JOIN products p ON oi.product_id = p.id
-   JOIN users u ON o.user_id = u.id
-   WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
-   GROUP BY o.id
-   ORDER BY o.created_at ASC`
+        o.id AS order_id, 
+        o.status, 
+        o.total_amount, 
+        o.created_at,
+        o.delivery_address,         -- ✅ Use live address from orders table
+        o.latitude,                 -- ✅ Optional: include lat/lng if needed
+        o.longitude,
+        COALESCE(
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', oi.product_id,
+              'name', p.name,
+              'quantity', oi.quantity,
+              'price', oi.price,
+              'image', p.image
+            )
+          ), JSON_ARRAY()
+        ) AS items,
+        ANY_VALUE(u.name) AS customer_name, 
+        ANY_VALUE(u.phone) AS customer_phone
+     FROM orders o
+     JOIN order_items oi ON o.id = oi.order_id
+     JOIN products p ON oi.product_id = p.id
+     JOIN users u ON o.user_id = u.id
+     WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
+     GROUP BY o.id
+     ORDER BY o.created_at ASC`
     );
 
     res.json({ success: true, orders });
