@@ -383,4 +383,46 @@ shopkeeperRouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   }
 });
 
+shopkeeperRouter.post("/shop-products", async (req, res) => {
+  try {
+    const { shop_id, product_id, price, stock } = req.body;
+
+    if (!shop_id || !product_id || !price || stock == null) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO shop_products (shop_id, product_id, price, stock)
+       VALUES (?, ?, ?, ?)`,
+      [shop_id, product_id, price, stock]
+    );
+
+    res.json({ success: true, id: result.insertId });
+  } catch (err) {
+    console.error("Add shop product error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+shopkeeperRouter.get("/shops/:shopId/products", async (req, res) => {
+  try {
+    const { shopId } = req.params;
+
+    const [rows] = await pool.query(
+      `SELECT sp.id AS shop_product_id,
+              pm.id AS product_id, pm.name, pm.description, pm.image, pm.category,
+              sp.price, sp.stock
+       FROM shop_products sp
+       JOIN products pm ON sp.product_id = pm.id
+       WHERE sp.shop_id = ?`,
+      [shopId]
+    );
+
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    console.error("Get shop products error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default shopkeeperRouter;

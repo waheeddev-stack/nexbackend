@@ -12,6 +12,56 @@ dotenv.config();
 
 const userrouter = express.Router();
 
+// Get nearby shopkeepers within 2 km
+// const getNearbyShopkeepers = async (userLat, userLng, radius = 2) => {
+//   const query = `
+//     SELECT *, 
+//       (6371 * ACOS(
+//           COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+//           COS(RADIANS(longitude) - RADIANS(?)) +
+//           SIN(RADIANS(?)) * SIN(RADIANS(latitude))
+//       )) AS distance
+//     FROM shopkeepers
+//     HAVING distance <= ?
+//     ORDER BY distance ASC
+//   `;
+//   const [shops] = await pool.query(query, [userLat, userLng, userLat, radius]);
+//   return shops;
+// };
+
+// Get products of a shop
+// const getShopProducts = async (shopId) => {
+//   const [products] = await pool.query(
+//     `SELECT id, name, price, stock, description, image, created_at, category
+//      FROM products WHERE shop_id = ?`,
+//     [shopId]
+//   );
+//   return products;
+// };
+
+// userrouter.get("/nearby-shops", async (req, res) => {
+//   const { latitude, longitude } = req.query;
+//   if (!latitude || !longitude) return res.status(400).json({ message: "Missing coordinates" });
+
+//   try {
+//     const shops = await getNearbyShopkeepers(latitude, longitude, 2);
+
+//     // Attach products to each shop
+//     const shopsWithProducts = await Promise.all(
+//       shops.map(async (shop) => {
+//         const products = await getShopProducts(shop.id);
+//         return { ...shop, products };
+//       })
+//     );
+
+//     res.json({ success: true, shops: shopsWithProducts });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
+
+
 // REGISTER
 // userrouter.post("/signup", async (req, res) => {
 //   try {
@@ -54,6 +104,61 @@ const userrouter = express.Router();
 //     return res.status(500).json({ success: false, message: "Server error" });
 //   }
 // });
+
+
+userrouter.get("/nearby-products", async (req, res) => {
+  try {
+    const { latitude, longitude, radiusKm = 2 } = req.query;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ success: false, message: "Missing location" });
+    }
+
+    // Find nearby shops
+    const [shops] = await pool.query(
+      `SELECT id, name, shop_name, latitude, longitude,
+              (6371 * acos(
+                 cos(radians(?)) * cos(radians(latitude)) *
+                 cos(radians(longitude) - radians(?)) +
+                 sin(radians(?)) * sin(radians(latitude))
+              )) AS distance
+       FROM shopkeepers
+       HAVING distance <= ?
+       ORDER BY distance ASC`,
+      [latitude, longitude, latitude, radiusKm]
+    );
+
+    if (shops.length === 0) {
+      return res.json({ success: true, shops: [] });
+    }
+
+    // Fetch products for each shop
+    const shopIds = shops.map(s => s.id);
+    const [products] = await pool.query(
+      `SELECT sp.shop_id, sp.id AS shop_product_id,
+              pm.id AS product_id, pm.name, pm.description, pm.image, pm.category,
+              sp.price, sp.stock
+       FROM shop_products sp
+       JOIN products pm ON sp.product_id = pm.id
+       WHERE sp.shop_id IN (?)`,
+      [shopIds]
+    );
+
+    // Group products under their shop
+    const shopsWithProducts = shops.map(shop => ({
+      ...shop,
+      products: products.filter(p => p.shop_id === shop.id),
+    }));
+
+    res.json({ success: true, shops: shopsWithProducts });
+  } catch (err) {
+    console.error("Nearby products error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+
 
 userrouter.post("/signup", async (req, res) => {
   try {
