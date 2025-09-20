@@ -1,5 +1,3 @@
-// PLACE ORDER (user checkout)
-// GET all orders for users
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -12,109 +10,15 @@ dotenv.config();
 
 const userrouter = express.Router();
 
-// Get nearby shopkeepers within 2 km
-// const getNearbyShopkeepers = async (userLat, userLng, radius = 2) => {
-//   const query = `
-//     SELECT *, 
-//       (6371 * ACOS(
-//           COS(RADIANS(?)) * COS(RADIANS(latitude)) *
-//           COS(RADIANS(longitude) - RADIANS(?)) +
-//           SIN(RADIANS(?)) * SIN(RADIANS(latitude))
-//       )) AS distance
-//     FROM shopkeepers
-//     HAVING distance <= ?
-//     ORDER BY distance ASC
-//   `;
-//   const [shops] = await pool.query(query, [userLat, userLng, userLat, radius]);
-//   return shops;
-// };
-
-// Get products of a shop
-// const getShopProducts = async (shopId) => {
-//   const [products] = await pool.query(
-//     `SELECT id, name, price, stock, description, image, created_at, category
-//      FROM products WHERE shop_id = ?`,
-//     [shopId]
-//   );
-//   return products;
-// };
-
-// userrouter.get("/nearby-shops", async (req, res) => {
-//   const { latitude, longitude } = req.query;
-//   if (!latitude || !longitude) return res.status(400).json({ message: "Missing coordinates" });
-
-//   try {
-//     const shops = await getNearbyShopkeepers(latitude, longitude, 2);
-
-//     // Attach products to each shop
-//     const shopsWithProducts = await Promise.all(
-//       shops.map(async (shop) => {
-//         const products = await getShopProducts(shop.id);
-//         return { ...shop, products };
-//       })
-//     );
-
-//     res.json({ success: true, shops: shopsWithProducts });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
-
-// REGISTER
-// userrouter.post("/signup", async (req, res) => {
-//   try {
-//     const { name, email, password } = req.body;
-
-//     // Validate inputs
-//     if (!name || !email || !password) {
-//       return res.status(400).json({ success: false, message: "All fields are required" });
-//     }
-
-//     if (password.length < 6) {
-//       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
-//     }
-
-//     // Check if user already exists
-//     const [existingUser] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
-//     if (existingUser.length > 0) {
-//       return res.status(400).json({ success: false, message: "User already exists" });
-//     }
-
-//     // Hash the password
-//     const hashedPassword = await bcrypt.hash(password, 10);
-
-//     // Insert new user into database
-//     const [result] = await pool.query(
-//       "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-//       [name, email, hashedPassword]
-//     );
-
-//     // Fetch the newly created user
-//     const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
-//     const user = userRows[0];
-
-//     // Generate JWT token for the new user
-//     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
-
-//     return res.json({ success: true, token, user, message: "User registered successfully" });
-//   } catch (err) {
-//     console.error(err);
-//     return res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
-
-userrouter.get("/nearby-products", async (req, res) => {
+// Find nearby shopkeepers and show their products
+userrouter.get("/nearby-shops", async (req, res) => {
   try {
     const { latitude, longitude, radiusKm = 2 } = req.query;
-
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
-    // Find nearby shops
+    // Find nearby shops using Haversine formula
     const [shops] = await pool.query(
       `SELECT id, name, shop_name, latitude, longitude,
               (6371 * acos(
@@ -152,24 +56,21 @@ userrouter.get("/nearby-products", async (req, res) => {
 
     res.json({ success: true, shops: shopsWithProducts });
   } catch (err) {
-    console.error("Nearby products error:", err);
+    console.error("Nearby shops error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
-
-
+// REGISTER
 userrouter.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, latitude = null, longitude = null, address = null } = req.body;
+    const { name, email, password } = req.body;
 
-    // Validate required fields
+    // Validate inputs
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
-    // Validate password length
     if (password.length < 6) {
       return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
@@ -183,35 +84,22 @@ userrouter.post("/signup", async (req, res) => {
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new user
+    // Insert new user into database
     const [result] = await pool.query(
-      `INSERT INTO users (name, email, password, latitude, longitude, address) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [name, email, hashedPassword, latitude, longitude, address]
+      "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
+      [name, email, hashedPassword]
     );
 
-    // Fetch newly created user
-    const [userRows] = await pool.query(
-      "SELECT id, name, email, latitude, longitude, address, created_at FROM users WHERE id = ?",
-      [result.insertId]
-    );
-    const user = userRows[0];
+    // Fetch the newly created user
+  const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
+  const user = userRows[0];
 
-    // Generate JWT token
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
-
-    return res.status(201).json({
-      success: true,
-      token,
-      user,
-      message: "User registered successfully",
-    });
+  return res.json({ success: true, user, message: "User registered successfully" });
   } catch (err) {
-    console.error("Signup error:", err);
+    console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 // LOGIN
 userrouter.post("/signin", async (req, res) => {
@@ -226,7 +114,7 @@ userrouter.post("/signin", async (req, res) => {
     if (!validPass)
       return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "1h" });
     res.json({ success: true, token, user: { id: user[0].id, email: user[0].email } });
   } catch (err) {
     console.error(err);
