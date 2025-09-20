@@ -383,6 +383,21 @@ shopkeeperRouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   }
 });
 
+// Get global product catalog for shopkeepers
+shopkeeperRouter.get("/shop-products", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, description, image, category FROM products ORDER BY created_at DESC"
+    );
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    console.error("Get global products error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+// Upsert shop product (update if exists, else insert)
 shopkeeperRouter.post("/shop-products", async (req, res) => {
   try {
     const { shop_id, product_id, price, stock } = req.body;
@@ -391,13 +406,27 @@ shopkeeperRouter.post("/shop-products", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    const [result] = await pool.query(
-      `INSERT INTO shop_products (shop_id, product_id, price, stock)
-       VALUES (?, ?, ?, ?)`,
-      [shop_id, product_id, price, stock]
+    // Check if product already exists for this shop
+    const [existing] = await pool.query(
+      "SELECT id FROM shop_products WHERE shop_id = ? AND product_id = ?",
+      [shop_id, product_id]
     );
-
-    res.json({ success: true, id: result.insertId });
+    let result;
+    if (existing.length > 0) {
+      // Update
+      [result] = await pool.query(
+        "UPDATE shop_products SET price = ?, stock = ? WHERE shop_id = ? AND product_id = ?",
+        [price, stock, shop_id, product_id]
+      );
+      res.json({ success: true, updated: true });
+    } else {
+      // Insert
+      [result] = await pool.query(
+        "INSERT INTO shop_products (shop_id, product_id, price, stock) VALUES (?, ?, ?, ?)",
+        [shop_id, product_id, price, stock]
+      );
+      res.json({ success: true, id: result.insertId, updated: false });
+    }
   } catch (err) {
     console.error("Add shop product error:", err);
     res.status(500).json({ success: false, message: "Server error" });
