@@ -377,8 +377,7 @@ adminRouter.post("/login", async (req, res) => {
     // Generate JWT
     const token = jwt.sign(
       { id: admin.id, email: admin.email },
-      process.env.JWT_SECRET || "secretkey",
-      { expiresIn: "1d" }
+      process.env.JWT_SECRET || "secretkey"
     );
     res.json({ token, admin: { id: admin.id, email: admin.email } });
   } catch (err) {
