@@ -84,45 +84,50 @@ adminRouter.get("/", verifyToken, async (req, res) => {
 //   }
 // });
 
-// adminRouter.get("/dashboard", verifyToken, async (req, res) => {
-//   try {
-//     // Shopkeepers count
-//     const [shopkeepers] = await pool.query(
-//       "SELECT COUNT(*) as count FROM shopkeepers"
-//     );
-//     // Customers count
-//     const [customers] = await pool.query("SELECT COUNT(*) as count FROM users");
-//     // Orders count and revenue (dummy, since no orders table)
-//     const orders = 42;
-//     const revenue = 12345;
-//     // Top products (dummy)
-//     const topProducts = [
-//       { name: "Product A", sold: 100 },
-//       { name: "Product B", sold: 80 },
-//       { name: "Product C", sold: 60 },
-//     ];
-//     res.json({
-//       shopkeepers: shopkeepers[0].count,
-//       customers: customers[0].count,
-//       orders,
-//       revenue,
-//       topProducts,
-//     });
-//   } catch (err) {
-//     res.status(500).json({ message: "Server error", error: err.message });
-//   }
-// });
 
-// adminRouter.get("/products", verifyToken, async (req, res) => {
-//   try {
-//     const [rows] = await pool.query(
-//       "SELECT * FROM products ORDER BY created_at DESC"
-//     );
-//     res.json(rows);
-//   } catch (err) {
-//     res.status(500).json({ message: "Server error", error: err.message });
-//   }
-// });
+adminRouter.get("/dashboard", verifyToken, async (req, res) => {
+  try {
+    // Shopkeepers count
+    const [shopkeepers] = await pool.query(
+      "SELECT COUNT(*) as count FROM shopkeepers"
+    );
+    // Customers count
+    const [customers] = await pool.query("SELECT COUNT(*) as count FROM users");
+    // Orders count and revenue
+    const [ordersRows] = await pool.query("SELECT COUNT(*) as count, COALESCE(SUM(total_amount),0) as revenue FROM orders");
+    const orders = ordersRows[0].count;
+    const revenue = ordersRows[0].revenue;
+    // Top products (by sales)
+    const [topProducts] = await pool.query(
+      `SELECT p.name, SUM(oi.quantity) as sold
+       FROM order_items oi
+       JOIN products p ON oi.product_id = p.id
+       GROUP BY oi.product_id, p.name
+       ORDER BY sold DESC
+       LIMIT 3`
+    );
+    res.json({
+      shopkeepers: shopkeepers[0].count,
+      customers: customers[0].count,
+      orders,
+      revenue,
+      topProducts,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+adminRouter.get("/products", verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM products ORDER BY created_at DESC"
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
 
 // Add a new product with image upload (category as string)
 // adminRouter.post(
