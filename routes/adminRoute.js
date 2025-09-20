@@ -1,6 +1,7 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import verifyToken from "../middleware/auth.js";
 
 import pool from "../config/db.js";
 import upload from "../config/upload.js";
@@ -384,22 +385,6 @@ adminRouter.post("/login", async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
-
-// Middleware to verify JWT
-function verifyToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
-    req.admin = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: "Invalid token" });
-  }
-}
 
 // Example protected route
 adminRouter.get("/profile", verifyToken, async (req, res) => {
