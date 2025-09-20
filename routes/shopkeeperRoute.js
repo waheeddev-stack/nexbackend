@@ -398,40 +398,102 @@ shopkeeperRouter.get("/shop-products", async (req, res) => {
 
 
 // Upsert shop product (update if exists, else insert)
-shopkeeperRouter.post("/shop-products", async (req, res) => {
-  try {
-    const { shop_id, product_id, price, stock } = req.body;
+// shopkeeperRouter.post("/shop-products", async (req, res) => {
+//   try {
+//     const { shop_id, product_id, price, stock } = req.body;
 
-    if (!shop_id || !product_id || !price || stock == null) {
+//     if (!shop_id || !product_id || !price || stock == null) {
+//       return res.status(400).json({ success: false, message: "Missing fields" });
+//     }
+
+//     // Check if product already exists for this shop
+//     const [existing] = await pool.query(
+//       "SELECT id FROM shop_products WHERE shop_id = ? AND product_id = ?",
+//       [shop_id, product_id]
+//     );
+//     let result;
+//     if (existing.length > 0) {
+//       // Update
+//       [result] = await pool.query(
+//         "UPDATE shop_products SET price = ?, stock = ? WHERE shop_id = ? AND product_id = ?",
+//         [price, stock, shop_id, product_id]
+//       );
+//       res.json({ success: true, updated: true });
+//     } else {
+//       // Insert
+//       [result] = await pool.query(
+//         "INSERT INTO shop_products (shop_id, product_id, price, stock) VALUES (?, ?, ?, ?)",
+//         [shop_id, product_id, price, stock]
+//       );
+//       res.json({ success: true, id: result.insertId, updated: false });
+//     }
+//   } catch (err) {
+//     console.error("Add shop product error:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
+
+
+shopkeeperRouter.post("/shop-products", verifyToken, async (req, res) => {
+  try {
+    const shop_id = req.user?.id;
+    const { product_id, price, stock } = req.body;
+
+    if (!shop_id || !product_id || price == null || stock == null) {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    // Check if product already exists for this shop
+    // Optional: coerce numeric types (and validate)
+    const parsedPrice = Number(price);
+    const parsedStock = Number(stock);
+    if (Number.isNaN(parsedPrice) || Number.isNaN(parsedStock)) {
+      return res.status(400).json({ success: false, message: "Price and stock must be numbers" });
+    }
+
     const [existing] = await pool.query(
       "SELECT id FROM shop_products WHERE shop_id = ? AND product_id = ?",
       [shop_id, product_id]
     );
-    let result;
+
     if (existing.length > 0) {
-      // Update
-      [result] = await pool.query(
+      await pool.query(
         "UPDATE shop_products SET price = ?, stock = ? WHERE shop_id = ? AND product_id = ?",
-        [price, stock, shop_id, product_id]
+        [parsedPrice, parsedStock, shop_id, product_id]
       );
-      res.json({ success: true, updated: true });
+      return res.json({ success: true, updated: true });
     } else {
-      // Insert
-      [result] = await pool.query(
+      const [result] = await pool.query(
         "INSERT INTO shop_products (shop_id, product_id, price, stock) VALUES (?, ?, ?, ?)",
-        [shop_id, product_id, price, stock]
+        [shop_id, product_id, parsedPrice, parsedStock]
       );
-      res.json({ success: true, id: result.insertId, updated: false });
+      return res.json({ success: true, id: result.insertId, updated: false });
     }
   } catch (err) {
     console.error("Add shop product error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// shopkeeperRouter.get("/shops/:shopId/products", async (req, res) => {
+//   try {
+//     const { shopId } = req.params;
+
+//     const [rows] = await pool.query(
+//       `SELECT sp.id AS shop_product_id,
+//               pm.id AS product_id, pm.name, pm.description, pm.image, pm.category,
+//               sp.price, sp.stock
+//        FROM shop_products sp
+//        JOIN products pm ON sp.product_id = pm.id
+//        WHERE sp.shop_id = ?`,
+//       [shopId]
+//     );
+
+//     res.json({ success: true, products: rows });
+//   } catch (err) {
+//     console.error("Get shop products error:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 
 shopkeeperRouter.get("/shops/:shopId/products", async (req, res) => {
   try {
