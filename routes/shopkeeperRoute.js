@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import verifyToken from "../middleware/auth.js";
-
+import fetch from "node-fetch";
 dotenv.config();
 
 const shopkeeperRouter = express.Router();
@@ -53,72 +53,58 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
   }
 });
 
+
 shopkeeperRouter.post("/signup", async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      password,
-      phone,
-      address,
-      shop_name,
-      latitude,
-      longitude,
-    } = req.body;
+    const { name, email, password, phone, latitude, longitude, shop_name } = req.body;
 
     // Validate required fields
-    if (!name || !email || !password || !phone || !address || !shop_name) {
+    if (!name || !email || !password || !phone || !shop_name) {
       return res.status(400).json({
         success: false,
-        message:
-          "Name, email, password, phone, address, and shop_name are required",
+        message: "Name, email, password, phone, and shop_name are required",
       });
     }
 
     if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters",
-      });
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
     }
 
-    if (phone && !/^\d{10}$/.test(phone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number must be 10 digits",
-      });
+    if (!/^\d{10}$/.test(phone)) {
+      return res.status(400).json({ success: false, message: "Phone number must be 10 digits" });
     }
 
     // Check if shopkeeper already exists
-    const [existingUser] = await pool.query(
-      "SELECT * FROM shopkeepers WHERE email = ?",
-      [email]
-    );
+    const [existingUser] = await pool.query("SELECT * FROM shopkeepers WHERE email = ?", [email]);
     if (existingUser.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper already exists",
-      });
+      return res.status(400).json({ success: false, message: "Shopkeeper already exists" });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new shopkeeper including latitude and longitude
+    // Reverse geocode using fetch
+    let address = null;
+    if (latitude && longitude) {
+      try {
+        const geoRes = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}`
+        );
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          address = geoData.results[0].formatted_address;
+        }
+      } catch (err) {
+        console.warn("Geocoding failed, saving latitude/longitude only:", err.message);
+      }
+    }
+
+    // Insert new shopkeeper
     const [result] = await pool.query(
       `INSERT INTO shopkeepers 
        (name, email, password, phone, address, shop_name, latitude, longitude) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        name,
-        email,
-        hashedPassword,
-        phone,
-        address,
-        shop_name,
-        latitude || null,
-        longitude || null,
-      ]
+      [name, email, hashedPassword, phone, address, shop_name, latitude || null, longitude || null]
     );
 
     // Fetch created shopkeeper
@@ -128,20 +114,17 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     );
 
     const user = userRows[0];
-    // Generate JWT token for the new shopkeeper
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
 
-    return res.json({
-      success: true,
-      token,
-      user,
-      message: "Shopkeeper registered successfully",
-    });
+    // Generate JWT token
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+    return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 // SHOPKEEPER LOGIN
 shopkeeperRouter.post("/signin", async (req, res) => {
