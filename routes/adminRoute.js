@@ -16,9 +16,9 @@ adminRouter.get("/shopkeepers", verifyToken, async (req, res) => {
     const [rows] = await pool.query(
       "SELECT id, name, email, phone, address, shop_name, img, created_at FROM shopkeepers ORDER BY created_at DESC"
     );
-    res.json(rows);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -28,9 +28,9 @@ adminRouter.get("/customers", verifyToken, async (req, res) => {
     const [rows] = await pool.query(
       "SELECT id, name, email, phone, address, created_at FROM users ORDER BY created_at DESC"
     );
-    res.json(rows);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -45,16 +45,16 @@ adminRouter.post("/register", async (req, res) => {
       email,
     ]);
     if (exists.length > 0) {
-      return res.status(409).json({ message: "Admin already exists" });
+      return res.status(409).json({ success: false, message: "Admin already exists" });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
       "INSERT INTO admins (email, password) VALUES (?, ?)",
       [email, hashedPassword]
     );
-    res.status(201).json({ id: result.insertId, email });
+    res.status(201).json({ success: true, data: { id: result.insertId, email } });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -62,9 +62,9 @@ adminRouter.post("/register", async (req, res) => {
 adminRouter.get("/", verifyToken, async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT id, email, created_at FROM admins");
-    res.json(rows);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -76,11 +76,11 @@ adminRouter.get("/", verifyToken, async (req, res) => {
 //       [req.admin.id]
 //     );
 //     if (rows.length === 0) {
-//       return res.status(404).json({ message: "Admin not found" });
+//       return res.status(404).json({ success: false, message: "Admin not found" });
 //     }
-//     res.json(rows[0]);
+//     res.json({ success: true, data: rows[0] });
 //   } catch (err) {
-//     res.status(500).json({ message: "Server error", error: err.message });
+//     res.status(500).json({ success: false, message: "Server error", error: err.message });
 //   }
 // });
 
@@ -107,14 +107,17 @@ adminRouter.get("/dashboard", verifyToken, async (req, res) => {
        LIMIT 3`
     );
     res.json({
-      shopkeepers: shopkeepers[0].count,
-      customers: customers[0].count,
-      orders,
-      revenue,
-      topProducts,
+      success: true,
+      data: {
+        shopkeepers: shopkeepers[0].count,
+        customers: customers[0].count,
+        orders,
+        revenue,
+        topProducts,
+      }
     });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -123,9 +126,9 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
     const [rows] = await pool.query(
       "SELECT * FROM products ORDER BY created_at DESC"
     );
-    res.json(rows);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -169,7 +172,7 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 //         category,
 //       });
 //     } catch (err) {
-//       res.status(500).json({ message: "Server error", error: err.message });
+//       res.status(500).json({ success: false, message: "Server error", error: err.message });
 //     }
 //   }
 // );
@@ -210,11 +213,11 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 //         ]
 //       );
 //       if (dbResult.affectedRows === 0) {
-//         return res.status(404).json({ message: "Product not found" });
+//         return res.status(404).json({ success: false, message: "Product not found" });
 //       }
 //       res.json({ message: "Product updated" });
 //     } catch (err) {
-//       res.status(500).json({ message: "Server error", error: err.message });
+//       res.status(500).json({ success: false, message: "Server error", error: err.message });
 //     }
 //   }
 // );
@@ -226,11 +229,11 @@ adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
       req.params.id,
     ]);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
-    res.json({ message: "Product deleted" });
+    res.json({ success: true, message: "Product deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -240,9 +243,9 @@ adminRouter.get("/categories", verifyToken, async (req, res) => {
     const [rows] = await pool.query(
       "SELECT * FROM categories ORDER BY created_at DESC"
     );
-    res.json(rows);
+    res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -250,16 +253,16 @@ adminRouter.get("/categories", verifyToken, async (req, res) => {
 adminRouter.post("/categories", verifyToken, async (req, res) => {
   const { name, description } = req.body;
   if (!name) {
-    return res.status(400).json({ message: "Category name is required" });
+    return res.status(400).json({ success: false, message: "Category name is required" });
   }
   try {
     const [result] = await pool.query(
       "INSERT INTO categories (name, description) VALUES (?, ?)",
       [name, description || ""]
     );
-    res.status(201).json({ id: result.insertId, name, description });
+    res.status(201).json({ success: true, data: { id: result.insertId, name, description } });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -267,7 +270,7 @@ adminRouter.post("/categories", verifyToken, async (req, res) => {
 adminRouter.put("/categories/:id", verifyToken, async (req, res) => {
   const { name, description } = req.body;
   if (!name) {
-    return res.status(400).json({ message: "Category name is required" });
+    return res.status(400).json({ success: false, message: "Category name is required" });
   }
   try {
     const [result] = await pool.query(
@@ -275,11 +278,11 @@ adminRouter.put("/categories/:id", verifyToken, async (req, res) => {
       [name, description || "", req.params.id]
     );
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Category not found" });
+      return res.status(404).json({ success: false, message: "Category not found" });
     }
-    res.json({ message: "Category updated" });
+    res.json({ success: true, message: "Category updated" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -290,11 +293,11 @@ adminRouter.delete("/categories/:id", verifyToken, async (req, res) => {
       req.params.id,
     ]);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Category not found" });
+      return res.status(404).json({ success: false, message: "Category not found" });
     }
-    res.json({ message: "Category deleted" });
+    res.json({ success: true, message: "Category deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -306,11 +309,11 @@ adminRouter.get("/:id", verifyToken, async (req, res) => {
       [req.params.id]
     );
     if (rows.length === 0) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(404).json({ success: false, message: "Admin not found" });
     }
-    res.json(rows[0]);
+    res.json({ success: true, data: rows[0] });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -318,7 +321,7 @@ adminRouter.get("/:id", verifyToken, async (req, res) => {
 adminRouter.put("/:id", verifyToken, async (req, res) => {
   const { email, password } = req.body;
   if (!email && !password) {
-    return res.status(400).json({ message: "Nothing to update" });
+    return res.status(400).json({ success: false, message: "Nothing to update" });
   }
   try {
     let updateFields = [];
@@ -338,11 +341,11 @@ adminRouter.put("/:id", verifyToken, async (req, res) => {
       params
     );
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(404).json({ success: false, message: "Admin not found" });
     }
-    res.json({ message: "Admin updated" });
+    res.json({ success: true, message: "Admin updated" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -353,11 +356,11 @@ adminRouter.delete("/:id", verifyToken, async (req, res) => {
       req.params.id,
     ]);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(404).json({ success: false, message: "Admin not found" });
     }
-    res.json({ message: "Admin deleted" });
+    res.json({ success: true, message: "Admin deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -365,28 +368,28 @@ adminRouter.delete("/:id", verifyToken, async (req, res) => {
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
+    return res.status(400).json({ success: false, message: "Email and password are required" });
   }
   try {
     const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [
       email,
     ]);
     if (rows.length === 0) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
     const admin = rows[0];
     const isMatch = await bcrypt.compare(password, admin.password);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
     // Generate JWT
     const token = jwt.sign(
       { id: admin.id, email: admin.email },
       process.env.JWT_SECRET || "secretkey"
     );
-    res.json({ token, admin: { id: admin.id, email: admin.email } });
+    res.json({ success: true, token, admin: { id: admin.id, email: admin.email } });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
@@ -398,52 +401,14 @@ adminRouter.get("/profile", verifyToken, async (req, res) => {
       [req.admin.id]
     );
     if (rows.length === 0) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(404).json({ success: false, message: "Admin not found" });
     }
-    res.json(rows[0]);
+    res.json({ success: true, data: rows[0] });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
-adminRouter.get("/dashboard", verifyToken, async (req, res) => {
-  try {
-    // Shopkeepers count
-    const [shopkeepers] = await pool.query(
-      "SELECT COUNT(*) as count FROM shopkeepers"
-    );
-    // Customers count
-    const [customers] = await pool.query("SELECT COUNT(*) as count FROM users");
-    // Orders count and revenue (dummy, since no orders table)
-    const orders = 42;
-    const revenue = 12345;
-    // Top products (dummy)
-    const topProducts = [
-      { name: "Product A", sold: 100 },
-      { name: "Product B", sold: 80 },
-      { name: "Product C", sold: 60 },
-    ];
-    res.json({
-      shopkeepers: shopkeepers[0].count,
-      customers: customers[0].count,
-      orders,
-      revenue,
-      topProducts,
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-});
-adminRouter.get("/products", verifyToken, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      "SELECT * FROM products ORDER BY created_at DESC"
-    );
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-});
 
 // Add a new product with image upload (category as string)
 // adminRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
@@ -471,7 +436,7 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 //     );
 //     res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl, category });
 //   } catch (err) {
-//     res.status(500).json({ message: "Server error", error: err.message });
+//     res.status(500).json({ success: false, message: "Server error", error: err.message });
 //   }
 // });
 
@@ -482,7 +447,7 @@ adminRouter.post(
   async (req, res) => {
     const { name, description, category } = req.body;
     if (!name) {
-      return res.status(400).json({ message: "Name is required" });
+      return res.status(400).json({ success: false, message: "Name is required" });
     }
 
     let imageUrl = null;
@@ -508,14 +473,17 @@ adminRouter.post(
       );
 
       res.status(201).json({
-        id: dbResult.insertId,
-        name,
-        description,
-        image: imageUrl,
-        category,
+        success: true,
+        data: {
+          id: dbResult.insertId,
+          name,
+          description,
+          image: imageUrl,
+          category,
+        }
       });
     } catch (err) {
-      res.status(500).json({ message: "Server error", error: err.message });
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
 );
@@ -550,12 +518,12 @@ adminRouter.put(
       );
 
       if (dbResult.affectedRows === 0) {
-        return res.status(404).json({ message: "Product not found" });
+        return res.status(404).json({ success: false, message: "Product not found" });
       }
 
-      res.json({ message: "Product updated" });
+      res.json({ success: true, message: "Product updated" });
     } catch (err) {
-      res.status(500).json({ message: "Server error", error: err.message });
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
 );
@@ -567,11 +535,11 @@ adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
       req.params.id,
     ]);
     if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
-    res.json({ message: "Product deleted" });
+    res.json({ success: true, message: "Product deleted" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 

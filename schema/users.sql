@@ -6,5 +6,6 @@ CREATE TABLE users (
   phone VARCHAR(20),
   address VARCHAR(255),
   img VARCHAR(255),
+  store_credits INT DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

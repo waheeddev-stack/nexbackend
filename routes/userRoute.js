@@ -91,7 +91,7 @@ userrouter.post("/signup", async (req, res) => {
     );
 
     // Fetch the newly created user
-  const [userRows] = await pool.query("SELECT id, name, email, created_at FROM users WHERE id = ?", [result.insertId]);
+  const [userRows] = await pool.query("SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?", [result.insertId]);
   const user = userRows[0];
 
   return res.json({ success: true, user, message: "User registered successfully" });
@@ -114,8 +114,8 @@ userrouter.post("/signin", async (req, res) => {
     if (!validPass)
       return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "1h" });
-    res.json({ success: true, token, user: { id: user[0].id, email: user[0].email } });
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ success: true, token, user: { id: user[0].id, email: user[0].email, name: user[0].name } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -125,7 +125,7 @@ userrouter.post("/signin", async (req, res) => {
 // PROFILE
 userrouter.get("/profile/:id", async (req, res) => {
   try {
-    const [user] = await pool.query("SELECT id, email, name, phone, address, img, created_at FROM users WHERE id = ?", [req.params.id]);
+    const [user] = await pool.query("SELECT id, email, name, phone, address, img, store_credits, created_at FROM users WHERE id = ?", [req.params.id]);
     if (user.length === 0)
       return res.status(404).json({ success: false, message: "User not found" });
 
@@ -143,7 +143,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
     const { id } = req.params;
     let imgUrl = null;
     if (req.file) {
-      // Use util.promisify for cloudinary upload
+      // Use streamifier for cloudinary upload
       const streamifier = await import('streamifier');
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
@@ -170,7 +170,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
     values.push(id);
     const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = ?`;
     await pool.query(sql, values);
-    const [userRows] = await pool.query("SELECT id, name, email, phone, address, img, created_at FROM users WHERE id = ?", [id]);
+    const [userRows] = await pool.query("SELECT id, name, email, phone, address, img, store_credits, created_at FROM users WHERE id = ?", [id]);
     if (userRows.length === 0) {
       return res.status(404).json({ success: false, message: "User not found" });
     }

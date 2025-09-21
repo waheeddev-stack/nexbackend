@@ -5,15 +5,15 @@ import fs from "fs";
 dotenv.config();
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,     // TiDB host
-  port: process.env.DB_PORT || 4000, // TiDB default port
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  ssl: {
-    ca: fs.readFileSync("/etc/secrets/ca.pem"), // ✅ secure CA file
-    rejectUnauthorized: true, // extra safety
-  },
+  host: process.env.DB_HOST || "localhost",
+  port: process.env.DB_PORT || 3306,
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASS || "960901",
+  database: process.env.DB_NAME || "kirana",
+  ssl: process.env.DB_SSL === "true" ? {
+    ca: fs.readFileSync(process.env.DB_SSL_CA_PATH || "/etc/secrets/ca.pem"),
+    rejectUnauthorized: true,
+  } : false,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

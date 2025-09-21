@@ -143,11 +143,11 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "7d" });
     res.json({
       success: true,
       token,
-      user: { id: user[0].id, email: user[0].email },
+      user: { id: user[0].id, email: user[0].email, name: user[0].name, shop_name: user[0].shop_name },
     });
   } catch (err) {
     console.error(err);
@@ -213,17 +213,18 @@ shopkeeperRouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     // ✅ Handle image upload (if any)
     if (req.file) {
-      await new Promise((resolve, reject) => {
+      const streamifier = await import('streamifier');
+      const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           { folder: "shopkeepers" },
           (error, result) => {
             if (error) return reject(error);
-            imgUrl = result.secure_url;
-            resolve();
+            resolve(result);
           }
         );
-        stream.end(req.file.buffer);
+        streamifier.default.createReadStream(req.file.buffer).pipe(stream);
       });
+      imgUrl = result.secure_url;
     }
 
     // ✅ Dynamically build update query
