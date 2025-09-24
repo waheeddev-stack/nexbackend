@@ -536,20 +536,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 //   }
 // });
 
-
-
-// Utils
-async function getAddressFromCoords(lat, lng) {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`;
-    const res = await fetch(url, { headers: { "User-Agent": "nexkirana" } });
-    const data = await res.json();
-    return data.display_name || `Lat: ${lat}, Lng: ${lng}`;
-  } catch {
-    return `Lat: ${lat}, Lng: ${lng}`;
-  }
-}
-
 /**
  * Update order status (Shopkeeper role in future)
  */
