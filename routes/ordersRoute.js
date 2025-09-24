@@ -598,7 +598,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     // Validate all products exist in the selected shop and have sufficient stock
     const productIds = items.map(i => i.product_id);
     const [shopProducts] = await conn.query(
-      "SELECT product_id, stock, price FROM shop_products WHERE shop_id = ? AND product_id IN (?)",
+      "SELECT id, product_id, stock, price FROM shop_products WHERE shop_id = ? AND product_id IN (?)",
       [shopkeeper_id, productIds]
     );
     
@@ -628,18 +628,22 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       });
     }
 
-    // Bulk insert items (more efficient)
-    const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
+    // Bulk insert items using shop_product_id
+    const values = items.map(i => {
+      const shopProduct = shopProducts.find(p => p.product_id === i.product_id);
+      return [orderId, shopProduct.id, i.quantity, i.price];
+    });
     await conn.query(
-      "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?",
+      "INSERT INTO order_items (order_id, shop_product_id, quantity, price) VALUES ?",
       [values]
     );
 
     // Update stock in shop_products
     for (const item of items) {
+      const shopProduct = shopProducts.find(p => p.product_id === item.product_id);
       await conn.query(
-        "UPDATE shop_products SET stock = stock - ? WHERE shop_id = ? AND product_id = ?",
-        [item.quantity, shopkeeper_id, item.product_id]
+        "UPDATE shop_products SET stock = stock - ? WHERE id = ?",
+        [item.quantity, shopProduct.id]
       );
     }
 
@@ -671,7 +675,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           s.id AS shopkeeper_id,
           s.name AS shopkeeper_name,
           s.phone AS shopkeeper_phone,
-          oi.product_id, 
+          sp.product_id, 
           p.name AS product_name, 
           p.image AS product_image,
           oi.quantity, 
@@ -680,7 +684,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
        JOIN users u ON o.user_id = u.id
        JOIN shopkeepers s ON o.shopkeeper_id = s.id
        JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
+       JOIN shop_products sp ON oi.shop_product_id = sp.id
+       JOIN products p ON sp.product_id = p.id
        WHERE o.id = ?`,
       [orderId]
     );
@@ -849,7 +854,7 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
       `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
               JSON_ARRAYAGG(
                 JSON_OBJECT(
-                  'id', oi.product_id,
+                  'id', sp.product_id,
                   'quantity', oi.quantity,
                   'price', oi.price,
                   'name', p.name,
@@ -858,7 +863,8 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
               ) AS items
        FROM orders o
        JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
+       JOIN shop_products sp ON oi.shop_product_id = sp.id
+       JOIN products p ON sp.product_id = p.id
        WHERE o.user_id = ?
        GROUP BY o.id
        ORDER BY o.created_at DESC`,
@@ -948,7 +954,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
         COALESCE(
           JSON_ARRAYAGG(
             JSON_OBJECT(
-              'id', oi.product_id,
+              'id', sp.product_id,
               'name', p.name,
               'quantity', oi.quantity,
               'price', oi.price,
@@ -960,7 +966,8 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
         ANY_VALUE(u.phone) AS customer_phone
      FROM orders o
      JOIN order_items oi ON o.id = oi.order_id
-     JOIN products p ON oi.product_id = p.id
+     JOIN shop_products sp ON oi.shop_product_id = sp.id
+     JOIN products p ON sp.product_id = p.id
      JOIN users u ON o.user_id = u.id
      WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
      GROUP BY o.id
