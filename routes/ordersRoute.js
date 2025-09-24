@@ -595,12 +595,53 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     const orderId = orderResult.insertId;
 
+    // Validate all products exist in the selected shop and have sufficient stock
+    const productIds = items.map(i => i.product_id);
+    const [shopProducts] = await conn.query(
+      "SELECT product_id, stock, price FROM shop_products WHERE shop_id = ? AND product_id IN (?)",
+      [shopkeeper_id, productIds]
+    );
+    
+    const availableProductIds = shopProducts.map(p => p.product_id);
+    const missingProducts = productIds.filter(id => !availableProductIds.includes(id));
+    
+    if (missingProducts.length > 0) {
+      await conn.rollback();
+      return res.status(400).json({ 
+        message: `Products not available at selected shop: ${missingProducts.join(', ')}` 
+      });
+    }
+
+    // Check stock availability
+    const stockIssues = [];
+    for (const item of items) {
+      const shopProduct = shopProducts.find(p => p.product_id === item.product_id);
+      if (shopProduct && shopProduct.stock < item.quantity) {
+        stockIssues.push(`Product ${item.product_id}: requested ${item.quantity}, available ${shopProduct.stock}`);
+      }
+    }
+    
+    if (stockIssues.length > 0) {
+      await conn.rollback();
+      return res.status(400).json({ 
+        message: `Insufficient stock: ${stockIssues.join('; ')}` 
+      });
+    }
+
     // Bulk insert items (more efficient)
     const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
     await conn.query(
       "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?",
       [values]
     );
+
+    // Update stock in shop_products
+    for (const item of items) {
+      await conn.query(
+        "UPDATE shop_products SET stock = stock - ? WHERE shop_id = ? AND product_id = ?",
+        [item.quantity, shopkeeper_id, item.product_id]
+      );
+    }
 
     // Update user's store credits balance
     if (earnedCredits > 0) {
