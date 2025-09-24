@@ -25,8 +25,125 @@ function calculateCredits(amount) {
   return 0;
 }
 
-/* Create new order (Customer) with location
- */
+// Create new order (Customer) with location
+ordersRouter.post("/addorders", verifyToken, async (req, res) => {
+  try {
+    const { items, latitude, longitude } = req.body;
+    const user_id = req.user.id;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ message: "No items provided" });
+    }
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ message: "Delivery location required" });
+    }
+
+    // Convert lat/lng → readable address
+    const deliveryAddress = await getAddressFromCoords(latitude, longitude);
+
+    // Calculate total
+    const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+    // Calculate earned credits
+    const earnedCredits = calculateCredits(total);
+
+    // Insert order with location + address
+    const [orderResult] = await pool.query(
+      `INSERT INTO orders 
+       (user_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [user_id, total, "Pending", earnedCredits, latitude, longitude, deliveryAddress]
+    );
+
+    const orderId = orderResult.insertId;
+
+    // Insert order items
+    for (let item of items) {
+      await pool.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)`,
+        [orderId, item.product_id, item.quantity, item.price]
+      );
+    }
+
+    // Update user's store credits balance
+    if (earnedCredits > 0) {
+      await pool.query(
+        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+        [earnedCredits, user_id]
+      );
+    }
+
+    // Fetch full order details
+    const [orderDetails] = await pool.query(
+      `SELECT 
+          o.id AS orderId, 
+          o.total_amount, 
+          o.status, 
+          o.credits_earned,
+          o.latitude,
+          o.longitude,
+          o.delivery_address,
+          o.created_at,
+          u.id AS customer_id, 
+          u.name AS customer_name, 
+          u.email AS customer_email,
+          u.phone AS customer_phone,
+          oi.product_id, 
+          p.name AS product_name, 
+          p.image AS product_image,
+          oi.quantity, 
+          oi.price
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       WHERE o.id = ?`,
+      [orderId]
+    );
+
+    // Group items into a single order object
+    const orderPayload = {
+      orderId,
+      customer: {
+        id: orderDetails[0].customer_id,
+        name: orderDetails[0].customer_name,
+        email: orderDetails[0].customer_email,
+        phone: orderDetails[0].customer_phone,
+        address: orderDetails[0].delivery_address,
+      },
+      total: orderDetails[0].total_amount,
+      credits_earned: earnedCredits,
+      credits_value: earnedCredits * 0.5, // 1 credit = 0.5 INR
+      status: orderDetails[0].status,
+      created_at: orderDetails[0].created_at,
+      latitude: orderDetails[0].latitude,
+      longitude: orderDetails[0].longitude,
+      items: orderDetails.map((row) => ({
+        product_id: row.product_id,
+        product_name: row.product_name,
+        product_image: row.product_image,
+        quantity: row.quantity,
+        price: row.price,
+      })),
+    };
+
+    // Emit live update
+    if (req.io) {
+      req.io.emit("newOrder", orderPayload);
+      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Order created with live delivery address",
+      order: orderPayload,
+    });
+  } catch (err) {
+    console.error("Error creating order:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 // ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 //   try {
@@ -265,160 +382,173 @@ function calculateCredits(amount) {
 //   }
 // });
 
-ordersRouter.post("/addorders", verifyToken, async (req, res) => {
-  const conn = await pool.getConnection();
+// ordersRouter.post("/addorders", verifyToken, async (req, res) => {
+//   const conn = await pool.getConnection();
+//   try {
+//     const { items, latitude, longitude } = req.body;
+//     const user_id = req.user.id;
+
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({ message: "No items provided" });
+//     }
+//     if (!latitude || !longitude) {
+//       return res.status(400).json({ message: "Delivery location required" });
+//     }
+
+//     // ✅ Find nearest shopkeeper (within 2 km)
+//     const [nearestShop] = await pool.query(
+//       `SELECT id,
+//         (6371 * acos(
+//           cos(radians(?)) * cos(radians(latitude)) *
+//           cos(radians(longitude) - radians(?)) +
+//           sin(radians(?)) * sin(radians(latitude))
+//         )) AS distance
+//        FROM shopkeepers
+//        HAVING distance < 2
+//        ORDER BY distance ASC
+//        LIMIT 1`,
+//       [latitude, longitude, latitude]
+//     );
+
+//     if (!nearestShop.length) {
+//       return res.status(400).json({ message: "No shopkeeper nearby to fulfill order" });
+//     }
+
+//     const shopkeeper_id = nearestShop[0].id;
+
+//     // ✅ Convert lat/lng → readable address
+//     const deliveryAddress = await getAddressFromCoords(latitude, longitude)
+//       .catch(() => "Unknown Address");
+
+//     // ✅ Calculate total & credits
+//     const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+//     const earnedCredits = calculateCredits(total);
+
+//     await conn.beginTransaction();
+
+//     // ✅ Insert order
+//     const [orderResult] = await conn.query(
+//       `INSERT INTO orders 
+//        (user_id, shopkeeper_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
+//        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+//       [user_id, shopkeeper_id, total, "Pending", earnedCredits, latitude, longitude, deliveryAddress]
+//     );
+
+//     const orderId = orderResult.insertId;
+
+//     // ✅ Bulk insert items
+//     const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
+//     await conn.query(
+//       "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?",
+//       [values]
+//     );
+
+//     // ✅ Update user’s credits
+//     if (earnedCredits > 0) {
+//       await conn.query(
+//         "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+//         [earnedCredits, user_id]
+//       );
+//     }
+
+//     await conn.commit();
+
+//     // ✅ Fetch full order details (with shopkeeper info)
+//     const [orderDetails] = await pool.query(
+//       `SELECT 
+//           o.id AS orderId, 
+//           o.total_amount, 
+//           o.status, 
+//           o.credits_earned,
+//           o.latitude,
+//           o.longitude,
+//           o.delivery_address,
+//           o.created_at,
+//           u.id AS customer_id, 
+//           u.name AS customer_name, 
+//           u.email AS customer_email,
+//           u.phone AS customer_phone,
+//           s.id AS shopkeeper_id,
+//           s.name AS shopkeeper_name,
+//           s.phone AS shopkeeper_phone,
+//           oi.product_id, 
+//           p.name AS product_name, 
+//           p.image AS product_image,
+//           oi.quantity, 
+//           oi.price
+//        FROM orders o
+//        JOIN users u ON o.user_id = u.id
+//        JOIN shopkeepers s ON o.shopkeeper_id = s.id
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN products p ON oi.product_id = p.id
+//        WHERE o.id = ?`,
+//       [orderId]
+//     );
+
+//     const orderPayload = {
+//       orderId,
+//       customer: {
+//         id: orderDetails[0].customer_id,
+//         name: orderDetails[0].customer_name,
+//         email: orderDetails[0].customer_email,
+//         phone: orderDetails[0].customer_phone,
+//         address: orderDetails[0].delivery_address,
+//       },
+//       shopkeeper: {
+//         id: orderDetails[0].shopkeeper_id,
+//         name: orderDetails[0].shopkeeper_name,
+//         phone: orderDetails[0].shopkeeper_phone,
+//       },
+//       total: orderDetails[0].total_amount,
+//       credits_earned: earnedCredits,
+//       credits_value: earnedCredits * 0.5,
+//       status: orderDetails[0].status,
+//       created_at: orderDetails[0].created_at,
+//       latitude: orderDetails[0].latitude,
+//       longitude: orderDetails[0].longitude,
+//       items: orderDetails.map((row) => ({
+//         product_id: row.product_id,
+//         product_name: row.product_name,
+//         product_image: row.product_image,
+//         quantity: row.quantity,
+//         price: row.price,
+//       })),
+//     };
+
+//     // ✅ Emit order only to customer + shopkeeper
+//     if (req.io) {
+//       req.io.to(`shop_${shopkeeper_id}`).emit("newOrder", orderPayload);
+//       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+//     }
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Order created and assigned to nearest shopkeeper",
+//       order: orderPayload,
+//     });
+
+//   } catch (err) {
+//     await conn.rollback();
+//     console.error("Error creating order:", err);
+//     res.status(500).json({ message: "Server error" });
+//   } finally {
+//     conn.release();
+//   }
+// });
+
+
+
+// Utils
+async function getAddressFromCoords(lat, lng) {
   try {
-    const { items, latitude, longitude } = req.body;
-    const user_id = req.user.id;
-
-    if (!items || items.length === 0) {
-      return res.status(400).json({ message: "No items provided" });
-    }
-    if (!latitude || !longitude) {
-      return res.status(400).json({ message: "Delivery location required" });
-    }
-
-    // ✅ Find nearest shopkeeper (within 2 km)
-    const [nearestShop] = await pool.query(
-      `SELECT id,
-        (6371 * acos(
-          cos(radians(?)) * cos(radians(latitude)) *
-          cos(radians(longitude) - radians(?)) +
-          sin(radians(?)) * sin(radians(latitude))
-        )) AS distance
-       FROM shopkeepers
-       HAVING distance < 2
-       ORDER BY distance ASC
-       LIMIT 1`,
-      [latitude, longitude, latitude]
-    );
-
-    if (!nearestShop.length) {
-      return res.status(400).json({ message: "No shopkeeper nearby to fulfill order" });
-    }
-
-    const shopkeeper_id = nearestShop[0].id;
-
-    // ✅ Convert lat/lng → readable address
-    const deliveryAddress = await getAddressFromCoords(latitude, longitude)
-      .catch(() => "Unknown Address");
-
-    // ✅ Calculate total & credits
-    const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-    const earnedCredits = calculateCredits(total);
-
-    await conn.beginTransaction();
-
-    // ✅ Insert order
-    const [orderResult] = await conn.query(
-      `INSERT INTO orders 
-       (user_id, shopkeeper_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, shopkeeper_id, total, "Pending", earnedCredits, latitude, longitude, deliveryAddress]
-    );
-
-    const orderId = orderResult.insertId;
-
-    // ✅ Bulk insert items
-    const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
-    await conn.query(
-      "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?",
-      [values]
-    );
-
-    // ✅ Update user’s credits
-    if (earnedCredits > 0) {
-      await conn.query(
-        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
-        [earnedCredits, user_id]
-      );
-    }
-
-    await conn.commit();
-
-    // ✅ Fetch full order details (with shopkeeper info)
-    const [orderDetails] = await pool.query(
-      `SELECT 
-          o.id AS orderId, 
-          o.total_amount, 
-          o.status, 
-          o.credits_earned,
-          o.latitude,
-          o.longitude,
-          o.delivery_address,
-          o.created_at,
-          u.id AS customer_id, 
-          u.name AS customer_name, 
-          u.email AS customer_email,
-          u.phone AS customer_phone,
-          s.id AS shopkeeper_id,
-          s.name AS shopkeeper_name,
-          s.phone AS shopkeeper_phone,
-          oi.product_id, 
-          p.name AS product_name, 
-          p.image AS product_image,
-          oi.quantity, 
-          oi.price
-       FROM orders o
-       JOIN users u ON o.user_id = u.id
-       JOIN shopkeepers s ON o.shopkeeper_id = s.id
-       JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
-       WHERE o.id = ?`,
-      [orderId]
-    );
-
-    const orderPayload = {
-      orderId,
-      customer: {
-        id: orderDetails[0].customer_id,
-        name: orderDetails[0].customer_name,
-        email: orderDetails[0].customer_email,
-        phone: orderDetails[0].customer_phone,
-        address: orderDetails[0].delivery_address,
-      },
-      shopkeeper: {
-        id: orderDetails[0].shopkeeper_id,
-        name: orderDetails[0].shopkeeper_name,
-        phone: orderDetails[0].shopkeeper_phone,
-      },
-      total: orderDetails[0].total_amount,
-      credits_earned: earnedCredits,
-      credits_value: earnedCredits * 0.5,
-      status: orderDetails[0].status,
-      created_at: orderDetails[0].created_at,
-      latitude: orderDetails[0].latitude,
-      longitude: orderDetails[0].longitude,
-      items: orderDetails.map((row) => ({
-        product_id: row.product_id,
-        product_name: row.product_name,
-        product_image: row.product_image,
-        quantity: row.quantity,
-        price: row.price,
-      })),
-    };
-
-    // ✅ Emit order only to customer + shopkeeper
-    if (req.io) {
-      req.io.to(`shop_${shopkeeper_id}`).emit("newOrder", orderPayload);
-      req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
-    }
-
-    res.status(201).json({
-      success: true,
-      message: "Order created and assigned to nearest shopkeeper",
-      order: orderPayload,
-    });
-
-  } catch (err) {
-    await conn.rollback();
-    console.error("Error creating order:", err);
-    res.status(500).json({ message: "Server error" });
-  } finally {
-    conn.release();
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`;
+    const res = await fetch(url, { headers: { "User-Agent": "nexkirana" } });
+    const data = await res.json();
+    return data.display_name || `Lat: ${lat}, Lng: ${lng}`;
+  } catch {
+    return `Lat: ${lat}, Lng: ${lng}`;
   }
-});
-
+}
 
 /**
  * Update order status (Shopkeeper role in future)
