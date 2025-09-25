@@ -236,68 +236,20 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     const orderId = Number(req.params.id);
+    if (!orderId || isNaN(orderId)) return res.status(400).json({ message: "Invalid order ID" });
 
-    // Validate order ID
-    if (!orderId || isNaN(orderId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid order ID" });
-    }
-
-    // Validate status
     const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
-    if (!validStatuses.includes(status)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid status" });
-    }
+    if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
 
-    // Update status in DB
-    const [result] = await pool.query(
-      "UPDATE orders SET status = ? WHERE id = ?",
-      [status, orderId]
-    );
+    const [result] = await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, orderId]);
+    if (!result.affectedRows) return res.status(404).json({ message: "Order not found" });
 
-    if (result.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
-    }
+    if (req.io) req.io.emit("orderStatusUpdate", { orderId, status });
 
-    // Emit status update to all connected clients
-    if (req.io) {
-      req.io.emit("orderStatusUpdate", { orderId, status });
-
-      // Optional: emit updated dashboard stats
-      const [[{ totalOrders }]] = await pool.query(
-        "SELECT COUNT(*) AS totalOrders FROM orders"
-      );
-      const [[{ totalRevenue }]] = await pool.query(
-        "SELECT SUM(total_amount) AS totalRevenue FROM orders"
-      );
-      const [[{ totalUsers }]] = await pool.query(
-        "SELECT COUNT(*) AS totalUsers FROM users"
-      );
-      const [ordersByStatus] = await pool.query(
-        "SELECT status, COUNT(*) AS count FROM orders GROUP BY status"
-      );
-
-      req.io.emit("dashboardStatsUpdate", {
-        totalOrders,
-        totalRevenue,
-        totalUsers,
-        ordersByStatus,
-      });
-    }
-
-    res.json({
-      success: true,
-      message: `Order status updated to ${status}`,
-      status,
-    });
+    res.json({ success: true, message: `Order status updated to ${status}`, status });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -365,6 +317,8 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
  */
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
+    const shopkeeper_id = req.user.id; // Get shopkeeper ID from token
+    
     const [orders] = await pool.query(
       `SELECT 
         o.id AS order_id, 
@@ -374,6 +328,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
         o.delivery_address,
         o.latitude,
         o.longitude,
+        o.user_id,
         COALESCE(
           JSON_ARRAYAGG(
             JSON_OBJECT(
@@ -381,27 +336,89 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
               'name', p.name,
               'quantity', oi.quantity,
               'price', oi.price,
-              'image', p.image
+              'image', p.image,
+              'product_name', p.name,
+              'product_image', p.image
             )
           ), JSON_ARRAY()
         ) AS items,
         ANY_VALUE(u.name) AS customer_name, 
-        ANY_VALUE(u.phone) AS customer_phone
+        ANY_VALUE(u.phone) AS customer_phone,
+        ANY_VALUE(u.email) AS customer_email
      FROM orders o
      JOIN order_items oi ON o.id = oi.order_id
      JOIN shop_products sp ON oi.shop_product_id = sp.id
      JOIN products p ON sp.product_id = p.id
      JOIN users u ON o.user_id = u.id
      WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
+       AND o.shopkeeper_id = ?
      GROUP BY o.id
-     ORDER BY o.created_at ASC`
+     ORDER BY o.created_at DESC`,
+     [shopkeeper_id]
     );
 
     res.json({ success: true, orders });
   } catch (err) {
-    console.error("❌ Error fetching live orders:", err);
+    console.error("❌ Error fetching shopkeeper orders:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
+
+// shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
+//   try {
+//     const shopkeeper_id = req.user.id;
+//     const { status } = req.query; // Optional filter by status
+
+//     let whereClause = "WHERE o.shopkeeper_id = ?";
+//     const params = [shopkeeper_id];
+
+//     if (status) {
+//       whereClause += " AND o.status = ?";
+//       params.push(status);
+//     }
+
+//     const [orders] = await pool.query(
+//       `SELECT 
+//         o.id AS order_id,
+//         o.user_id,
+//         o.status,
+//         o.total_amount,
+//         o.created_at,
+//         o.credits_earned,
+//         o.latitude,
+//         o.longitude,
+//         o.delivery_address,
+//         u.name AS customer_name,
+//         u.phone AS customer_phone,
+//         u.email AS customer_email,
+//         JSON_ARRAYAGG(
+//           JSON_OBJECT(
+//             'product_id', sp.product_id,
+//             'product_name', p.name,
+//             'product_image', p.image,
+//             'quantity', oi.quantity,
+//             'price', oi.price,
+//             'id', sp.product_id,
+//             'name', p.name,
+//             'image', p.image
+//           )
+//         ) AS items
+//        FROM orders o
+//        JOIN users u ON o.user_id = u.id
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN shop_products sp ON oi.shop_product_id = sp.id
+//        JOIN products p ON sp.product_id = p.id
+//        ${whereClause}
+//        GROUP BY o.id
+//        ORDER BY o.created_at DESC`,
+//       params
+//     );
+
+//     res.json({ success: true, orders });
+//   } catch (err) {
+//     console.error("Get shopkeeper orders error:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 export default ordersRouter;
