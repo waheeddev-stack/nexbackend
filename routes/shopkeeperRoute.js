@@ -657,7 +657,7 @@ shopkeeperRouter.put("/inventory/:shopProductId", verifyToken, async (req, res) 
 /**
  * GET all products of the logged-in shopkeeper
  */
-shopkeeperRouter.get("/", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/api/products", verifyToken, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const [products] = await pool.query(
@@ -674,7 +674,7 @@ shopkeeperRouter.get("/", verifyToken, async (req, res) => {
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/", verifyToken, async (req, res) => {
+shopkeeperRouter.post("/api/products", verifyToken, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { name, description, category, price, stock, image } = req.body;
@@ -700,7 +700,7 @@ shopkeeperRouter.post("/", verifyToken, async (req, res) => {
 /**
  * UPDATE product
  */
-shopkeeperRouter.put("/:productId", verifyToken, async (req, res) => {
+shopkeeperRouter.put("/api/products/:id", verifyToken, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { productId } = req.params;
@@ -751,7 +751,7 @@ shopkeeperRouter.put("/:productId", verifyToken, async (req, res) => {
 /**
  * DELETE product
  */
-shopkeeperRouter.delete("/:productId", verifyToken, async (req, res) => {
+shopkeeperRouter.delete("/api/products/:id", verifyToken, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { productId } = req.params;
