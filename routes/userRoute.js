@@ -36,15 +36,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
       return res.json({ success: true, shops: [] });
     }
 
-    // Fetch products for each shop
+    // Fetch products for each shop directly from products table (products.shop_id)
     const shopIds = shops.map(s => s.id);
     const [products] = await pool.query(
-      `SELECT sp.shop_id, sp.id AS shop_product_id,
-              pm.id AS product_id, pm.name, pm.description, pm.image, pm.category,
-              sp.price, sp.stock
-       FROM shop_products sp
-       JOIN products pm ON sp.product_id = pm.id
-       WHERE sp.shop_id IN (?)`,
+      `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+       FROM products
+       WHERE shop_id IN (?)
+       ORDER BY created_at DESC`,
       [shopIds]
     );
 
