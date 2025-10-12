@@ -1,9 +1,13 @@
-CREATE TABLE
-  products (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    image VARCHAR(255),
-    category VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
+CREATE TABLE products (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  shop_id INT,
+  name VARCHAR(150),
+  description TEXT,
+  category VARCHAR(100),
+  price DECIMAL(10,2),
+  stock INT,
+  image VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (shop_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
+);

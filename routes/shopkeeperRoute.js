@@ -15,18 +15,17 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     
-    // Get top selling product for this specific shopkeeper
-    const [[topProduct]] = await pool.query(`
-      SELECT p.name, SUM(oi.quantity) AS sold
-      FROM order_items oi
-      JOIN shop_products sp ON oi.shop_product_id = sp.id
-      JOIN products p ON sp.product_id = p.id
-      JOIN orders o ON oi.order_id = o.id
-      WHERE o.shopkeeper_id = ?
-      GROUP BY sp.product_id
-      ORDER BY sold DESC
-      LIMIT 1
-    `, [shopkeeper_id]);
+      // Get top selling product for this specific shopkeeper (products table contains shop_id)
+      const [[topProduct]] = await pool.query(`
+        SELECT p.name, SUM(oi.quantity) AS sold
+        FROM order_items oi
+        JOIN products p ON oi.product_id = p.id
+        JOIN orders o ON oi.order_id = o.id
+        WHERE o.shopkeeper_id = ? AND p.shop_id = ?
+        GROUP BY p.id
+        ORDER BY sold DESC
+        LIMIT 1
+      `, [shopkeeper_id, shopkeeper_id]);
 
     // Get stats for this specific shopkeeper only
     const [[totalSales]] = await pool.query(
@@ -309,96 +308,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.single("img"), async (r
   }
 });
 
-// Get global product catalog for shopkeepers
-// shopkeeperRouter.get("/shop-products", async (req, res) => {
-//   try {
-//     const [rows] = await pool.query(
-//       "SELECT id, name, description, image, category FROM products ORDER BY created_at DESC"
-//     );
-//     res.json({ success: true, products: rows });
-//   } catch (err) {
-//     console.error("Get global products error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
-// shopkeeperRouter.post("/shop-products", verifyToken, async (req, res) => {
-//   try {
-//     const shop_id = req.user?.id;
-//     const { product_id, price, stock } = req.body;
-
-//     if (!shop_id || !product_id || price == null || stock == null) {
-//       return res.status(400).json({ success: false, message: "Missing required fields" });
-//     }
-
-//     // Validate and coerce numeric types
-//     const parsedPrice = Number(price);
-//     const parsedStock = Number(stock);
-    
-//     if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
-//       return res.status(400).json({ success: false, message: "Price must be a valid positive number" });
-//     }
-    
-//     if (Number.isNaN(parsedStock) || parsedStock < 0) {
-//       return res.status(400).json({ success: false, message: "Stock must be a valid non-negative number" });
-//     }
-
-//     // Check if product exists
-//     const [productExists] = await pool.query("SELECT id FROM products WHERE id = ?", [product_id]);
-//     if (productExists.length === 0) {
-//       return res.status(400).json({ success: false, message: "Product does not exist" });
-//     }
-
-//     const [existing] = await pool.query(
-//       "SELECT id FROM shop_products WHERE shop_id = ? AND product_id = ?",
-//       [shop_id, product_id]
-//     );
-
-//     if (existing.length > 0) {
-//       await pool.query(
-//         "UPDATE shop_products SET price = ?, stock = ? WHERE shop_id = ? AND product_id = ?",
-//         [parsedPrice, parsedStock, shop_id, product_id]
-//       );
-//       return res.json({ success: true, updated: true, message: "Product updated successfully" });
-//     } else {
-//       const [result] = await pool.query(
-//         "INSERT INTO shop_products (shop_id, product_id, price, stock) VALUES (?, ?, ?, ?)",
-//         [shop_id, product_id, parsedPrice, parsedStock]
-//       );
-//       return res.json({ success: true, id: result.insertId, updated: false, message: "Product added successfully" });
-//     }
-//   } catch (err) {
-//     console.error("Add shop product error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
-// shopkeeperRouter.get("/shops/:shopId/products", verifyToken, async (req, res) => {
-//   try {
-//     const { shopId } = req.params;
-//     const requestedShopId = parseInt(shopId);
-    
-//     if (requestedShopId !== req.user.id) {
-//       return res.status(403).json({ success: false, message: "Unauthorized" });
-//     }
-
-//     const [rows] = await pool.query(
-//       `SELECT sp.id AS shop_product_id,
-//               pm.id AS product_id, pm.name, pm.description, pm.image, pm.category,
-//               sp.price, sp.stock
-//        FROM shop_products sp
-//        JOIN products pm ON sp.product_id = pm.id
-//        WHERE sp.shop_id = ?
-//        ORDER BY pm.name ASC`,
-//       [requestedShopId]
-//     );
-
-//     res.json({ success: true, products: rows });
-//   } catch (err) {
-//     console.error("Get shop products error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
+// (Inventory handled on products table in this schema — shop-specific product columns exist on products table)
 
 // Get orders for a specific shopkeeper
 shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
@@ -430,7 +340,7 @@ shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
         u.email AS customer_email,
         JSON_ARRAYAGG(
           JSON_OBJECT(
-            'product_id', sp.product_id,
+            'product_id', oi.product_id,
             'product_name', p.name,
             'product_image', p.image,
             'quantity', oi.quantity,
@@ -440,8 +350,7 @@ shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
        FROM orders o
        JOIN users u ON o.user_id = u.id
        JOIN order_items oi ON o.id = oi.order_id
-       JOIN shop_products sp ON oi.shop_product_id = sp.id
-       JOIN products p ON sp.product_id = p.id
+       JOIN products p ON oi.product_id = p.id
        ${whereClause}
        GROUP BY o.id
        ORDER BY o.created_at DESC`,
@@ -514,146 +423,6 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) 
   }
 });
 
-// Get shopkeeper's inventory/stock levels
-// shopkeeperRouter.get("/inventory", verifyToken, async (req, res) => {
-//   try {
-//     const shopkeeper_id = req.user.id;
-
-//     const [inventory] = await pool.query(
-//       `SELECT 
-//         sp.id AS shop_product_id,
-//         sp.product_id,
-//         p.name AS product_name,
-//         p.description,
-//         p.image,
-//         p.category,
-//         sp.price,
-//         sp.stock,
-//         sp.created_at AS added_at
-//        FROM shop_products sp
-//        JOIN products p ON sp.product_id = p.id
-//        WHERE sp.shop_id = ?
-//        ORDER BY sp.created_at DESC`,
-//       [shopkeeper_id]
-//     );
-
-//     // Calculate low stock items (less than 10)
-//     const lowStockItems = inventory.filter(item => item.stock < 10);
-
-//     res.json({ 
-//       success: true, 
-//       inventory,
-//       totalProducts: inventory.length,
-//       lowStockItems: lowStockItems.length,
-//       lowStockProducts: lowStockItems
-//     });
-//   } catch (err) {
-//     console.error("Get inventory error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
-// // Update product stock/price for shopkeeper
-// shopkeeperRouter.put("/inventory/:shopProductId", verifyToken, async (req, res) => {
-//   try {
-//     const shopkeeper_id = req.user.id;
-//     const { shopProductId } = req.params;
-//     const { price, stock } = req.body;
-
-//     const shopProductIdNum = parseInt(shopProductId);
-//     if (isNaN(shopProductIdNum)) {
-//       return res.status(400).json({ success: false, message: "Invalid shop product ID" });
-//     }
-
-//     if (price == null && stock == null) {
-//       return res.status(400).json({ 
-//         success: false, 
-//         message: "At least price or stock must be provided" 
-//       });
-//     }
-
-//     // Check if shop_product belongs to this shopkeeper
-//     const [productCheck] = await pool.query(
-//       "SELECT id FROM shop_products WHERE id = ? AND shop_id = ?",
-//       [shopProductIdNum, shopkeeper_id]
-//     );
-
-//     if (productCheck.length === 0) {
-//       return res.status(404).json({ 
-//         success: false, 
-//         message: "Product not found in your inventory" 
-//       });
-//     }
-
-//     // Build dynamic update query
-//     const fields = [];
-//     const values = [];
-
-//     if (price != null) {
-//       const parsedPrice = Number(price);
-//       if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
-//         return res.status(400).json({ 
-//           success: false, 
-//           message: "Price must be a valid positive number" 
-//         });
-//       }
-//       fields.push("price = ?");
-//       values.push(parsedPrice);
-//     }
-
-//     if (stock != null) {
-//       const parsedStock = Number(stock);
-//       if (Number.isNaN(parsedStock) || parsedStock < 0) {
-//         return res.status(400).json({ 
-//           success: false, 
-//           message: "Stock must be a valid non-negative number" 
-//         });
-//       }
-//       fields.push("stock = ?");
-//       values.push(parsedStock);
-//     }
-
-//     values.push(shopProductIdNum);
-//     values.push(shopkeeper_id);
-
-//     const [result] = await pool.query(
-//       `UPDATE shop_products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
-//       values
-//     );
-
-//     if (result.affectedRows === 0) {
-//       return res.status(400).json({ 
-//         success: false, 
-//         message: "Failed to update product" 
-//       });
-//     }
-
-//     // Return updated product info
-//     const [updatedProduct] = await pool.query(
-//       `SELECT 
-//         sp.id AS shop_product_id,
-//         sp.product_id,
-//         p.name AS product_name,
-//         p.image,
-//         sp.price,
-//         sp.stock
-//        FROM shop_products sp
-//        JOIN products p ON sp.product_id = p.id
-//        WHERE sp.id = ? AND sp.shop_id = ?`,
-//       [shopProductIdNum, shopkeeper_id]
-//     );
-
-//     res.json({ 
-//       success: true, 
-//       message: "Product updated successfully",
-//       product: updatedProduct[0]
-//     });
-//   } catch (err) {
-//     console.error("Update inventory error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
-
 /**
  * GET all products of the logged-in shopkeeper
  */
@@ -674,23 +443,47 @@ shopkeeperRouter.get("/products", verifyToken, async (req, res) => {
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/products", verifyToken, async (req, res) => {
+shopkeeperRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { name, description, category, price, stock, image } = req.body;
+    const { name, description, category, price, stock } = req.body;
 
     if (!name || price == null || stock == null) {
       return res.status(400).json({ success: false, message: "Name, price, and stock are required" });
     }
 
+    const parsedPrice = Number(price);
+    const parsedStock = Number(stock);
+    if (Number.isNaN(parsedPrice) || parsedPrice < 0) return res.status(400).json({ success: false, message: "Invalid price" });
+    if (Number.isNaN(parsedStock) || parsedStock < 0) return res.status(400).json({ success: false, message: "Invalid stock" });
+
+    // Handle optional image upload
+    let imageUrl = null;
+    if (req.file) {
+      try {
+        const streamifier = await import('streamifier');
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: "products" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          });
+          streamifier.default.createReadStream(req.file.buffer).pipe(stream);
+        });
+        imageUrl = result.secure_url;
+      } catch (uploadErr) {
+        console.error("Product image upload error:", uploadErr);
+        return res.status(500).json({ success: false, message: "Failed to upload image" });
+      }
+    }
+
     const [result] = await pool.query(
-      `INSERT INTO products 
-       (shop_id, name, description, category, price, stock, image) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, name, description || "", category || "", Number(price), Number(stock), image || null]
+      `INSERT INTO products (shop_id, name, description, category, price, stock, image) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [shop_id, name.trim(), description || null, category || null, parsedPrice, parsedStock, imageUrl]
     );
 
-    res.json({ success: true, id: result.insertId, message: "Product added successfully" });
+    const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
+
+    res.status(201).json({ success: true, id: result.insertId, product: created[0], message: "Product added successfully" });
   } catch (err) {
     console.error("Add product error:", err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -700,47 +493,49 @@ shopkeeperRouter.post("/products", verifyToken, async (req, res) => {
 /**
  * UPDATE product
  */
-shopkeeperRouter.put("/products/:id", verifyToken, async (req, res) => {
+shopkeeperRouter.put("/products/:id", verifyToken, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { productId } = req.params;
-    const { name, description, category, price, stock, image } = req.body;
+    const productId = req.params.id;
+    const { name, description, category, price, stock } = req.body;
 
-    const [existing] = await pool.query(
-      "SELECT * FROM products WHERE id = ? AND shop_id = ?",
-      [productId, shop_id]
-    );
+    const [existing] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+    if (existing.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
 
-    if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: "Product not found" });
+    // Handle optional image upload
+    let imageUrl = existing[0].image;
+    if (req.file) {
+      try {
+        const streamifier = await import('streamifier');
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: "products" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          });
+          streamifier.default.createReadStream(req.file.buffer).pipe(stream);
+        });
+        imageUrl = result.secure_url;
+      } catch (uploadErr) {
+        console.error("Product image upload error:", uploadErr);
+        return res.status(500).json({ success: false, message: "Failed to upload image" });
+      }
     }
 
     const fields = [];
     const values = [];
-
-    if (name) { fields.push("name = ?"); values.push(name); }
-    if (description) { fields.push("description = ?"); values.push(description); }
+    if (name) { fields.push("name = ?"); values.push(name.trim()); }
+    if (description !== undefined) { fields.push("description = ?"); values.push(description || null); }
     if (category) { fields.push("category = ?"); values.push(category); }
-    if (price != null) { fields.push("price = ?"); values.push(Number(price)); }
-    if (stock != null) { fields.push("stock = ?"); values.push(Number(stock)); }
-    if (image) { fields.push("image = ?"); values.push(image); }
+    if (price != null) { const p = Number(price); if (Number.isNaN(p) || p < 0) return res.status(400).json({ success: false, message: "Invalid price" }); fields.push("price = ?"); values.push(p); }
+    if (stock != null) { const s = Number(stock); if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); fields.push("stock = ?"); values.push(s); }
+    if (imageUrl !== existing[0].image) { fields.push("image = ?"); values.push(imageUrl); }
 
-    if (fields.length === 0) {
-      return res.status(400).json({ success: false, message: "No fields to update" });
-    }
+    if (fields.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
 
     values.push(productId, shop_id);
+    await pool.query(`UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`, values);
 
-    await pool.query(
-      `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
-      values
-    );
-
-    const [updated] = await pool.query(
-      "SELECT * FROM products WHERE id = ? AND shop_id = ?",
-      [productId, shop_id]
-    );
-
+    const [updated] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
     res.json({ success: true, message: "Product updated successfully", product: updated[0] });
   } catch (err) {
     console.error("Update product error:", err);
@@ -754,19 +549,19 @@ shopkeeperRouter.put("/products/:id", verifyToken, async (req, res) => {
 shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { productId } = req.params;
+    const productId = req.params.id;
 
-    const [existing] = await pool.query(
-      "SELECT * FROM products WHERE id = ? AND shop_id = ?",
-      [productId, shop_id]
+    const [existing] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+    if (existing.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
+
+    // Check if product is referenced in any order_items
+    const [usedInOrders] = await pool.query(
+      `SELECT COUNT(*) AS c FROM order_items WHERE product_id = ?`,
+      [productId]
     );
-
-    if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: "Product not found" });
-    }
+    if (usedInOrders[0].c > 0) return res.status(400).json({ success: false, message: "Cannot delete product involved in orders" });
 
     await pool.query("DELETE FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
-
     res.json({ success: true, message: "Product deleted successfully" });
   } catch (err) {
     console.error("Delete product error:", err);

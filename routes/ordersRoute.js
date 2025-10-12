@@ -84,53 +84,37 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     // Validate all products exist in the selected shop and have sufficient stock
     const productIds = items.map(i => i.product_id);
     const [shopProducts] = await conn.query(
-      "SELECT id, product_id, stock, price FROM shop_products WHERE shop_id = ? AND product_id IN (?)",
+      "SELECT id, name, stock, price FROM products WHERE shop_id = ? AND id IN (?)",
       [shopkeeper_id, productIds]
     );
-    
-    const availableProductIds = shopProducts.map(p => p.product_id);
+
+    const availableProductIds = shopProducts.map(p => p.id);
     const missingProducts = productIds.filter(id => !availableProductIds.includes(id));
-    
     if (missingProducts.length > 0) {
       await conn.rollback();
-      return res.status(400).json({ 
-        message: `Products not available at selected shop: ${missingProducts.join(', ')}` 
-      });
+      return res.status(400).json({ message: `Products not available at selected shop: ${missingProducts.join(', ')}` });
     }
 
     // Check stock availability
     const stockIssues = [];
     for (const item of items) {
-      const shopProduct = shopProducts.find(p => p.product_id === item.product_id);
-      if (shopProduct && shopProduct.stock < item.quantity) {
-        stockIssues.push(`Product ${item.product_id}: requested ${item.quantity}, available ${shopProduct.stock}`);
+      const prod = shopProducts.find(p => p.id === item.product_id);
+      if (prod && prod.stock < item.quantity) {
+        stockIssues.push(`Product ${item.product_id}: requested ${item.quantity}, available ${prod.stock}`);
       }
     }
-    
     if (stockIssues.length > 0) {
       await conn.rollback();
-      return res.status(400).json({ 
-        message: `Insufficient stock: ${stockIssues.join('; ')}` 
-      });
+      return res.status(400).json({ message: `Insufficient stock: ${stockIssues.join('; ')}` });
     }
 
-    // Bulk insert items using shop_product_id
-    const values = items.map(i => {
-      const shopProduct = shopProducts.find(p => p.product_id === i.product_id);
-      return [orderId, shopProduct.id, i.quantity, i.price];
-    });
-    await conn.query(
-      "INSERT INTO order_items (order_id, shop_product_id, quantity, price) VALUES ?",
-      [values]
-    );
+    // Bulk insert items using product_id
+    const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
+    await conn.query("INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?", [values]);
 
-    // Update stock in shop_products
+    // Update stock in products table
     for (const item of items) {
-      const shopProduct = shopProducts.find(p => p.product_id === item.product_id);
-      await conn.query(
-        "UPDATE shop_products SET stock = stock - ? WHERE id = ?",
-        [item.quantity, shopProduct.id]
-      );
+      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [item.quantity, item.product_id]);
     }
 
     // Update user's store credits balance
@@ -161,7 +145,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           s.id AS shopkeeper_id,
           s.name AS shopkeeper_name,
           s.phone AS shopkeeper_phone,
-          sp.product_id, 
+          oi.product_id, 
           p.name AS product_name, 
           p.image AS product_image,
           oi.quantity, 
@@ -170,8 +154,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
        JOIN users u ON o.user_id = u.id
        JOIN shopkeepers s ON o.shopkeeper_id = s.id
        JOIN order_items oi ON o.id = oi.order_id
-       JOIN shop_products sp ON oi.shop_product_id = sp.id
-       JOIN products p ON sp.product_id = p.id
+       JOIN products p ON oi.product_id = p.id
        WHERE o.id = ?`,
       [orderId]
     );
@@ -264,7 +247,7 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
       `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
               JSON_ARRAYAGG(
                 JSON_OBJECT(
-                  'id', sp.product_id,
+                  'id', oi.product_id,
                   'quantity', oi.quantity,
                   'price', oi.price,
                   'name', p.name,
@@ -273,8 +256,7 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
               ) AS items
        FROM orders o
        JOIN order_items oi ON o.id = oi.order_id
-       JOIN shop_products sp ON oi.shop_product_id = sp.id
-       JOIN products p ON sp.product_id = p.id
+       JOIN products p ON oi.product_id = p.id
        WHERE o.user_id = ?
        GROUP BY o.id
        ORDER BY o.created_at DESC`,
@@ -332,13 +314,11 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
         COALESCE(
           JSON_ARRAYAGG(
             JSON_OBJECT(
-              'id', sp.product_id,
+              'id', oi.product_id,
               'name', p.name,
               'quantity', oi.quantity,
               'price', oi.price,
-              'image', p.image,
-              'product_name', p.name,
-              'product_image', p.image
+              'image', p.image
             )
           ), JSON_ARRAY()
         ) AS items,
@@ -347,8 +327,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
         ANY_VALUE(u.email) AS customer_email
      FROM orders o
      JOIN order_items oi ON o.id = oi.order_id
-     JOIN shop_products sp ON oi.shop_product_id = sp.id
-     JOIN products p ON sp.product_id = p.id
+     JOIN products p ON oi.product_id = p.id
      JOIN users u ON o.user_id = u.id
      WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
        AND o.shopkeeper_id = ?

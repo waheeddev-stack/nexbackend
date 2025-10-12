@@ -1,12 +1,14 @@
 CREATE TABLE orders (
-  id INT PRIMARY KEY AUTO_INCREMENT,
+  id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
+  shopkeeper_id INT NOT NULL,
   status ENUM('Pending','Processing','Delivered','Cancelled') DEFAULT 'Pending',
   total_amount DECIMAL(10,2) NOT NULL,
-  credits_earned INT DEFAULT 0,
-  latitude DECIMAL(10, 8),
-  longitude DECIMAL(11, 8),
-  delivery_address TEXT,
+  credits_earned DECIMAL(10,2) DEFAULT 0,
+  latitude DECIMAL(9,6),
+  longitude DECIMAL(9,6),
+  delivery_address VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
 );
