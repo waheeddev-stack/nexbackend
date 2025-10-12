@@ -5,9 +5,6 @@ import fetch from "node-fetch";
 
 const ordersRouter = express.Router();
 
-/**
- * Create new order (Customer) - Updated for shop_products structure
- */
 
 async function getAddressFromCoords(latitude, longitude) {
   const url = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`;
