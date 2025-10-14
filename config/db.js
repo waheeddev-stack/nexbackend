@@ -4,16 +4,21 @@ import fs from "fs";
 
 dotenv.config();
 
+let sslConfig = undefined;
+if (process.env.DB_SSL === "true") {
+  sslConfig = {
+    ca: fs.readFileSync(process.env.DB_SSL_CA || "/etc/secrets/ca.pem"),
+    rejectUnauthorized: true,
+  };
+}
+
 const pool = mysql.createPool({
   host: process.env.DB_HOST,     // TiDB host
   port: process.env.DB_PORT || 4000, // TiDB default port
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  ssl: {
-    ca: fs.readFileSync("/etc/secrets/ca.pem"), // ✅ secure CA file
-    rejectUnauthorized: true, // extra safety
-  },
+  ssl: sslConfig,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
