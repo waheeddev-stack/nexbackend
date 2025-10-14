@@ -6,10 +6,13 @@ dotenv.config();
 
 let sslConfig = undefined;
 if (process.env.DB_SSL === "true") {
+  console.log("Using SSL for MySQL connection");
   sslConfig = {
-    ca: fs.readFileSync(process.env.DB_SSL_CA || "/etc/secrets/ca.pem"),
+    ca: fs.readFileSync(process.env.DB_SSL_CA),
     rejectUnauthorized: true,
   };
+} else {
+  console.log("NOT using SSL for MySQL connection");
 }
 
 const pool = mysql.createPool({
