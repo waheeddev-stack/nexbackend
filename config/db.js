@@ -8,7 +8,7 @@ let sslConfig = undefined;
 if (process.env.DB_SSL === "true") {
   console.log("Using SSL for MySQL connection");
   sslConfig = {
-    ca: fs.readFileSync(process.env.DB_SSL_CA),
+    ca: fs.readFileSync(process.env.DB_SSL_CA||"/etc/secrets/ca.pem"),
     rejectUnauthorized: true,
   };
 } else {
