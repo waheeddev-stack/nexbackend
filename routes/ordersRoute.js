@@ -44,7 +44,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           sin(radians(?)) * sin(radians(latitude))
         )) AS distance
        FROM shopkeepers
-       HAVING distance < 2
+       HAVING distance < 1
        ORDER BY distance ASC
        LIMIT 1`,
       [latitude, longitude, latitude]
