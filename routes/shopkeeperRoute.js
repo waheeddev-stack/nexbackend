@@ -569,4 +569,98 @@ shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
   }
 });
 
+// --- Access global products (shopkeeper) ---
+// List all global products (read-only for shopkeepers)
+shopkeeperRouter.get("/global-products", verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, price, description, image, created_at FROM global_products ORDER BY created_at DESC"
+    );
+    res.json({ success: true, products: rows });
+  } catch (err) {
+    console.error("Get global products error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Add a product into shopkeeper's catalog from global_products
+// body: { global_product_id, price (optional override), stock (required) }
+shopkeeperRouter.post("/products/from-global", verifyToken, async (req, res) => {
+  try {
+    const shop_id = req.user.id;
+    const { global_product_id, price, stock } = req.body;
+
+    if (!global_product_id) {
+      return res.status(400).json({ success: false, message: "global_product_id is required" });
+    }
+    const parsedStock = Number(stock ?? 0);
+    if (Number.isNaN(parsedStock) || parsedStock < 0) {
+      return res.status(400).json({ success: false, message: "Invalid stock" });
+    }
+
+    // Verify global product exists
+    const [gpRows] = await pool.query("SELECT * FROM global_products WHERE id = ?", [global_product_id]);
+    if (gpRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Global product not found" });
+    }
+    const gp = gpRows[0];
+
+    // Prevent duplicate addition for same shop
+    const [exists] = await pool.query(
+      "SELECT id FROM products WHERE shop_id = ? AND global_product_id = ?",
+      [shop_id, global_product_id]
+    );
+    if (exists.length > 0) {
+      return res.status(400).json({ success: false, message: "Product already added to your catalog" });
+    }
+
+    const priceToUse = price != null ? Number(price) : gp.price;
+    if (Number.isNaN(priceToUse) || priceToUse < 0) {
+      return res.status(400).json({ success: false, message: "Invalid price" });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [shop_id, global_product_id, gp.name, gp.description || null, null, priceToUse, parsedStock, gp.image || null]
+    );
+
+    const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
+    res.status(201).json({ success: true, id: result.insertId, product: created[0], message: "Product added from global catalog" });
+  } catch (err) {
+    console.error("Add from global error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Update only stock for a shopkeeper's product
+shopkeeperRouter.patch("/products/:id/stock", verifyToken, async (req, res) => {
+  try {
+    const shop_id = req.user.id;
+    const productId = req.params.id;
+    const { stock } = req.body;
+
+    if (stock == null) {
+      return res.status(400).json({ success: false, message: "stock is required" });
+    }
+    const parsedStock = Number(stock);
+    if (Number.isNaN(parsedStock) || parsedStock < 0) {
+      return res.status(400).json({ success: false, message: "Invalid stock value" });
+    }
+
+    const [existing] = await pool.query("SELECT id FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    await pool.query("UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?", [parsedStock, productId, shop_id]);
+    const [updated] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+
+    res.json({ success: true, message: "Stock updated", product: updated[0] });
+  } catch (err) {
+    console.error("Update stock error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default shopkeeperRouter;

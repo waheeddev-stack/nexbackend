@@ -133,94 +133,94 @@ adminRouter.get("/products", verifyToken, async (req, res) => {
 });
 
 // Add a new product with image upload (category as string)
-// adminRouter.post(
-//   "/products",
-//   verifyToken,
-//   upload.single("image"),
-//   async (req, res) => {
-//     const { name, price, stock, description, category } = req.body;
-//     if (!name || !price) {
-//       return res.status(400).json({ message: "Name and price are required" });
-//     }
-//     let imageUrl = null;
-//     try {
-//       if (req.file) {
-//         const streamUpload = () =>
-//           new Promise((resolve, reject) => {
-//             const stream = cloudinary.uploader.upload_stream(
-//               (error, result) => {
-//                 if (result) resolve(result);
-//                 else reject(error);
-//               }
-//             );
-//             streamifier.createReadStream(req.file.buffer).pipe(stream);
-//           });
-//         const result = await streamUpload();
-//         imageUrl = result.secure_url;
-//       }
-//       const [dbResult] = await pool.query(
-//         "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
-//         [name, price, stock || 0, description || "", imageUrl, category || null]
-//       );
-//       res.status(201).json({
-//         id: dbResult.insertId,
-//         name,
-//         price,
-//         stock,
-//         description,
-//         image: imageUrl,
-//         category,
-//       });
-//     } catch (err) {
-//       res.status(500).json({ success: false, message: "Server error", error: err.message });
-//     }
-//   }
-// );
+adminRouter.post(
+  "/products",
+  verifyToken,
+  upload.single("image"),
+  async (req, res) => {
+    const { name, price, stock, description, category } = req.body;
+    if (!name || !price) {
+      return res.status(400).json({ message: "Name and price are required" });
+    }
+    let imageUrl = null;
+    try {
+      if (req.file) {
+        const streamUpload = () =>
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              (error, result) => {
+                if (result) resolve(result);
+                else reject(error);
+              }
+            );
+            streamifier.createReadStream(req.file.buffer).pipe(stream);
+          });
+        const result = await streamUpload();
+        imageUrl = result.secure_url;
+      }
+      const [dbResult] = await pool.query(
+        "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
+        [name, price, stock || 0, description || "", imageUrl, category || null]
+      );
+      res.status(201).json({
+        id: dbResult.insertId,
+        name,
+        price,
+        stock,
+        description,
+        image: imageUrl,
+        category,
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
+    }
+  }
+);
 
 // Update a product (category as string)
-// adminRouter.put(
-//   "/products/:id",
-//   verifyToken,
-//   upload.single("image"),
-//   async (req, res) => {
-//     const { name, price, stock, description, category } = req.body;
-//     let imageUrl = req.body.image || null;
-//     try {
-//       if (req.file) {
-//         const streamUpload = () =>
-//           new Promise((resolve, reject) => {
-//             const stream = cloudinary.uploader.upload_stream(
-//               (error, result) => {
-//                 if (result) resolve(result);
-//                 else reject(error);
-//               }
-//             );
-//             streamifier.createReadStream(req.file.buffer).pipe(stream);
-//           });
-//         const result = await streamUpload();
-//         imageUrl = result.secure_url;
-//       }
-//       const [dbResult] = await pool.query(
-//         "UPDATE products SET name=?, price=?, stock=?, description=?, image=?, category=? WHERE id=?",
-//         [
-//           name,
-//           price,
-//           stock,
-//           description,
-//           imageUrl,
-//           category || null,
-//           req.params.id,
-//         ]
-//       );
-//       if (dbResult.affectedRows === 0) {
-//         return res.status(404).json({ success: false, message: "Product not found" });
-//       }
-//       res.json({ message: "Product updated" });
-//     } catch (err) {
-//       res.status(500).json({ success: false, message: "Server error", error: err.message });
-//     }
-//   }
-// );
+adminRouter.put(
+  "/products/:id",
+  verifyToken,
+  upload.single("image"),
+  async (req, res) => {
+    const { name, price, stock, description, category } = req.body;
+    let imageUrl = req.body.image || null;
+    try {
+      if (req.file) {
+        const streamUpload = () =>
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              (error, result) => {
+                if (result) resolve(result);
+                else reject(error);
+              }
+            );
+            streamifier.createReadStream(req.file.buffer).pipe(stream);
+          });
+        const result = await streamUpload();
+        imageUrl = result.secure_url;
+      }
+      const [dbResult] = await pool.query(
+        "UPDATE products SET name=?, price=?, stock=?, description=?, image=?, category=? WHERE id=?",
+        [
+          name,
+          price,
+          stock,
+          description,
+          imageUrl,
+          category || null,
+          req.params.id,
+        ]
+      );
+      if (dbResult.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: "Product not found" });
+      }
+      res.json({ message: "Product updated" });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
+    }
+  }
+);
 
 // Delete a product
 adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
@@ -296,6 +296,119 @@ adminRouter.delete("/categories/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ success: false, message: "Category not found" });
     }
     res.json({ success: true, message: "Category deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// --- Admin CRUD for global_products (admin only) ---
+
+// List all global products
+adminRouter.get("/global-products", verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, price, description, image, created_at FROM global_products ORDER BY created_at DESC"
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Create a global product (admin)
+adminRouter.post(
+  "/global-products",
+  verifyToken,
+  upload.single("image"),
+  async (req, res) => {
+    const { name, price, description } = req.body;
+    if (!name || !price) {
+      return res.status(400).json({ success: false, message: "Name and price are required" });
+    }
+    let imageUrl = null;
+    try {
+      if (req.file) {
+        const streamUpload = () =>
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream((error, result) => {
+              if (result) resolve(result);
+              else reject(error);
+            });
+            streamifier.createReadStream(req.file.buffer).pipe(stream);
+          });
+        const result = await streamUpload();
+        imageUrl = result.secure_url;
+      }
+
+      const [dbResult] = await pool.query(
+        "INSERT INTO global_products (name, price, description, image) VALUES (?, ?, ?, ?)",
+        [name, price, description || "", imageUrl]
+      );
+
+      res.status(201).json({
+        success: true,
+        data: {
+          id: dbResult.insertId,
+          name,
+          price,
+          description,
+          image: imageUrl,
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
+    }
+  }
+);
+
+// Update a global product (admin)
+adminRouter.put(
+  "/global-products/:id",
+  verifyToken,
+  upload.single("image"),
+  async (req, res) => {
+    const { name, price, description } = req.body;
+    let imageUrl = req.body.image || null;
+    try {
+      if (req.file) {
+        const streamUpload = () =>
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream((error, result) => {
+              if (result) resolve(result);
+              else reject(error);
+            });
+            streamifier.createReadStream(req.file.buffer).pipe(stream);
+          });
+        const result = await streamUpload();
+        imageUrl = result.secure_url;
+      }
+
+      const [dbResult] = await pool.query(
+        "UPDATE global_products SET name=?, price=?, description=?, image=? WHERE id=?",
+        [name, price, description || "", imageUrl, req.params.id]
+      );
+
+      if (dbResult.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: "Global product not found" });
+      }
+
+      res.json({ success: true, message: "Global product updated" });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
+    }
+  }
+);
+
+// Delete a global product (admin)
+adminRouter.delete("/global-products/:id", verifyToken, async (req, res) => {
+  try {
+    const [result] = await pool.query("DELETE FROM global_products WHERE id = ?", [
+      req.params.id,
+    ]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Global product not found" });
+    }
+    res.json({ success: true, message: "Global product deleted" });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
@@ -409,138 +522,5 @@ adminRouter.get("/profile", verifyToken, async (req, res) => {
   }
 });
 
-
-// Add a new product with image upload (category as string)
-// adminRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
-//   const { name, price, stock, description, category } = req.body;
-//   if (!name || !price) {
-//     return res.status(400).json({ message: "Name and price are required" });
-//   }
-//   let imageUrl = null;
-//   try {
-//     if (req.file) {
-//       const streamUpload = () =>
-//         new Promise((resolve, reject) => {
-//           const stream = cloudinary.uploader.upload_stream((error, result) => {
-//             if (result) resolve(result);
-//             else reject(error);
-//           });
-//           streamifier.createReadStream(req.file.buffer).pipe(stream);
-//         });
-//       const result = await streamUpload();
-//       imageUrl = result.secure_url;
-//     }
-//     const [dbResult] = await pool.query(
-//       "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
-//       [name, price, stock || 0, description || '', imageUrl, category || null]
-//     );
-//     res.status(201).json({ id: dbResult.insertId, name, price, stock, description, image: imageUrl, category });
-//   } catch (err) {
-//     res.status(500).json({ success: false, message: "Server error", error: err.message });
-//   }
-// });
-
-adminRouter.post(
-  "/products",
-  verifyToken,
-  upload.single("image"),
-  async (req, res) => {
-    const { name, description, category } = req.body;
-    if (!name) {
-      return res.status(400).json({ success: false, message: "Name is required" });
-    }
-
-    let imageUrl = null;
-    try {
-      if (req.file) {
-        const streamUpload = () =>
-          new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              (error, result) => {
-                if (result) resolve(result);
-                else reject(error);
-              }
-            );
-            streamifier.createReadStream(req.file.buffer).pipe(stream);
-          });
-        const result = await streamUpload();
-        imageUrl = result.secure_url;
-      }
-
-      const [dbResult] = await pool.query(
-        "INSERT INTO products (name, description, image, category) VALUES (?, ?, ?, ?)",
-        [name, description || "", imageUrl, category || null]
-      );
-
-      res.status(201).json({
-        success: true,
-        data: {
-          id: dbResult.insertId,
-          name,
-          description,
-          image: imageUrl,
-          category,
-        }
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
-
-adminRouter.put(
-  "/products/:id",
-  verifyToken,
-  upload.single("image"),
-  async (req, res) => {
-    const { name, description, category } = req.body;
-    let imageUrl = req.body.image || null;
-
-    try {
-      if (req.file) {
-        const streamUpload = () =>
-          new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              (error, result) => {
-                if (result) resolve(result);
-                else reject(error);
-              }
-            );
-            streamifier.createReadStream(req.file.buffer).pipe(stream);
-          });
-        const result = await streamUpload();
-        imageUrl = result.secure_url;
-      }
-
-      const [dbResult] = await pool.query(
-        "UPDATE products SET name=?, description=?, image=?, category=? WHERE id=?",
-        [name, description, imageUrl, category || null, req.params.id]
-      );
-
-      if (dbResult.affectedRows === 0) {
-        return res.status(404).json({ success: false, message: "Product not found" });
-      }
-
-      res.json({ success: true, message: "Product updated" });
-    } catch (err) {
-      res.status(500).json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
-
-// Delete a product
-adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
-  try {
-    const [result] = await pool.query("DELETE FROM products WHERE id=?", [
-      req.params.id,
-    ]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Product not found" });
-    }
-    res.json({ success: true, message: "Product deleted" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
 
 export default adminRouter;
