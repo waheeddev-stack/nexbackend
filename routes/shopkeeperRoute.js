@@ -593,7 +593,10 @@ shopkeeperRouter.post("/products/from-global", verifyToken, async (req, res) => 
     if (!global_product_id) {
       return res.status(400).json({ success: false, message: "global_product_id is required" });
     }
-    const parsedStock = Number(stock ?? 0);
+    if (stock === undefined || stock === null) {
+      return res.status(400).json({ success: false, message: "stock is required" });
+    }
+    const parsedStock = Number(stock);
     if (Number.isNaN(parsedStock) || parsedStock < 0) {
       return res.status(400).json({ success: false, message: "Invalid stock" });
     }
