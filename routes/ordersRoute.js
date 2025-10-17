@@ -199,6 +199,12 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     await conn.commit();
 
+    // fetch the updated user's store_credits to ensure we return the latest total
+    const [[updatedUserCredits]] = await pool.query(
+      "SELECT COALESCE(store_credits, 0) AS store_credits FROM users WHERE id = ?",
+      [user_id]
+    );
+
     const [orderDetails] = await pool.query(
       `SELECT 
           o.id AS orderId, 
@@ -213,6 +219,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           u.name AS customer_name, 
           u.email AS customer_email,
           u.phone AS customer_phone,
+          u.store_credits AS customer_credits,
           s.id AS shopkeeper_id,
           s.name AS shopkeeper_name,
           s.phone AS shopkeeper_phone,
@@ -230,6 +237,9 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       [orderId]
     );
 
+    // ensure numeric values
+    const latestStoreCredits = Number(updatedUserCredits?.store_credits ?? orderDetails[0]?.customer_credits ?? 0);
+
     const orderPayload = {
       orderId,
       customer: {
@@ -238,15 +248,16 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         email: orderDetails[0].customer_email,
         phone: orderDetails[0].customer_phone,
         address: orderDetails[0].delivery_address,
+        store_credits: latestStoreCredits,
       },
       shopkeeper: {
         id: orderDetails[0].shopkeeper_id,
         name: orderDetails[0].shopkeeper_name,
         phone: orderDetails[0].shopkeeper_phone,
       },
-      total: orderDetails[0].total_amount,
-      credits_earned: earnedCredits,
-      credits_value: earnedCredits * 0.5,
+      total: Number(orderDetails[0].total_amount),
+      credits_earned: Number(earnedCredits),
+      credits_value: Number(earnedCredits) * 0.5,
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
       latitude: orderDetails[0].latitude,
@@ -256,7 +267,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         product_name: row.product_name,
         product_image: row.product_image,
         quantity: row.quantity,
-        price: row.price,
+        price: Number(row.price),
       })),
     };
 
