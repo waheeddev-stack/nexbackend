@@ -5,12 +5,29 @@ import fetch from "node-fetch";
 
 const ordersRouter = express.Router();
 
-
 async function getAddressFromCoords(latitude, longitude) {
   const url = `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`;
   const res = await fetch(url, { headers: { "User-Agent": "nexkirana" } });
   const data = await res.json();
   return data.display_name || null;
+}
+
+// new: forward geocode address -> coords
+async function getCoordsFromAddress(address) {
+  if (!address) return null;
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+    address
+  )}&limit=1`;
+  const res = await fetch(url, { headers: { "User-Agent": "nexkirana" } });
+  const data = await res.json();
+  if (Array.isArray(data) && data.length > 0) {
+    return {
+      latitude: parseFloat(data[0].lat),
+      longitude: parseFloat(data[0].lon),
+      display_name: data[0].display_name,
+    };
+  }
+  return null;
 }
 
 function calculateCredits(amount) {
@@ -24,41 +41,127 @@ function calculateCredits(amount) {
 ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { items, latitude, longitude } = req.body;
-    const user_id = req.user.id;
-
-    if (!items || items.length === 0) {
+    // Normalize items shape (support product_id/id and quantity/qty)
+    const rawItems = req.body.items;
+    if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
       return res.status(400).json({ message: "No items provided" });
     }
+    const items = rawItems
+      .map((it) => ({
+        product_id: it.product_id ?? it.id,
+        quantity: Number(it.quantity ?? it.qty ?? 0),
+        price: Number(it.price ?? it.unit_price ?? 0),
+      }))
+      .filter((i) => i.product_id != null && i.quantity > 0);
 
-    if (!latitude || !longitude) {
-      return res.status(400).json({ message: "Delivery location required" });
+    if (items.length === 0) {
+      return res.status(400).json({ message: "No valid items provided" });
     }
 
-    // Find nearest shopkeeper (within 2 km)
-    const [nearestShop] = await pool.query(
-      `SELECT id,
-        (6371 * acos(
-          cos(radians(?)) * cos(radians(latitude)) *
-          cos(radians(longitude) - radians(?)) +
-          sin(radians(?)) * sin(radians(latitude))
-        )) AS distance
-       FROM shopkeepers
-       HAVING distance < 1
-       ORDER BY distance ASC
-       LIMIT 1`,
-      [latitude, longitude, latitude]
-    );
+    let { latitude, longitude, delivery_address, address } = req.body;
+    const user_id = req.user.id;
 
-    if (!nearestShop.length) {
-      return res.status(400).json({ message: "No shopkeeper nearby to fulfill order" });
+    // prefer explicit delivery_address param, then address
+    delivery_address = delivery_address || address || null;
+
+    // Accept coords as strings or numbers; normalize to numbers or null
+    latitude = latitude != null ? parseFloat(latitude) : null;
+    longitude = longitude != null ? parseFloat(longitude) : null;
+
+    // If no coords but address provided, try to geocode
+    if ((latitude == null || longitude == null) && delivery_address) {
+      try {
+        const geo = await getCoordsFromAddress(delivery_address);
+        if (geo) {
+          latitude = geo.latitude;
+          longitude = geo.longitude;
+          // prefer human readable display name returned by geocoder
+          delivery_address = delivery_address || geo.display_name;
+        }
+      } catch (e) {
+        console.warn("Geocoding failed:", e?.message || e);
+      }
     }
 
-    const shopkeeper_id = nearestShop[0].id;
+    // If still no coords, we'll attempt to find a shop that can fulfill items by stock
+    let shopkeeper_id = null;
 
-    // Convert lat/lng → readable address
-    const deliveryAddress = await getAddressFromCoords(latitude, longitude)
-      .catch(() => "Unknown Address");
+    if (
+      latitude != null &&
+      longitude != null &&
+      !isNaN(latitude) &&
+      !isNaN(longitude)
+    ) {
+      // Find nearest shopkeeper within ~1 km (Haversine)
+      const [nearestShop] = await pool.query(
+        `SELECT id,
+          (6371 * acos(
+            cos(radians(?)) * cos(radians(latitude)) *
+            cos(radians(longitude) - radians(?)) +
+            sin(radians(?)) * sin(radians(latitude))
+          )) AS distance
+         FROM shopkeepers
+         HAVING distance < 1
+         ORDER BY distance ASC
+         LIMIT 1`,
+        [latitude, longitude, latitude]
+      );
+
+      if (nearestShop.length) {
+        shopkeeper_id = nearestShop[0].id;
+      }
+    }
+
+    // If no shop found by proximity (or no coords), search shops that have ALL products with sufficient stock
+    if (!shopkeeper_id) {
+      const productIds = items.map((i) => i.product_id);
+      // candidates: shops that have at least one of the products
+      const [candidateRows] = await pool.query(
+        "SELECT DISTINCT shop_id FROM products WHERE id IN (?)",
+        [productIds]
+      );
+      const candidateShopIds = candidateRows.map((r) => r.shop_id);
+
+      for (const sid of candidateShopIds) {
+        // fetch product rows for this shop for the requested products
+        const [prodRows] = await pool.query(
+          "SELECT id, stock FROM products WHERE shop_id = ? AND id IN (?)",
+          [sid, productIds]
+        );
+        // build map id->stock
+        const stockMap = new Map(prodRows.map((p) => [p.id, p.stock]));
+        let ok = true;
+        for (const it of items) {
+          const stock = stockMap.get(it.product_id);
+          if (stock == null || stock < it.quantity) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          shopkeeper_id = sid;
+          break;
+        }
+      }
+    }
+
+    if (!shopkeeper_id) {
+      return res
+        .status(400)
+        .json({ message: "No shopkeeper available to fulfill order" });
+    }
+
+    // If we still don't have a readable address but we do have coords, reverse geocode
+    let resolvedAddress = delivery_address || null;
+    if (!resolvedAddress && latitude != null && longitude != null) {
+      try {
+        resolvedAddress = await getAddressFromCoords(latitude, longitude).catch(
+          () => null
+        );
+      } catch (e) {
+        resolvedAddress = null;
+      }
+    }
 
     // Calculate total
     const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
@@ -73,51 +176,83 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       `INSERT INTO orders 
        (user_id, shopkeeper_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, shopkeeper_id, total, "Pending", earnedCredits, latitude, longitude, deliveryAddress]
+      [
+        user_id,
+        shopkeeper_id,
+        total,
+        "Pending",
+        earnedCredits,
+        latitude,
+        longitude,
+        resolvedAddress,
+      ]
     );
 
     const orderId = orderResult.insertId;
 
-    // Validate all products exist in the selected shop and have sufficient stock
-    const productIds = items.map(i => i.product_id);
+    // Validate all products exist in the selected shop and have sufficient stock (use conn inside txn)
+    const productIds = items.map((i) => i.product_id);
     const [shopProducts] = await conn.query(
       "SELECT id, name, stock, price FROM products WHERE shop_id = ? AND id IN (?)",
       [shopkeeper_id, productIds]
     );
 
-    const availableProductIds = shopProducts.map(p => p.id);
-    const missingProducts = productIds.filter(id => !availableProductIds.includes(id));
+    const availableProductIds = shopProducts.map((p) => p.id);
+    const missingProducts = productIds.filter(
+      (id) => !availableProductIds.includes(id)
+    );
     if (missingProducts.length > 0) {
       await conn.rollback();
-      return res.status(400).json({ message: `Products not available at selected shop: ${missingProducts.join(', ')}` });
+      return res
+        .status(400)
+        .json({
+          message: `Products not available at selected shop: ${missingProducts.join(
+            ", "
+          )}`,
+        });
     }
 
     // Check stock availability
     const stockIssues = [];
     for (const item of items) {
-      const prod = shopProducts.find(p => p.id === item.product_id);
+      const prod = shopProducts.find((p) => p.id === item.product_id);
       if (prod && prod.stock < item.quantity) {
-        stockIssues.push(`Product ${item.product_id}: requested ${item.quantity}, available ${prod.stock}`);
+        stockIssues.push(
+          `Product ${item.product_id}: requested ${item.quantity}, available ${prod.stock}`
+        );
       }
     }
     if (stockIssues.length > 0) {
       await conn.rollback();
-      return res.status(400).json({ message: `Insufficient stock: ${stockIssues.join('; ')}` });
+      return res
+        .status(400)
+        .json({ message: `Insufficient stock: ${stockIssues.join("; ")}` });
     }
 
     // Bulk insert items using product_id
-    const values = items.map(i => [orderId, i.product_id, i.quantity, i.price]);
-    await conn.query("INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?", [values]);
+    const values = items.map((i) => [
+      orderId,
+      i.product_id,
+      i.quantity,
+      i.price,
+    ]);
+    await conn.query(
+      "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?",
+      [values]
+    );
 
     // Update stock in products table
     for (const item of items) {
-      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [item.quantity, item.product_id]);
+      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
+        item.quantity,
+        item.product_id,
+      ]);
     }
 
     // Update user's store credits balance
     if (earnedCredits > 0) {
       await conn.query(
-        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+        "UPDATE users SET store_credits = COALESCE(store_credits,0) + ? WHERE id = ?",
         [earnedCredits, user_id]
       );
     }
@@ -197,7 +332,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       message: "Order created and assigned to nearest shopkeeper",
       order: orderPayload,
     });
-
   } catch (err) {
     await conn.rollback();
     console.error("Error creating order:", err);
@@ -216,17 +350,27 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     const orderId = Number(req.params.id);
-    if (!orderId || isNaN(orderId)) return res.status(400).json({ message: "Invalid order ID" });
+    if (!orderId || isNaN(orderId))
+      return res.status(400).json({ message: "Invalid order ID" });
 
     const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
-    if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
+    if (!validStatuses.includes(status))
+      return res.status(400).json({ message: "Invalid status" });
 
-    const [result] = await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, orderId]);
-    if (!result.affectedRows) return res.status(404).json({ message: "Order not found" });
+    const [result] = await pool.query(
+      "UPDATE orders SET status = ? WHERE id = ?",
+      [status, orderId]
+    );
+    if (!result.affectedRows)
+      return res.status(404).json({ message: "Order not found" });
 
     if (req.io) req.io.emit("orderStatusUpdate", { orderId, status });
 
-    res.json({ success: true, message: `Order status updated to ${status}`, status });
+    res.json({
+      success: true,
+      message: `Order status updated to ${status}`,
+      status,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -296,105 +440,47 @@ ordersRouter.get("/", verifyToken, async (req, res) => {
  */
 ordersRouter.get("/live", verifyToken, async (req, res) => {
   try {
-    const shopkeeper_id = req.user.id; // Get shopkeeper ID from token
-    
+    const shopkeeper_id = req.user.id;
+
     const [orders] = await pool.query(
       `SELECT 
-        o.id AS order_id, 
-        o.status, 
-        o.total_amount, 
-        o.created_at,
-        o.delivery_address,
-        o.latitude,
-        o.longitude,
-        o.user_id,
-        COALESCE(
-          JSON_ARRAYAGG(
-            JSON_OBJECT(
-              'id', oi.product_id,
-              'name', p.name,
-              'quantity', oi.quantity,
-              'price', oi.price,
-              'image', p.image
-            )
-          ), JSON_ARRAY()
-        ) AS items,
-        ANY_VALUE(u.name) AS customer_name, 
-        ANY_VALUE(u.phone) AS customer_phone,
-        ANY_VALUE(u.email) AS customer_email
-     FROM orders o
-     JOIN order_items oi ON o.id = oi.order_id
-     JOIN products p ON oi.product_id = p.id
-     JOIN users u ON o.user_id = u.id
-     WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
-       AND o.shopkeeper_id = ?
-     GROUP BY o.id
-     ORDER BY o.created_at DESC`,
-     [shopkeeper_id]
+         o.id AS order_id,
+         o.status,
+         o.total_amount,
+         o.created_at,
+         o.delivery_address,
+         o.latitude,
+         o.longitude,
+         o.user_id,
+         COALESCE(
+           JSON_ARRAYAGG(
+             JSON_OBJECT(
+               'id', oi.product_id,
+               'name', p.name,
+               'quantity', oi.quantity,
+               'price', oi.price,
+               'image', p.image
+             )
+           ), JSON_ARRAY()
+         ) AS items,
+         ANY_VALUE(u.name) AS customer_name,
+         ANY_VALUE(u.phone) AS customer_phone,
+         ANY_VALUE(u.email) AS customer_email
+       FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       JOIN users u ON o.user_id = u.id
+       WHERE o.shopkeeper_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [shopkeeper_id]
     );
 
     res.json({ success: true, orders });
   } catch (err) {
-    console.error("❌ Error fetching shopkeeper orders:", err);
+    console.error("Error fetching live orders:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-
-// shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
-//   try {
-//     const shopkeeper_id = req.user.id;
-//     const { status } = req.query; // Optional filter by status
-
-//     let whereClause = "WHERE o.shopkeeper_id = ?";
-//     const params = [shopkeeper_id];
-
-//     if (status) {
-//       whereClause += " AND o.status = ?";
-//       params.push(status);
-//     }
-
-//     const [orders] = await pool.query(
-//       `SELECT 
-//         o.id AS order_id,
-//         o.user_id,
-//         o.status,
-//         o.total_amount,
-//         o.created_at,
-//         o.credits_earned,
-//         o.latitude,
-//         o.longitude,
-//         o.delivery_address,
-//         u.name AS customer_name,
-//         u.phone AS customer_phone,
-//         u.email AS customer_email,
-//         JSON_ARRAYAGG(
-//           JSON_OBJECT(
-//             'product_id', sp.product_id,
-//             'product_name', p.name,
-//             'product_image', p.image,
-//             'quantity', oi.quantity,
-//             'price', oi.price,
-//             'id', sp.product_id,
-//             'name', p.name,
-//             'image', p.image
-//           )
-//         ) AS items
-//        FROM orders o
-//        JOIN users u ON o.user_id = u.id
-//        JOIN order_items oi ON o.id = oi.order_id
-//        JOIN shop_products sp ON oi.shop_product_id = sp.id
-//        JOIN products p ON sp.product_id = p.id
-//        ${whereClause}
-//        GROUP BY o.id
-//        ORDER BY o.created_at DESC`,
-//       params
-//     );
-
-//     res.json({ success: true, orders });
-//   } catch (err) {
-//     console.error("Get shopkeeper orders error:", err);
-//     res.status(500).json({ success: false, message: "Server error" });
-//   }
-// });
 export default ordersRouter;
