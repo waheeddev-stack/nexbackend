@@ -574,7 +574,7 @@ shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
 shopkeeperRouter.get("/global-products", verifyToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, price, description, image, created_at FROM global_products ORDER BY created_at DESC"
+      "SELECT id, name, price, category, description, image, created_at FROM global_products ORDER BY created_at DESC"
     );
     res.json({ success: true, products: rows });
   } catch (err) {
@@ -625,7 +625,7 @@ shopkeeperRouter.post("/products/from-global", verifyToken, async (req, res) => 
     const [result] = await pool.query(
       `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, global_product_id, gp.name, gp.description || null, null, priceToUse, parsedStock, gp.image || null]
+      [shop_id, global_product_id, gp.name, gp.description || null, gp.category || null, priceToUse, parsedStock, gp.image || null]
     );
 
     const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
