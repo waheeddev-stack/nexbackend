@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../config/db.js";
 import verifyToken from "../middleware/auth.js";
 import fetch from "node-fetch";
+import { sendExpoPush } from "../utils/expoPush.js";
 
 const ordersRouter = express.Router();
 
@@ -262,6 +263,21 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     if (req.io) {
       req.io.to(`shop_${shopkeeper_id}`).emit("newOrder", orderPayload);
       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+
+    }
+    // Send push notification to shopkeeper
+     const [[shopkeeper]] = await pool.query(
+      "SELECT name, expo_push_token FROM shopkeepers WHERE id = ?",
+      [shopkeeper_id]
+    );
+
+    if (shopkeeper?.expo_push_token) {
+      await sendExpoPush(
+        shopkeeper.expo_push_token,
+        "📦 New Order Received!",
+        `You have a new order from a customer.`,
+        { orderId, shopkeeper_id }
+      );
     }
 
     res.status(201).json({
@@ -292,7 +308,23 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
     if (!result.affectedRows) return res.status(404).json({ message: "Order not found" });
 
     if (req.io) req.io.emit("orderStatusUpdate", { orderId, status });
+// 🔔 Notify customer when order status changes
+    const [[customer]] = await pool.query(
+      `SELECT u.expo_push_token, u.name 
+       FROM orders o 
+       JOIN users u ON o.user_id = u.id 
+       WHERE o.id = ?`,
+      [orderId]
+    );
 
+    if (customer?.expo_push_token) {
+      await sendExpoPush(
+        customer.expo_push_token,
+        "🛒 Order Update",
+        `Your order is now ${status}.`,
+        { orderId, status }
+      );
+    }
     res.json({ success: true, message: `Order status updated to ${status}`, status });
   } catch (err) {
     console.error(err);

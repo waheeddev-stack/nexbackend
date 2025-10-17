@@ -5,6 +5,7 @@ import pool from "../config/db.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
+import { verifyToken } from "../middleware/auth.js";
 
 dotenv.config();
 
@@ -223,6 +224,20 @@ userrouter.post("/orders", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Save expo push token for authenticated user
+userrouter.post("/push-token", verifyToken, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: "token is required" });
+
+    await pool.query("UPDATE users SET expo_push_token = ? WHERE id = ?", [token, req.user.id]);
+    return res.json({ success: true, message: "Push token saved" });
+  } catch (err) {
+    console.error("Save user push token error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
