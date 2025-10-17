@@ -64,76 +64,131 @@ shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
   }
 });
 
-shopkeeperRouter.post("/signup", async (req, res) => {
-  try {
-    const { name, email, password, phone, latitude, longitude, shop_name } = req.body;
+// SHOPKEEPER SIGNUP (accept img, upi_id, upi_qr, expo_push_token, latitude/longitude)
+shopkeeperRouter.post(
+  "/signup",
+  upload.fields([{ name: "img", maxCount: 1 }, { name: "upi_qr", maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      const {
+        name,
+        email,
+        password,
+        phone,
+        latitude,
+        longitude,
+        shop_name,
+        upi_id,
+        expo_push_token,
+      } = req.body;
 
-    // Validate required fields
-    if (!name || !email || !password || !phone || !shop_name) {
-      return res.status(400).json({
-        success: false,
-        message: "Name, email, password, phone, and shop_name are required",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
-    }
-
-    if (!/^\d{10}$/.test(phone)) {
-      return res.status(400).json({ success: false, message: "Phone number must be 10 digits" });
-    }
-
-    // Check if shopkeeper already exists
-    const [existingUser] = await pool.query("SELECT * FROM shopkeepers WHERE email = ?", [email]);
-    if (existingUser.length > 0) {
-      return res.status(400).json({ success: false, message: "Shopkeeper already exists" });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Reverse geocode using fetch
-    let address = null;
-    if (latitude && longitude) {
-      try {
-        const geoRes = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}`
-        );
-        const geoData = await geoRes.json();
-        if (geoData.results && geoData.results.length > 0) {
-          address = geoData.results[0].formatted_address;
-        }
-      } catch (err) {
-        console.warn("Geocoding failed, saving latitude/longitude only:", err.message);
+      if (!name || !email || !password || !phone || !shop_name) {
+        return res.status(400).json({
+          success: false,
+          message: "Name, email, password, phone, and shop_name are required",
+        });
       }
+
+      if (password.length < 6) {
+        return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+      }
+
+      if (!/^\d{10}$/.test(phone)) {
+        return res.status(400).json({ success: false, message: "Phone number must be 10 digits" });
+      }
+
+      const [existingUser] = await pool.query("SELECT id FROM shopkeepers WHERE email = ?", [email]);
+      if (existingUser.length > 0) {
+        return res.status(400).json({ success: false, message: "Shopkeeper already exists" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Optional reverse geocode (keeps null on failure)
+      let address = null;
+      if (latitude && longitude) {
+        try {
+          const geoRes = await fetch(
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}`
+          );
+          const geoData = await geoRes.json();
+          if (geoData.results && geoData.results.length > 0) {
+            address = geoData.results[0].formatted_address;
+          }
+        } catch (err) {
+          console.warn("Geocoding failed:", err.message);
+        }
+      }
+
+      // Handle image uploads (img and upi_qr)
+      let imgUrl = null;
+      let upiQrUrl = null;
+      try {
+        const streamifier = await import("streamifier");
+
+        if (req.files?.img && req.files.img[0]) {
+          const file = req.files.img[0];
+          const result = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers" }, (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            });
+            streamifier.default.createReadStream(file.buffer).pipe(stream);
+          });
+          imgUrl = result.secure_url;
+        }
+
+        if (req.files?.upi_qr && req.files.upi_qr[0]) {
+          const file = req.files.upi_qr[0];
+          const result = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers/upi_qr" }, (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            });
+            streamifier.default.createReadStream(file.buffer).pipe(stream);
+          });
+          upiQrUrl = result.secure_url;
+        }
+      } catch (uploadErr) {
+        console.error("Signup image upload error:", uploadErr);
+        return res.status(500).json({ success: false, message: "Failed to upload image(s)" });
+      }
+
+      const [result] = await pool.query(
+        `INSERT INTO shopkeepers 
+         (name, email, password, phone, address, shop_name, latitude, longitude, img, upi_id, upi_qr, expo_push_token) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          name,
+          email,
+          hashedPassword,
+          phone,
+          address,
+          shop_name,
+          latitude || null,
+          longitude || null,
+          imgUrl,
+          upi_id || null,
+          upiQrUrl,
+          expo_push_token || null,
+        ]
+      );
+
+      const [userRows] = await pool.query(
+        "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
+        [result.insertId]
+      );
+
+      const user = userRows[0];
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+
+      return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
+    } catch (err) {
+      console.error("Signup error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
     }
-
-    // Insert new shopkeeper
-    const [result] = await pool.query(
-      `INSERT INTO shopkeepers 
-       (name, email, password, phone, address, shop_name, latitude, longitude) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, email, hashedPassword, phone, address, shop_name, latitude || null, longitude || null]
-    );
-
-    // Fetch created shopkeeper
-    const [userRows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, latitude, longitude, created_at FROM shopkeepers WHERE id = ?",
-      [result.insertId]
-    );
-
-    const user = userRows[0];
-
-    // Generate JWT token
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-
-    return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
-  } catch (err) {
-    console.error("Signup error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
   }
-});
+);
 
 // SHOPKEEPER LOGIN
 shopkeeperRouter.post("/signin", async (req, res) => {
@@ -176,22 +231,18 @@ shopkeeperRouter.post("/signin", async (req, res) => {
   }
 });
 
-// SHOPKEEPER PROFILE - Fixed to require authentication
+// SHOPKEEPER PROFILE - require auth and return extended fields
 shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
   try {
     const requestedId = parseInt(req.params.id);
     const authenticatedId = req.user.id;
 
-    // Users can only access their own profile
     if (requestedId !== authenticatedId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Unauthorized: You can only access your own profile" 
-      });
+      return res.status(403).json({ success: false, message: "Unauthorized: You can only access your own profile" });
     }
 
     const [user] = await pool.query(
-      "SELECT id, email, name, phone, address, shop_name, img, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
@@ -199,85 +250,76 @@ shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Return profile even if incomplete, frontend can handle
-    res.json({ 
-      success: true, 
-      user: user[0],
-      isComplete: !!(user[0].phone && user[0].address)
-    });
+    res.json({ success: true, user: user[0], isComplete: !!(user[0].phone && user[0].address) });
   } catch (err) {
     console.error("Get profile error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// SHOPKEEPER UPDATE PROFILE - Fixed validation and security
-shopkeeperRouter.put("/profile/:id", verifyToken, upload.single("img"), async (req, res) => {
+// SHOPKEEPER UPDATE PROFILE - allow img and upi_qr upload, update expo_push_token and coords
+shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", maxCount: 1 }, { name: "upi_qr", maxCount: 1 }]), async (req, res) => {
   try {
     const requestedId = parseInt(req.params.id);
     const authenticatedId = req.user.id;
 
-    // Users can only update their own profile
     if (requestedId !== authenticatedId) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Unauthorized: You can only update your own profile" 
-      });
+      return res.status(403).json({ success: false, message: "Unauthorized: You can only update your own profile" });
     }
 
-    const { name, phone, address, shop_name } = req.body;
+    const { name, phone, address, shop_name, upi_id, expo_push_token, latitude, longitude } = req.body;
     let imgUrl = null;
+    let upiQrUrl = null;
 
-    // Validate phone number if provided
     if (phone && !/^\d{10}$/.test(phone)) {
       return res.status(400).json({ success: false, message: "Phone number must be 10 digits" });
     }
 
-    // Handle image upload (if any)
-    if (req.file) {
-      try {
-        const streamifier = await import('streamifier');
+    // handle uploads
+    try {
+      const streamifier = await import('streamifier');
+
+      if (req.files?.img && req.files.img[0]) {
+        const file = req.files.img[0];
         const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: "shopkeepers" },
-            (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            }
-          );
-          streamifier.default.createReadStream(req.file.buffer).pipe(stream);
+          const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          });
+          streamifier.default.createReadStream(file.buffer).pipe(stream);
         });
         imgUrl = result.secure_url;
-      } catch (uploadError) {
-        console.error("Image upload error:", uploadError);
-        return res.status(500).json({ success: false, message: "Failed to upload image" });
       }
+
+      if (req.files?.upi_qr && req.files.upi_qr[0]) {
+        const file = req.files.upi_qr[0];
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers/upi_qr" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          });
+          streamifier.default.createReadStream(file.buffer).pipe(stream);
+        });
+        upiQrUrl = result.secure_url;
+      }
+    } catch (uploadError) {
+      console.error("Image upload error:", uploadError);
+      return res.status(500).json({ success: false, message: "Failed to upload image(s)" });
     }
 
-    // Dynamically build update query
     const fields = [];
     const values = [];
 
-    if (name && name.trim()) {
-      fields.push("name = ?");
-      values.push(name.trim());
-    }
-    if (phone) {
-      fields.push("phone = ?");
-      values.push(phone);
-    }
-    if (address && address.trim()) {
-      fields.push("address = ?");
-      values.push(address.trim());
-    }
-    if (shop_name && shop_name.trim()) {
-      fields.push("shop_name = ?");
-      values.push(shop_name.trim());
-    }
-    if (imgUrl) {
-      fields.push("img = ?");
-      values.push(imgUrl);
-    }
+    if (name && name.trim()) { fields.push("name = ?"); values.push(name.trim()); }
+    if (phone) { fields.push("phone = ?"); values.push(phone); }
+    if (address && address.trim()) { fields.push("address = ?"); values.push(address.trim()); }
+    if (shop_name && shop_name.trim()) { fields.push("shop_name = ?"); values.push(shop_name.trim()); }
+    if (upi_id !== undefined) { fields.push("upi_id = ?"); values.push(upi_id || null); }
+    if (expo_push_token !== undefined) { fields.push("expo_push_token = ?"); values.push(expo_push_token || null); }
+    if (latitude !== undefined) { fields.push("latitude = ?"); values.push(latitude || null); }
+    if (longitude !== undefined) { fields.push("longitude = ?"); values.push(longitude || null); }
+    if (imgUrl) { fields.push("img = ?"); values.push(imgUrl); }
+    if (upiQrUrl) { fields.push("upi_qr = ?"); values.push(upiQrUrl); }
 
     if (fields.length === 0) {
       return res.status(400).json({ success: false, message: "No valid fields to update" });
@@ -291,24 +333,19 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.single("img"), async (r
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Return updated shopkeeper
     const [userRows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
-    res.json({
-      success: true,
-      user: userRows[0],
-      message: "Profile updated successfully",
-    });
+    res.json({ success: true, user: userRows[0], message: "Profile updated successfully" });
   } catch (err) {
     console.error("Update profile error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// (Inventory handled on products table in this schema — shop-specific product columns exist on products table)
+// SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
 shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
