@@ -703,4 +703,18 @@ shopkeeperRouter.patch("/products/:id/stock", verifyToken, async (req, res) => {
   }
 });
 
+// Save expo push token for authenticated shopkeeper
+shopkeeperRouter.post("/push-token", verifyToken, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: "token is required" });
+
+    await pool.query("UPDATE shopkeepers SET expo_push_token = ? WHERE id = ?", [token, req.user.id]);
+    return res.json({ success: true, message: "Push token saved" });
+  } catch (err) {
+    console.error("Save shopkeeper push token error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default shopkeeperRouter;
