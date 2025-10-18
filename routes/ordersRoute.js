@@ -59,7 +59,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     }
 
     let { latitude, longitude, delivery_address, address, payment_method } = req.body;
-    let credits_used = Number(req.body.credits_used ?? 0);
+    let credits_used = parseInt(req.body.credits_used ?? 0, 10);
     if (Number.isNaN(credits_used) || credits_used < 0) credits_used = 0;
 
     const user_id = req.user.id;
@@ -163,6 +163,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     // Compute earned credits based on adjusted total
     const earnedCredits = calculateCredits(total);
+    const credits_granted_flag = earnedCredits > 0 ? 1 : 0; // tinyint(1) flag
 
     // Insert order including payment_method, credits_used and credits_granted (we store granted = earnedCredits)
     const [orderResult] = await conn.query(
@@ -173,11 +174,11 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         user_id,
         shopkeeper_id,
         "Pending",
-        payment_method || null,
-        total,
-        earnedCredits,
+        payment_method ? (payment_method === "upi" ? "upi" : "cod") : "cod",
+        total.toFixed(2),
+        earnedCredits.toFixed(2),
         credits_used,
-        earnedCredits, // credits_granted same as credits_earned here
+        credits_granted_flag,
         latitude,
         longitude,
         resolvedAddress,
@@ -293,13 +294,12 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         image: orderDetails[0].shopkeeper_image,
         upi_id: orderDetails[0].shopkeeper_upi,
         upi_qr: orderDetails[0].shopkeeper_upi_qr,
-
       },
       payment_method: orderDetails[0].payment_method,
       total: Number(orderDetails[0].total_amount),
       credits_earned: Number(orderDetails[0].credits_earned || 0),
       credits_used: Number(orderDetails[0].credits_used || 0),
-      credits_granted: Number(orderDetails[0].credits_granted || 0),
+      credits_granted: Number(orderDetails[0].credits_granted) === 1 ? true : false,
       credits_value: Number(orderDetails[0].credits_earned || 0) * 0.5,
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
@@ -382,41 +382,6 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
-// ordersRouter.get("/myorders", verifyToken, async (req, res) => {
-//   try {
-//     const userId = req.user.id;
-//     const [orders] = await pool.query(
-//       `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
-//               JSON_ARRAYAGG(
-//                 JSON_OBJECT(
-//                   'id', oi.product_id,
-//                   'quantity', oi.quantity,
-//                   'price', oi.price,
-//                   'name', p.name,
-//                   'image', p.image
-//                 )
-//               ) AS items
-//        FROM orders o
-//        JOIN order_items oi ON o.id = oi.order_id
-//        JOIN products p ON oi.product_id = p.id
-//        WHERE o.user_id = ?
-//        GROUP BY o.id
-//        ORDER BY o.created_at DESC`,
-//       [userId]
-//     );
-
-//     const ordersWithCreditsValue = orders.map((o) => ({
-//       ...o,
-//       credits_value: o.credits_earned * 0.5,
-//     }));
-
-//     res.json({ success: true, orders: ordersWithCreditsValue });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ success: false, message: "Failed to fetch orders" });
-//   }
-// });
 
 ordersRouter.get("/myorders", verifyToken, async (req, res) => {
   try {
