@@ -180,7 +180,7 @@ shopkeeperRouter.post(
       );
 
       const user = userRows[0];
-      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET );
 
       return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
     } catch (err) {
