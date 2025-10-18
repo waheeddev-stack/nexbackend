@@ -486,6 +486,7 @@ ordersRouter.get("/live", verifyToken, async (req, res) => {
       `SELECT 
         o.id AS order_id, 
         o.status, 
+        o.payment_method,
         o.total_amount, 
         o.created_at,
         o.delivery_address,
