@@ -58,7 +58,10 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "No valid items provided" });
     }
 
-    let { latitude, longitude, delivery_address, address } = req.body;
+    let { latitude, longitude, delivery_address, address, payment_method } = req.body;
+    let credits_used = Number(req.body.credits_used ?? 0);
+    if (Number.isNaN(credits_used) || credits_used < 0) credits_used = 0;
+
     const user_id = req.user.id;
 
     delivery_address = delivery_address || address || null;
@@ -72,7 +75,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         if (geo) {
           latitude = geo.latitude;
           longitude = geo.longitude;
-          // prefer geocoder's display name if none provided
           delivery_address = delivery_address || geo.display_name;
         }
       } catch (e) {
@@ -102,10 +104,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     // If no shop found by proximity (or no coords), find any shop that has all products with sufficient stock
     if (!shopkeeper_id) {
       const productIds = items.map((i) => i.product_id);
-      const [candidateRows] = await pool.query(
-        "SELECT DISTINCT shop_id FROM products WHERE id IN (?)",
-        [productIds]
-      );
+      const [candidateRows] = await pool.query("SELECT DISTINCT shop_id FROM products WHERE id IN (?)", [productIds]);
       const candidateShopIds = candidateRows.map((r) => r.shop_id);
 
       for (const sid of candidateShopIds) {
@@ -143,16 +142,46 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       }
     }
 
-    const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-    const earnedCredits = calculateCredits(total);
+    // Calculate totals and handle credits usage
+    const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
+    // Lock user row to check and modify store_credits safely inside transaction
     await conn.beginTransaction();
 
+    const [userRows] = await conn.query("SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ? FOR UPDATE", [user_id]);
+    const currentCredits = Number(userRows[0]?.store_credits ?? 0);
+
+    if (credits_used > currentCredits) {
+      await conn.rollback();
+      return res.status(400).json({ message: "Insufficient store credits" });
+    }
+
+    const creditValuePerUnit = 0.5; // keep consistent with frontend
+    const credits_value_used = credits_used * creditValuePerUnit;
+    let total = subtotal - credits_value_used;
+    if (total < 0) total = 0;
+
+    // Compute earned credits based on adjusted total
+    const earnedCredits = calculateCredits(total);
+
+    // Insert order including payment_method, credits_used and credits_granted (we store granted = earnedCredits)
     const [orderResult] = await conn.query(
       `INSERT INTO orders 
-       (user_id, shopkeeper_id, total_amount, status, credits_earned, latitude, longitude, delivery_address) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, shopkeeper_id, total, "Pending", earnedCredits, latitude, longitude, resolvedAddress]
+       (user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, latitude, longitude, delivery_address) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        user_id,
+        shopkeeper_id,
+        "Pending",
+        payment_method || null,
+        total,
+        earnedCredits,
+        credits_used,
+        earnedCredits, // credits_granted same as credits_earned here
+        latitude,
+        longitude,
+        resolvedAddress,
+      ]
     );
 
     const orderId = orderResult.insertId;
@@ -183,6 +212,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: `Insufficient stock: ${stockIssues.join("; ")}` });
     }
 
+    // Insert items and update stock
     const values = items.map((i) => [orderId, i.product_id, i.quantity, i.price]);
     await conn.query("INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?", [values]);
 
@@ -190,11 +220,12 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [item.quantity, item.product_id]);
     }
 
+    // Deduct used credits then add earned credits
+    if (credits_used > 0) {
+      await conn.query("UPDATE users SET store_credits = COALESCE(store_credits,0) - ? WHERE id = ?", [credits_used, user_id]);
+    }
     if (earnedCredits > 0) {
-      await conn.query(
-        "UPDATE users SET store_credits = COALESCE(store_credits,0) + ? WHERE id = ?",
-        [earnedCredits, user_id]
-      );
+      await conn.query("UPDATE users SET store_credits = COALESCE(store_credits,0) + ? WHERE id = ?", [earnedCredits, user_id]);
     }
 
     await conn.commit();
@@ -210,7 +241,10 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           o.id AS orderId, 
           o.total_amount, 
           o.status, 
+          o.payment_method,
           o.credits_earned,
+          o.credits_used,
+          o.credits_granted,
           o.latitude,
           o.longitude,
           o.delivery_address,
@@ -223,6 +257,9 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           s.id AS shopkeeper_id,
           s.name AS shopkeeper_name,
           s.phone AS shopkeeper_phone,
+          s.img AS shopkeeper_image,
+          s.upi_id AS shopkeeper_upi,
+          s.upi_qr AS shopkeeper_upi_qr,
           oi.product_id, 
           p.name AS product_name, 
           p.image AS product_image,
@@ -237,7 +274,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       [orderId]
     );
 
-    // ensure numeric values
     const latestStoreCredits = Number(updatedUserCredits?.store_credits ?? orderDetails[0]?.customer_credits ?? 0);
 
     const orderPayload = {
@@ -254,10 +290,17 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
         id: orderDetails[0].shopkeeper_id,
         name: orderDetails[0].shopkeeper_name,
         phone: orderDetails[0].shopkeeper_phone,
+        image: orderDetails[0].shopkeeper_image,
+        upi_id: orderDetails[0].shopkeeper_upi,
+        upi_qr: orderDetails[0].shopkeeper_upi_qr,
+
       },
+      payment_method: orderDetails[0].payment_method,
       total: Number(orderDetails[0].total_amount),
-      credits_earned: Number(earnedCredits),
-      credits_value: Number(earnedCredits) * 0.5,
+      credits_earned: Number(orderDetails[0].credits_earned || 0),
+      credits_used: Number(orderDetails[0].credits_used || 0),
+      credits_granted: Number(orderDetails[0].credits_granted || 0),
+      credits_value: Number(orderDetails[0].credits_earned || 0) * 0.5,
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
       latitude: orderDetails[0].latitude,
@@ -274,19 +317,16 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     if (req.io) {
       req.io.to(`shop_${shopkeeper_id}`).emit("newOrder", orderPayload);
       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
-
     }
+
     // Send push notification to shopkeeper
-     const [[shopkeeper]] = await pool.query(
-      "SELECT name, expo_push_token FROM shopkeepers WHERE id = ?",
-      [shopkeeper_id]
-    );
+    const [[shopkeeper]] = await pool.query("SELECT name, expo_push_token FROM shopkeepers WHERE id = ?", [shopkeeper_id]);
 
     if (shopkeeper?.expo_push_token) {
       await sendExpoPush(
         shopkeeper.expo_push_token,
         "📦 New Order Received!",
-        `You have a new order from a customer.`,
+        `You have a new order (#${orderId}).`,
         { orderId, shopkeeper_id }
       );
     }
@@ -343,6 +383,41 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   }
 });
 
+// ordersRouter.get("/myorders", verifyToken, async (req, res) => {
+//   try {
+//     const userId = req.user.id;
+//     const [orders] = await pool.query(
+//       `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
+//               JSON_ARRAYAGG(
+//                 JSON_OBJECT(
+//                   'id', oi.product_id,
+//                   'quantity', oi.quantity,
+//                   'price', oi.price,
+//                   'name', p.name,
+//                   'image', p.image
+//                 )
+//               ) AS items
+//        FROM orders o
+//        JOIN order_items oi ON o.id = oi.order_id
+//        JOIN products p ON oi.product_id = p.id
+//        WHERE o.user_id = ?
+//        GROUP BY o.id
+//        ORDER BY o.created_at DESC`,
+//       [userId]
+//     );
+
+//     const ordersWithCreditsValue = orders.map((o) => ({
+//       ...o,
+//       credits_value: o.credits_earned * 0.5,
+//     }));
+
+//     res.json({ success: true, orders: ordersWithCreditsValue });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ success: false, message: "Failed to fetch orders" });
+//   }
+// });
+
 ordersRouter.get("/myorders", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -366,12 +441,23 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
       [userId]
     );
 
+    // fetch authoritative store_credits from users table
+    const [[userRow]] = await pool.query(
+      "SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ?",
+      [userId]
+    );
+
     const ordersWithCreditsValue = orders.map((o) => ({
       ...o,
-      credits_value: o.credits_earned * 0.5,
+      credits_value: Number(o.credits_earned || 0) * 0.5,
     }));
 
-    res.json({ success: true, orders: ordersWithCreditsValue });
+    res.json({
+      success: true,
+      orders: ordersWithCreditsValue,
+      store_credits: Number(userRow?.store_credits ?? 0),
+      store_credits_value: Number(((userRow?.store_credits ?? 0) * 0.5).toFixed(2))
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to fetch orders" });
