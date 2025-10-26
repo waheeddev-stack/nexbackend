@@ -1,33 +1,124 @@
-import fetch from "node-fetch";
+import { Expo } from "expo-server-sdk";
 
-export async function sendExpoPush(expoPushToken, title, body, data = {}) {
-  if (!expoPushToken) return null;
-  const messages = [
-    {
-      to: expoPushToken,
+// Replaces previous implementation with full expo-server-sdk usage
+
+const expo = new Expo();
+
+/**
+ * Send push notifications via Expo.
+ * @param {string|string[]} tokens - single token or array of Expo push tokens
+ * @param {string} title
+ * @param {string} body
+ * @param {object} data - optional payload data
+ * @returns {object} result with tickets, receipts, invalidTokens, nonExpoTokens, errors
+ */
+export async function sendExpoPush(tokens, title, body, data = {}) {
+  if (!tokens) return { success: false, message: "No tokens provided" };
+
+  const tokenList = Array.isArray(tokens) ? tokens : [tokens];
+  const messages = [];
+  const nonExpoTokens = [];
+  for (const token of tokenList) {
+    if (!token) continue;
+    if (!Expo.isExpoPushToken(token)) {
+      nonExpoTokens.push(token);
+      continue;
+    }
+    messages.push({
+      to: token,
       sound: "default",
       title,
       body,
       data,
-    },
-  ];
+    });
+  }
+
+  const tickets = []; // collect tickets returned by sendPushNotificationsAsync
+  const tokenToTicket = {}; // map token -> ticket id (if provided)
+  const errors = [];
 
   try {
-    const resp = await fetch("https://exp.host/--/api/v2/push/send", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Accept-encoding": "gzip, deflate",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(messages),
-    });
-    const json = await resp.json();
-    // log and return response for caller to handle invalid tokens
-    console.log("Expo push response:", json);
-    return json;
+    const chunks = expo.chunkPushNotifications(messages);
+    for (const chunk of chunks) {
+      try {
+        const chunkTickets = await expo.sendPushNotificationsAsync(chunk);
+        // chunk order matches messages in that chunk
+        tickets.push(...chunkTickets);
+        // map tokens in chunk to ticket ids where available
+        for (let i = 0; i < chunk.length; i++) {
+          const msg = chunk[i];
+          const ticket = chunkTickets[i];
+          if (ticket && ticket.id) {
+            tokenToTicket[msg.to] = ticket.id;
+          } else if (ticket && ticket.status === "error") {
+            errors.push({ token: msg.to, detail: ticket });
+          }
+        }
+      } catch (sendErr) {
+        console.error("sendPushNotificationsAsync error:", sendErr);
+        errors.push({ chunkError: sendErr?.message || sendErr });
+      }
+    }
+
+    // gather receipt ids
+    const receiptIds = Object.values(tokenToTicket).filter(Boolean);
+    const receipts = {};
+    const invalidTokens = new Set();
+
+    if (receiptIds.length > 0) {
+      const receiptIdChunks = expo.chunkPushNotificationReceiptIds(receiptIds);
+      for (const receiptIdChunk of receiptIdChunks) {
+        try {
+          const chunkReceipts = await expo.getPushNotificationReceiptsAsync(receiptIdChunk);
+          Object.assign(receipts, chunkReceipts);
+        } catch (receiptErr) {
+          console.error("getPushNotificationReceiptsAsync error:", receiptErr);
+          errors.push({ receiptError: receiptErr?.message || receiptErr });
+        }
+      }
+
+      // inspect receipts for errors / invalid tokens
+      for (const [token, ticketId] of Object.entries(tokenToTicket)) {
+        const receipt = receipts[ticketId];
+        if (!receipt) continue;
+        if (receipt.status === "ok") continue;
+        // status === 'error'
+        const detail = receipt.details || {};
+        // common errors: "DeviceNotRegistered", "InvalidCredentials", etc.
+        if (receipt.message) {
+          errors.push({ token, ticketId, message: receipt.message, details: detail });
+        }
+        if (detail && detail.error) {
+          // mark token for removal if device not registered or invalid
+          const errCode = detail.error;
+          if (errCode === "DeviceNotRegistered" || errCode === "InvalidCredentials") {
+            invalidTokens.add(token);
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      tickets,
+      receipts,
+      tokenToTicket,
+      nonExpoTokens,
+      invalidTokens: Array.from(invalidTokens),
+      errors,
+    };
   } catch (err) {
-    console.error("sendExpoPush error:", err);
-    return null;
+    console.error("sendExpoPush fatal error:", err);
+    return { success: false, message: err?.message || "Unknown error", errors: [err] };
   }
+}
+
+// Helper: convenience wrapper for single-token quick send (returns same shape)
+export async function sendExpoPushToToken(token, title, body, data = {}) {
+  return sendExpoPush(token, title, body, data);
+}
+
+// NEW: export validator for token format so routes can quickly validate
+export function isExpoPushToken(token) {
+  return Expo.isExpoPushToken(token);
 }
