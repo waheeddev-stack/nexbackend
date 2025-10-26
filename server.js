@@ -12,7 +12,7 @@ import ordersRouter from "./routes/ordersRoute.js";
 dotenv.config();
 
 const app = express();
-const server = http.createServer(app); // ⬅ create server
+const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -30,6 +30,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// Socket.IO: handle connections and room joins
+io.on("connection", (socket) => {
+  console.log("Socket connected:", socket.id);
+
+  // join as shopkeeper (socket.emit after auth on client)
+  socket.on("joinShop", (shopId) => {
+    if (!shopId) return;
+    const room = `shop_${shopId}`;
+    socket.join(room);
+    console.log(`Socket ${socket.id} joined ${room}`);
+  });
+
+  // join as customer
+  socket.on("joinCustomer", (userId) => {
+    if (!userId) return;
+    const room = `customer_${userId}`;
+    socket.join(room);
+    console.log(`Socket ${socket.id} joined ${room}`);
+  });
+
+  socket.on("leaveRoom", (room) => {
+    if (!room) return;
+    socket.leave(room);
+    console.log(`Socket ${socket.id} left ${room}`);
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log("Socket disconnected:", socket.id, reason);
+  });
+});
+
 // Routes
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
@@ -39,21 +70,6 @@ app.use("/api/orders", ordersRouter);
 // Default route
 app.get("/", (req, res) => {
   res.send("Server is running!");
-});
-
-// Socket.io connection
-io.on("connection", (socket) => {
-  console.log("⚡ User connected:", socket.id);
-
-  // Example: join shopkeeper/customer rooms
-  socket.on("joinRoom", (room) => {
-    socket.join(room);
-    console.log(`📌 User joined room: ${room}`);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
-  });
 });
 
 // Server start

@@ -2,7 +2,7 @@ import express from "express";
 import pool from "../config/db.js";
 import verifyToken from "../middleware/auth.js";
 import fetch from "node-fetch";
-import { sendExpoPush, isExpoPushToken } from "../utils/expoPush.js";
+import { sendExpoPush } from "../utils/expoPush.js";
 
 const ordersRouter = express.Router();
 
@@ -37,15 +37,14 @@ function calculateCredits(amount) {
   return 0;
 }
 
+// CREATE ORDER -> notify shopkeeper
 ordersRouter.post("/addorders", verifyToken, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const rawItems = req.body.items;
-    if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
+    if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0)
       return res.status(400).json({ message: "No items provided" });
-    }
 
-    // Normalize items (support different shapes)
     const items = rawItems
       .map((it) => ({
         product_id: it.product_id ?? it.id,
@@ -54,9 +53,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       }))
       .filter((i) => i.product_id != null && i.quantity > 0);
 
-    if (items.length === 0) {
-      return res.status(400).json({ message: "No valid items provided" });
-    }
+    if (items.length === 0) return res.status(400).json({ message: "No valid items provided" });
 
     let { latitude, longitude, delivery_address, address, payment_method } = req.body;
     let credits_used = parseInt(req.body.credits_used ?? 0, 10);
@@ -68,7 +65,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     latitude = latitude != null ? parseFloat(latitude) : null;
     longitude = longitude != null ? parseFloat(longitude) : null;
 
-    // If coords missing but address provided, try geocoding
     if ((latitude == null || longitude == null) && delivery_address) {
       try {
         const geo = await getCoordsFromAddress(delivery_address);
@@ -82,7 +78,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       }
     }
 
-    // Try to find shop by proximity if coords exist
+    // determine shopkeeper (proximity first, fallback by availability)
     let shopkeeper_id = null;
     if (latitude != null && longitude != null && !isNaN(latitude) && !isNaN(longitude)) {
       const [nearestShop] = await pool.query(
@@ -101,17 +97,13 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       if (nearestShop.length) shopkeeper_id = nearestShop[0].id;
     }
 
-    // If no shop found by proximity (or no coords), find any shop that has all products with sufficient stock
     if (!shopkeeper_id) {
       const productIds = items.map((i) => i.product_id);
       const [candidateRows] = await pool.query("SELECT DISTINCT shop_id FROM products WHERE id IN (?)", [productIds]);
       const candidateShopIds = candidateRows.map((r) => r.shop_id);
 
       for (const sid of candidateShopIds) {
-        const [prodRows] = await pool.query(
-          "SELECT id, stock FROM products WHERE shop_id = ? AND id IN (?)",
-          [sid, productIds]
-        );
+        const [prodRows] = await pool.query("SELECT id, stock FROM products WHERE shop_id = ? AND id IN (?)", [sid, productIds]);
         const stockMap = new Map(prodRows.map((p) => [p.id, p.stock]));
         let ok = true;
         for (const it of items) {
@@ -128,11 +120,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       }
     }
 
-    if (!shopkeeper_id) {
-      return res.status(400).json({ message: "No shopkeeper available to fulfill order" });
-    }
+    if (!shopkeeper_id) return res.status(400).json({ message: "No shopkeeper available to fulfill order" });
 
-    // If no readable address but coords are present, reverse geocode
     let resolvedAddress = delivery_address || null;
     if (!resolvedAddress && latitude != null && longitude != null) {
       try {
@@ -142,13 +131,14 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       }
     }
 
-    // Calculate totals and handle credits usage
     const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-    // Lock user row to check and modify store_credits safely inside transaction
     await conn.beginTransaction();
 
-    const [userRows] = await conn.query("SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ? FOR UPDATE", [user_id]);
+    const [userRows] = await conn.query(
+      "SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ? FOR UPDATE",
+      [user_id]
+    );
     const currentCredits = Number(userRows[0]?.store_credits ?? 0);
 
     if (credits_used > currentCredits) {
@@ -156,16 +146,14 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Insufficient store credits" });
     }
 
-    const creditValuePerUnit = 0.5; // keep consistent with frontend
+    const creditValuePerUnit = 0.5;
     const credits_value_used = credits_used * creditValuePerUnit;
     let total = subtotal - credits_value_used;
     if (total < 0) total = 0;
 
-    // Compute earned credits based on adjusted total
     const earnedCredits = calculateCredits(total);
-    const credits_granted_flag = earnedCredits > 0 ? 1 : 0; // tinyint(1) flag
+    const credits_granted_flag = earnedCredits > 0 ? 1 : 0;
 
-    // Insert order including payment_method, credits_used and credits_granted (we store granted = earnedCredits)
     const [orderResult] = await conn.query(
       `INSERT INTO orders 
        (user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, latitude, longitude, delivery_address) 
@@ -187,12 +175,11 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     const orderId = orderResult.insertId;
 
-    // Validate availability using transaction connection
     const productIds = items.map((i) => i.product_id);
-    const [shopProducts] = await conn.query(
-      "SELECT id, name, stock, price FROM products WHERE shop_id = ? AND id IN (?)",
-      [shopkeeper_id, productIds]
-    );
+    const [shopProducts] = await conn.query("SELECT id, name, stock, price FROM products WHERE shop_id = ? AND id IN (?)", [
+      shopkeeper_id,
+      productIds,
+    ]);
 
     const availableProductIds = shopProducts.map((p) => p.id);
     const missingProducts = productIds.filter((id) => !availableProductIds.includes(id));
@@ -213,7 +200,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       return res.status(400).json({ message: `Insufficient stock: ${stockIssues.join("; ")}` });
     }
 
-    // Insert items and update stock
     const values = items.map((i) => [orderId, i.product_id, i.quantity, i.price]);
     await conn.query("INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?", [values]);
 
@@ -221,7 +207,6 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [item.quantity, item.product_id]);
     }
 
-    // Deduct used credits then add earned credits
     if (credits_used > 0) {
       await conn.query("UPDATE users SET store_credits = COALESCE(store_credits,0) - ? WHERE id = ?", [credits_used, user_id]);
     }
@@ -231,11 +216,8 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
 
     await conn.commit();
 
-    // fetch the updated user's store_credits to ensure we return the latest total
-    const [[updatedUserCredits]] = await pool.query(
-      "SELECT COALESCE(store_credits, 0) AS store_credits FROM users WHERE id = ?",
-      [user_id]
-    );
+    // fetch updated credits + order details
+    const [[updatedUserCredits]] = await pool.query("SELECT COALESCE(store_credits, 0) AS store_credits FROM users WHERE id = ?", [user_id]);
 
     const [orderDetails] = await pool.query(
       `SELECT 
@@ -261,6 +243,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
           s.img AS shopkeeper_image,
           s.upi_id AS shopkeeper_upi,
           s.upi_qr AS shopkeeper_upi_qr,
+          s.expo_push_token AS shopkeeper_push,
           oi.product_id, 
           p.name AS product_name, 
           p.image AS product_image,
@@ -299,7 +282,7 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       total: Number(orderDetails[0].total_amount),
       credits_earned: Number(orderDetails[0].credits_earned || 0),
       credits_used: Number(orderDetails[0].credits_used || 0),
-      credits_granted: Number(orderDetails[0].credits_granted) === 1 ? true : false,
+      credits_granted: Number(orderDetails[0].credits_granted) === 1,
       credits_value: Number(orderDetails[0].credits_earned || 0) * 0.5,
       status: orderDetails[0].status,
       created_at: orderDetails[0].created_at,
@@ -314,213 +297,91 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
       })),
     };
 
+    // sockets
     if (req.io) {
       req.io.to(`shop_${shopkeeper_id}`).emit("newOrder", orderPayload);
       req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
     }
 
-    // Send push notification to shopkeeper
-    const [[shopkeeper]] = await pool.query("SELECT name, expo_push_token FROM shopkeepers WHERE id = ?", [shopkeeper_id]);
+    // push to shopkeeper
+    try {
+      const shopPushToken = orderDetails[0].shopkeeper_push;
+      if (shopPushToken) {
+        const result = await sendExpoPush(shopPushToken, "📦 New Order Received!", `You have a new order (#${orderId}).`, {
+          orderId,
+          shopkeeper_id,
+        });
 
-    if (shopkeeper?.expo_push_token) {
-      try {
-        const pushResult = await sendExpoPush(
-          shopkeeper.expo_push_token,
-          "📦 New Order Received!",
-          `You have a new order (#${orderId}).`,
-          { orderId, shopkeeper_id }
-        );
-
-        // If expo-server-sdk reports invalid tokens, clear them from DB
-        if (pushResult?.invalidTokens && pushResult.invalidTokens.length) {
-          await pool.query(
-            "UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)",
-            [pushResult.invalidTokens]
-          );
-          console.warn("Cleared invalid shopkeeper expo tokens:", pushResult.invalidTokens);
+        if (result?.invalidTokens?.length) {
+          await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
+          console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
         }
-
-        // Log any non-Expo tokens found (optional cleanup)
-        if (pushResult?.nonExpoTokens && pushResult.nonExpoTokens.length) {
-          console.warn("Non-Expo tokens detected (not sent):", pushResult.nonExpoTokens);
+        if (result?.nonExpoTokens?.length) {
+          console.warn("Non-Expo tokens for shopkeeper:", result.nonExpoTokens);
         }
-      } catch (pushErr) {
-        console.error("Failed to send push to shopkeeper:", pushErr);
       }
+    } catch (pushErr) {
+      console.error("Shopkeeper push error:", pushErr);
     }
 
-    res.status(201).json({
-      success: true,
-      message: "Order created and assigned to nearest shopkeeper",
-      order: orderPayload,
-    });
+    return res.status(201).json({ success: true, message: "Order created", order: orderPayload });
   } catch (err) {
     await conn.rollback();
     console.error("Error creating order:", err);
-    console.error("Request body:", req.body);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   } finally {
     conn.release();
   }
 });
 
+// UPDATE ORDER STATUS -> notify customer
 ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   try {
-    const { status } = req.body;
     const orderId = Number(req.params.id);
+    const { status } = req.body;
     if (!orderId || isNaN(orderId)) return res.status(400).json({ message: "Invalid order ID" });
 
     const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
     if (!validStatuses.includes(status)) return res.status(400).json({ message: "Invalid status" });
 
-    const [result] = await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, orderId]);
-    if (!result.affectedRows) return res.status(404).json({ message: "Order not found" });
+    const [updateResult] = await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, orderId]);
+    if (!updateResult.affectedRows) return res.status(404).json({ message: "Order not found" });
 
+    // socket broadcast
     if (req.io) req.io.emit("orderStatusUpdate", { orderId, status });
-// 🔔 Notify customer when order status changes
-    const [[customer]] = await pool.query(
-      `SELECT u.expo_push_token, u.name 
-       FROM orders o 
-       JOIN users u ON o.user_id = u.id 
+
+    // fetch customer push token
+    const [[cust]] = await pool.query(
+      `SELECT u.id AS user_id, u.expo_push_token
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
        WHERE o.id = ?`,
       [orderId]
     );
 
-    if (customer?.expo_push_token) {
+    if (cust?.expo_push_token) {
       try {
-        const pushResult = await sendExpoPush(
-          customer.expo_push_token,
-          "🛒 Order Update",
-          `Your order is now ${status}.`,
-          { orderId, status }
-        );
+        const pushResult = await sendExpoPush(cust.expo_push_token, "🛒 Order Update", `Your order #${orderId} is now ${status}.`, {
+          orderId,
+          status,
+        });
 
-        if (pushResult?.invalidTokens && pushResult.invalidTokens.length) {
-          await pool.query(
-            "UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)",
-            [pushResult.invalidTokens]
-          );
-          console.warn("Cleared invalid user expo tokens:", pushResult.invalidTokens);
+        if (pushResult?.invalidTokens?.length) {
+          await pool.query("UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)", [pushResult.invalidTokens]);
+          console.warn("Cleared invalid user tokens:", pushResult.invalidTokens);
         }
-        if (pushResult?.nonExpoTokens && pushResult.nonExpoTokens.length) {
-          console.warn("Non-Expo tokens detected for users:", pushResult.nonExpoTokens);
+        if (pushResult?.nonExpoTokens?.length) {
+          console.warn("Non-Expo tokens for user:", pushResult.nonExpoTokens);
         }
       } catch (pushErr) {
-        console.error("Failed to send push to customer:", pushErr);
+        console.error("Customer push error:", pushErr);
       }
     }
 
-    res.json({ success: true, message: `Order status updated to ${status}`, status });
+    return res.json({ success: true, message: `Order status updated to ${status}`, status });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-ordersRouter.get("/myorders", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const [orders] = await pool.query(
-      `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
-              JSON_ARRAYAGG(
-                JSON_OBJECT(
-                  'id', oi.product_id,
-                  'quantity', oi.quantity,
-                  'price', oi.price,
-                  'name', p.name,
-                  'image', p.image
-                )
-              ) AS items
-       FROM orders o
-       JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
-       WHERE o.user_id = ?
-       GROUP BY o.id
-       ORDER BY o.created_at DESC`,
-      [userId]
-    );
-
-    // fetch authoritative store_credits from users table
-    const [[userRow]] = await pool.query(
-      "SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ?",
-      [userId]
-    );
-
-    const ordersWithCreditsValue = orders.map((o) => ({
-      ...o,
-      credits_value: Number(o.credits_earned || 0) * 0.5,
-    }));
-
-    res.json({
-      success: true,
-      orders: ordersWithCreditsValue,
-      store_credits: Number(userRow?.store_credits ?? 0),
-      store_credits_value: Number(((userRow?.store_credits ?? 0) * 0.5).toFixed(2))
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to fetch orders" });
-  }
-});
-
-ordersRouter.get("/", verifyToken, async (req, res) => {
-  try {
-    const [orders] = await pool.query(
-      `SELECT o.*, u.name AS customer_name
-       FROM orders o
-       JOIN users u ON o.user_id = u.id
-       ORDER BY o.created_at DESC`
-    );
-    res.json({ success: true, orders });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-ordersRouter.get("/live", verifyToken, async (req, res) => {
-  try {
-    const shopkeeper_id = req.user.id;
-    const [orders] = await pool.query(
-      `SELECT 
-        o.id AS order_id, 
-        o.status, 
-        o.payment_method,
-        o.total_amount, 
-        o.created_at,
-        o.delivery_address,
-        o.latitude,
-        o.longitude,
-        o.user_id,
-        COALESCE(
-          JSON_ARRAYAGG(
-            JSON_OBJECT(
-              'id', oi.product_id,
-              'name', p.name,
-              'quantity', oi.quantity,
-              'price', oi.price,
-              'image', p.image
-            )
-          ), JSON_ARRAY()
-        ) AS items,
-        ANY_VALUE(u.name) AS customer_name, 
-        ANY_VALUE(u.phone) AS customer_phone,
-        ANY_VALUE(u.email) AS customer_email
-     FROM orders o
-     JOIN order_items oi ON o.id = oi.order_id
-     JOIN products p ON oi.product_id = p.id
-     JOIN users u ON o.user_id = u.id
-     WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
-       AND o.shopkeeper_id = ?
-     GROUP BY o.id
-     ORDER BY o.created_at DESC`,
-     [shopkeeper_id]
-    );
-
-    res.json({ success: true, orders });
-  } catch (err) {
-    console.error("❌ Error fetching shopkeeper orders:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Update status error:", err);
+    return res.status(500).json({ message: "Server error" });
   }
 });
 
