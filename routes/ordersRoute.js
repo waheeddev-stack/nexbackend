@@ -2,7 +2,7 @@ import express from "express";
 import pool from "../config/db.js";
 import verifyToken from "../middleware/auth.js";
 import fetch from "node-fetch";
-import { sendExpoPush } from "../utils/expoPush.js";
+import { sendExpoPush, isExpoPushToken } from "../utils/expoPush.js";
 
 const ordersRouter = express.Router();
 
@@ -323,12 +323,30 @@ ordersRouter.post("/addorders", verifyToken, async (req, res) => {
     const [[shopkeeper]] = await pool.query("SELECT name, expo_push_token FROM shopkeepers WHERE id = ?", [shopkeeper_id]);
 
     if (shopkeeper?.expo_push_token) {
-      await sendExpoPush(
-        shopkeeper.expo_push_token,
-        "📦 New Order Received!",
-        `You have a new order (#${orderId}).`,
-        { orderId, shopkeeper_id }
-      );
+      try {
+        const pushResult = await sendExpoPush(
+          shopkeeper.expo_push_token,
+          "📦 New Order Received!",
+          `You have a new order (#${orderId}).`,
+          { orderId, shopkeeper_id }
+        );
+
+        // If expo-server-sdk reports invalid tokens, clear them from DB
+        if (pushResult?.invalidTokens && pushResult.invalidTokens.length) {
+          await pool.query(
+            "UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)",
+            [pushResult.invalidTokens]
+          );
+          console.warn("Cleared invalid shopkeeper expo tokens:", pushResult.invalidTokens);
+        }
+
+        // Log any non-Expo tokens found (optional cleanup)
+        if (pushResult?.nonExpoTokens && pushResult.nonExpoTokens.length) {
+          console.warn("Non-Expo tokens detected (not sent):", pushResult.nonExpoTokens);
+        }
+      } catch (pushErr) {
+        console.error("Failed to send push to shopkeeper:", pushErr);
+      }
     }
 
     res.status(201).json({
@@ -369,13 +387,29 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
     );
 
     if (customer?.expo_push_token) {
-      await sendExpoPush(
-        customer.expo_push_token,
-        "🛒 Order Update",
-        `Your order is now ${status}.`,
-        { orderId, status }
-      );
+      try {
+        const pushResult = await sendExpoPush(
+          customer.expo_push_token,
+          "🛒 Order Update",
+          `Your order is now ${status}.`,
+          { orderId, status }
+        );
+
+        if (pushResult?.invalidTokens && pushResult.invalidTokens.length) {
+          await pool.query(
+            "UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)",
+            [pushResult.invalidTokens]
+          );
+          console.warn("Cleared invalid user expo tokens:", pushResult.invalidTokens);
+        }
+        if (pushResult?.nonExpoTokens && pushResult.nonExpoTokens.length) {
+          console.warn("Non-Expo tokens detected for users:", pushResult.nonExpoTokens);
+        }
+      } catch (pushErr) {
+        console.error("Failed to send push to customer:", pushErr);
+      }
     }
+
     res.json({ success: true, message: `Order status updated to ${status}`, status });
   } catch (err) {
     console.error(err);
