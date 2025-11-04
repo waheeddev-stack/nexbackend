@@ -389,14 +389,15 @@ ordersRouter.get("/myorders", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const [orders] = await pool.query(
-      `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
+      `SELECT o.id, o.status, o.payment_method, o.total_amount, o.created_at, o.credits_earned,
               JSON_ARRAYAGG(
                 JSON_OBJECT(
                   'id', oi.product_id,
                   'quantity', oi.quantity,
                   'price', oi.price,
                   'name', p.name,
-                  'image', p.image
+                  'image', p.image,
+                  'payment_method', o.payment_method
                 )
               ) AS items
        FROM orders o
