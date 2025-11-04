@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pool from "../config/db.js";
+import { sendExpoPush } from "../utils/expoPush.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
@@ -212,12 +213,53 @@ userrouter.post("/orders", async (req, res) => {
     );
     const orderId = orderResult.insertId;
 
-    // Insert order items
+    // Insert order items and collect product ids
+    const productIds = [];
     for (const item of products) {
       await pool.query(
         "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
         [orderId, item.product_id, item.quantity, item.price]
       );
+      productIds.push(item.product_id);
+    }
+
+    // Notify involved shopkeepers (one notification per distinct shop)
+    try {
+      if (productIds.length > 0) {
+        const [shopRows] = await pool.query(
+          "SELECT DISTINCT shop_id FROM products WHERE id IN (?)",
+          [productIds]
+        );
+
+        const distinctShopIds = shopRows.map((r) => r.shop_id).filter(Boolean);
+
+        for (const shopId of distinctShopIds) {
+          const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
+          const token = shop?.expo_push_token;
+          if (!token) continue;
+
+          try {
+            const result = await sendExpoPush(
+              token,
+              "📦 New Order Received!",
+              `You have a new order (#${orderId}).`,
+              { orderId, shopId }
+            );
+
+            if (result?.invalidTokens?.length) {
+              await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
+              console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
+            }
+            if (result?.nonExpoTokens?.length) {
+              console.warn("Non-Expo tokens for shopkeeper:", result.nonExpoTokens);
+            }
+          } catch (pushErr) {
+            console.error("Error sending push to shopkeeper", shopId, pushErr);
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Error notifying shopkeepers:", notifyErr);
     }
 
     res.json({ success: true, order_id: orderId, message: "Order placed successfully" });

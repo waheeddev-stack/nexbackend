@@ -385,4 +385,94 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   }
 });
 
+ordersRouter.get("/myorders", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [orders] = await pool.query(
+      `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned,
+              JSON_ARRAYAGG(
+                JSON_OBJECT(
+                  'id', oi.product_id,
+                  'quantity', oi.quantity,
+                  'price', oi.price,
+                  'name', p.name,
+                  'image', p.image
+                )
+              ) AS items
+       FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       WHERE o.user_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [userId]
+    );
+
+    // fetch authoritative store_credits from users table
+    const [[userRow]] = await pool.query(
+      "SELECT COALESCE(store_credits,0) AS store_credits FROM users WHERE id = ?",
+      [userId]
+    );
+
+    const ordersWithCreditsValue = orders.map((o) => ({
+      ...o,
+      credits_value: Number(o.credits_earned || 0) * 0.5,
+    }));
+
+    res.json({
+      success: true,
+      orders: ordersWithCreditsValue,
+      store_credits: Number(userRow?.store_credits ?? 0),
+      store_credits_value: Number(((userRow?.store_credits ?? 0) * 0.5).toFixed(2))
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to fetch orders" });
+  }
+});
+ordersRouter.get("/live", verifyToken, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const [orders] = await pool.query(
+      `SELECT 
+        o.id AS order_id, 
+        o.status, 
+        o.payment_method,
+        o.total_amount, 
+        o.created_at,
+        o.delivery_address,
+        o.latitude,
+        o.longitude,
+        o.user_id,
+        COALESCE(
+          JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', oi.product_id,
+              'name', p.name,
+              'quantity', oi.quantity,
+              'price', oi.price,
+              'image', p.image
+            )
+          ), JSON_ARRAY()
+        ) AS items,
+        ANY_VALUE(u.name) AS customer_name, 
+        ANY_VALUE(u.phone) AS customer_phone,
+        ANY_VALUE(u.email) AS customer_email
+     FROM orders o
+     JOIN order_items oi ON o.id = oi.order_id
+     JOIN products p ON oi.product_id = p.id
+     JOIN users u ON o.user_id = u.id
+     WHERE o.status IN ('Pending', 'Processing', 'Delivered', 'Cancelled')
+       AND o.shopkeeper_id = ?
+     GROUP BY o.id
+     ORDER BY o.created_at DESC`,
+     [shopkeeper_id]
+    );
+
+    res.json({ success: true, orders });
+  } catch (err) {
+    console.error("❌ Error fetching shopkeeper orders:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 export default ordersRouter;
