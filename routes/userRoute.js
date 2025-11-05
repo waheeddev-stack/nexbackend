@@ -15,7 +15,7 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
-    const { latitude, longitude, radiusKm = 2 } = req.query;
+    const { latitude, longitude, radiusKm = 1 } = req.query;
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
