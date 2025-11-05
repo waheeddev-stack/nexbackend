@@ -35,17 +35,17 @@ io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
 
   // join as shopkeeper (socket.emit after auth on client)
-  socket.on("joinShop", (shopId) => {
-    if (!shopId) return;
-    const room = `shop_${shopId}`;
+  socket.on("joinShop", (shopkeeper_id) => {
+    if (!shopkeeper_id) return;
+    const room = `shop_${shopkeeper_id}`;
     socket.join(room);
     console.log(`Socket ${socket.id} joined ${room}`);
   });
 
   // join as customer
-  socket.on("joinCustomer", (userId) => {
-    if (!userId) return;
-    const room = `customer_${userId}`;
+  socket.on("joinCustomer", (user_id) => {
+    if (!user_id) return;
+    const room = `customer_${user_id}`;
     socket.join(room);
     console.log(`Socket ${socket.id} joined ${room}`);
   });

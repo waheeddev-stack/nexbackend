@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import fetch from "node-fetch";
 import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
+import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
 dotenv.config();
@@ -446,6 +447,42 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) 
         success: false, 
         message: "Failed to update order status" 
       });
+    }
+
+    // Broadcast via sockets: to shop room and to the specific customer room
+    try {
+      // fetch user_id for this order
+      const [[orderRow]] = await pool.query("SELECT user_id FROM orders WHERE id = ?", [orderIdNum]);
+      const customerId = orderRow?.user_id;
+      if (req.io) {
+        req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        if (customerId) req.io.to(`customer_${customerId}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+      }
+
+      // send push notification to customer
+      if (customerId) {
+        const [[cust]] = await pool.query(
+          `SELECT u.id AS user_id, u.expo_push_token FROM users u WHERE u.id = ?`,
+          [customerId]
+        );
+        const token = cust?.expo_push_token;
+        if (token) {
+          try {
+            const pushResult = await sendExpoPush(token, "🛒 Order Update", `Your order #${orderIdNum} is now ${status}.`, { orderId: orderIdNum, status });
+            if (pushResult?.invalidTokens?.length) {
+              await pool.query("UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)", [pushResult.invalidTokens]);
+              console.warn("Cleared invalid user tokens:", pushResult.invalidTokens);
+            }
+            if (pushResult?.nonExpoTokens?.length) {
+              console.warn("Non-Expo tokens for user:", pushResult.nonExpoTokens);
+            }
+          } catch (pushErr) {
+            console.error("Customer push error (shopkeeper route):", pushErr);
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Notification after status update failed:", notifyErr);
     }
 
     res.json({ 

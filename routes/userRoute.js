@@ -15,7 +15,7 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
-    const { latitude, longitude, radiusKm = 1 } = req.query;
+    const { latitude, longitude, radiusKm = 2 } = req.query;
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
@@ -226,6 +226,10 @@ userrouter.post("/orders", async (req, res) => {
     // Notify involved shopkeepers (one notification per distinct shop)
     try {
       if (productIds.length > 0) {
+        // Get shop mapping for products
+        const [prodRows] = await pool.query("SELECT id, shop_id, name, image FROM products WHERE id IN (?)", [productIds]);
+        const productToShop = new Map(prodRows.map((p) => [p.id, p.shop_id]));
+
         const [shopRows] = await pool.query(
           "SELECT DISTINCT shop_id FROM products WHERE id IN (?)",
           [productIds]
@@ -233,12 +237,55 @@ userrouter.post("/orders", async (req, res) => {
 
         const distinctShopIds = shopRows.map((r) => r.shop_id).filter(Boolean);
 
-        for (const shopId of distinctShopIds) {
-          const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
-          const token = shop?.expo_push_token;
-          if (!token) continue;
+        // group items per shop
+        const itemsByShop = new Map();
+        for (const item of products) {
+          const pid = item.product_id;
+          const shopId = productToShop.get(pid) || null;
+          if (!shopId) continue;
+          if (!itemsByShop.has(shopId)) itemsByShop.set(shopId, []);
+          // enrich item with product name/image if available
+          const prodMeta = prodRows.find((p) => p.id === pid) || {};
+          itemsByShop.get(shopId).push({
+            product_id: pid,
+            quantity: item.quantity,
+            price: item.price,
+            name: prodMeta.name || null,
+            image: prodMeta.image || null,
+          });
+        }
 
+        for (const shopId of distinctShopIds) {
+          const shopItems = itemsByShop.get(shopId) || [];
+          const shopTotal = shopItems.reduce((s, it) => s + (Number(it.price || 0) * Number(it.quantity || 0)), 0);
+
+          // Build payload similar to shopkeeper live order structure
+          const orderPayload = {
+            orderId,
+            total: Number(total),
+            status: "Pending",
+            address,
+            items: shopItems,
+            user_id,
+            shop_id: shopId,
+            shop_total: shopTotal,
+            created_at: new Date().toISOString(),
+          };
+
+          // Emit socket event for live update
           try {
+            if (req.io) req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
+            if (req.io) req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+          } catch (emitErr) {
+            console.warn("Socket emit failed for shop", shopId, emitErr);
+          }
+
+          // Send push notification to shopkeeper
+          try {
+            const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
+            const token = shop?.expo_push_token;
+            if (!token) continue;
+
             const result = await sendExpoPush(
               token,
               "📦 New Order Received!",
