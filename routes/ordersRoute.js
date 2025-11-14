@@ -385,4 +385,90 @@ ordersRouter.patch("/:id/status", verifyToken, async (req, res) => {
   }
 });
 
+// CLEAR ALL ORDERS FOR A USER (simple deletion)
+ordersRouter.delete("/clear-user-orders", verifyToken, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const user_id = req.user.id;
+
+    await conn.beginTransaction();
+
+    // Get all order IDs for this user
+    const [userOrders] = await conn.query("SELECT id FROM orders WHERE user_id = ?", [user_id]);
+    const orderIds = userOrders.map(order => order.id);
+
+    if (orderIds.length === 0) {
+      await conn.commit();
+      return res.json({ success: true, message: "No orders found to clear" });
+    }
+
+    // Delete order items first (foreign key constraint)
+    await conn.query("DELETE FROM order_items WHERE order_id IN (?)", [orderIds]);
+
+    // Delete orders
+    const [deleteResult] = await conn.query("DELETE FROM orders WHERE user_id = ?", [user_id]);
+
+    await conn.commit();
+
+    // Emit socket event to update any connected clients
+    if (req.io) {
+      req.io.to(`customer_${user_id}`).emit("ordersCleared", { user_id });
+    }
+
+    return res.json({ 
+      success: true, 
+      message: `Successfully cleared ${deleteResult.affectedRows} orders`,
+      cleared_count: deleteResult.affectedRows
+    });
+
+  } catch (err) {
+    await conn.rollback();
+    console.error("Error clearing user orders:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to clear orders from server" 
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+// GET USER'S ORDERS
+ordersRouter.get("/myorders", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [orders] = await pool.query(
+      `SELECT o.id, o.status, o.total_amount, o.created_at, o.credits_earned, o.payment_method,
+              JSON_ARRAYAGG(
+                JSON_OBJECT(
+                  'id', p.id,
+                  'quantity', oi.quantity,
+                  'price', oi.price,
+                  'name', p.name,
+                  'image', p.image
+                )
+              ) AS items
+       FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       WHERE o.user_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [userId]
+    );
+
+    // Calculate credits value (1 credit = 0.5 INR)
+    const ordersWithCreditsValue = orders.map((o) => ({
+      ...o,
+      credits_value: (o.credits_earned || 0) * 0.5,
+    }));
+
+    res.json({ success: true, orders: ordersWithCreditsValue });
+  } catch (err) {
+    console.error("Error fetching user orders:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch orders" });
+  }
+});
+
 export default ordersRouter;

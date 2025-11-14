@@ -7,11 +7,38 @@ import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
+
+// Middleware to check if shopkeeper is verified
+const verifyShopkeeperStatus = async (req, res, next) => {
+  try {
+    const [user] = await pool.query(
+      "SELECT verification_status FROM shopkeepers WHERE id = ?",
+      [req.user.id]
+    );
+
+    if (user.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    if (user[0].verification_status !== 'verified') {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Account verification required. Please wait for admin approval.",
+        verification_status: user[0].verification_status
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error("Verification check error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 dotenv.config();
 
 const shopkeeperRouter = express.Router();
 
-shopkeeperRouter.get("/stats", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     
@@ -156,8 +183,8 @@ shopkeeperRouter.post(
 
       const [result] = await pool.query(
         `INSERT INTO shopkeepers 
-         (name, email, password, phone, address, shop_name, latitude, longitude, img, upi_id, upi_qr, expo_push_token) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (name, email, password, phone, address, shop_name, latitude, longitude, img, upi_id, upi_qr, expo_push_token, verification_status) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
         [
           name,
           email,
@@ -175,14 +202,20 @@ shopkeeperRouter.post(
       );
 
       const [userRows] = await pool.query(
-        "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
+        "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, verification_status, created_at FROM shopkeepers WHERE id = ?",
         [result.insertId]
       );
 
       const user = userRows[0];
       const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET );
 
-      return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
+      return res.json({ 
+        success: true, 
+        token, 
+        user, 
+        message: "Shopkeeper registered successfully. Your account is pending verification.",
+        requiresVerification: user.verification_status === 'pending'
+      });
     } catch (err) {
       console.error("Signup error:", err);
       return res.status(500).json({ success: false, message: "Server error" });
@@ -213,6 +246,23 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
+    // Check verification status
+    if (user[0].verification_status === 'pending') {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account is pending verification. Please wait for admin approval.",
+        status: 'pending'
+      });
+    }
+
+    if (user[0].verification_status === 'rejected') {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account has been rejected. Please contact support.",
+        status: 'rejected'
+      });
+    }
+
     const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
     
     res.json({
@@ -222,7 +272,8 @@ shopkeeperRouter.post("/signin", async (req, res) => {
         id: user[0].id, 
         email: user[0].email, 
         name: user[0].name, 
-        shop_name: user[0].shop_name 
+        shop_name: user[0].shop_name,
+        verification_status: user[0].verification_status
       },
     });
   } catch (err) {
@@ -242,7 +293,7 @@ shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
     }
 
     const [user] = await pool.query(
-      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, verification_status, created_at FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
@@ -334,7 +385,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
     }
 
     const [userRows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, verification_status, created_at FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
@@ -348,7 +399,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
-shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { status } = req.query; // Optional filter by status
@@ -402,7 +453,7 @@ shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
 });
 
 // Update order status (shopkeeper can update orders assigned to them)
-shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) => {
+shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
@@ -463,7 +514,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) 
 /**
  * GET all products of the logged-in shopkeeper
  */
-shopkeeperRouter.get("/products", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const [products] = await pool.query(
@@ -480,7 +531,7 @@ shopkeeperRouter.get("/products", verifyToken, async (req, res) => {
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
+shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { name, description, category, price, stock } = req.body;
@@ -530,7 +581,7 @@ shopkeeperRouter.post("/products", verifyToken, upload.single("image"), async (r
 /**
  * UPDATE product
  */
-shopkeeperRouter.put("/products/:id", verifyToken, upload.single("image"), async (req, res) => {
+shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const productId = req.params.id;
@@ -583,7 +634,7 @@ shopkeeperRouter.put("/products/:id", verifyToken, upload.single("image"), async
 /**
  * DELETE product
  */
-shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
+shopkeeperRouter.delete("/products/:id", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const productId = req.params.id;
@@ -608,7 +659,7 @@ shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
 
 // --- Access global products (shopkeeper) ---
 // List all global products (read-only for shopkeepers)
-shopkeeperRouter.get("/global-products", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT id, name, price, category, description, image, created_at FROM global_products ORDER BY created_at DESC"
@@ -622,7 +673,7 @@ shopkeeperRouter.get("/global-products", verifyToken, async (req, res) => {
 
 // Add a product into shopkeeper's catalog from global_products
 // body: { global_product_id, price (optional override), stock (required) }
-shopkeeperRouter.post("/products/from-global", verifyToken, async (req, res) => {
+shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { global_product_id, price, stock } = req.body;
@@ -674,7 +725,7 @@ shopkeeperRouter.post("/products/from-global", verifyToken, async (req, res) => 
 });
 
 // Update only stock for a shopkeeper's product
-shopkeeperRouter.patch("/products/:id/stock", verifyToken, async (req, res) => {
+shopkeeperRouter.patch("/products/:id/stock", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const productId = req.params.id;
@@ -704,7 +755,7 @@ shopkeeperRouter.patch("/products/:id/stock", verifyToken, async (req, res) => {
 });
 
 // Save expo push token for authenticated shopkeeper
-shopkeeperRouter.post("/push-token", verifyToken, async (req, res) => {
+shopkeeperRouter.post("/push-token", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const { token } = req.body;
     if (!token) return res.status(400).json({ success: false, message: "token is required" });

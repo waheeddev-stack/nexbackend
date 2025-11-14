@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import verifyToken from "../middleware/auth.js";
+import verifyAdminToken from "../middleware/adminAuth.js";
 
 import pool from "../config/db.js";
 import upload from "../config/upload.js";
@@ -11,10 +12,10 @@ import streamifier from "streamifier";
 const adminRouter = express.Router();
 
 // Fetch all shopkeepers (protected)
-adminRouter.get("/shopkeepers", verifyToken, async (req, res) => {
+adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, created_at FROM shopkeepers ORDER BY created_at DESC"
+      "SELECT id, name, email, phone, address, shop_name, img, verification_status, created_at FROM shopkeepers ORDER BY created_at DESC"
     );
     res.json({ success: true, data: rows });
   } catch (err) {
@@ -23,7 +24,7 @@ adminRouter.get("/shopkeepers", verifyToken, async (req, res) => {
 });
 
 // Fetch all customers/users (protected)
-adminRouter.get("/customers", verifyToken, async (req, res) => {
+adminRouter.get("/customers", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT id, name, email, phone, address, created_at FROM users ORDER BY created_at DESC"
@@ -34,32 +35,79 @@ adminRouter.get("/customers", verifyToken, async (req, res) => {
   }
 });
 
-// Admin Registration (only via backend, not frontend)
-adminRouter.post("/register", async (req, res) => {
-  // Use constant admin credentials
-  const email = process.env.ADMIN_EMAIL || "admin@admin.com";
-  const password = process.env.ADMIN_PASSWORD || "admin123";
+// Verify/Reject shopkeeper (protected)
+adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) => {
   try {
-    // Only allow registration if no admin exists
-    const [exists] = await pool.query("SELECT id FROM admins WHERE email = ?", [
-      email,
-    ]);
-    if (exists.length > 0) {
-      return res.status(409).json({ success: false, message: "Admin already exists" });
+    const shopkeeperId = req.params.id;
+    const { action } = req.body; // "approve" or "reject"
+
+    if (!["approve", "reject"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'" });
     }
+
+    const verification_status = action === "approve" ? "verified" : "rejected";
+
+    // Update shopkeeper verification status
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
+      [verification_status, shopkeeperId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    // Get shopkeeper details for response
+    const [shopkeeper] = await pool.query(
+      "SELECT id, name, email, verification_status FROM shopkeepers WHERE id = ?",
+      [shopkeeperId]
+    );
+
+    res.json({ 
+      success: true, 
+      message: `Shopkeeper ${action}d successfully`,
+      shopkeeper: shopkeeper[0]
+    });
+  } catch (err) {
+    console.error("Shopkeeper verification error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Admin Registration (only for initial setup)
+adminRouter.post("/register", async (req, res) => {
+  try {
+    // Check if any admin already exists
+    const [existingAdmins] = await pool.query("SELECT COUNT(*) as count FROM admins");
+    if (existingAdmins[0].count > 0) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Admin registration is disabled. Admin already exists." 
+      });
+    }
+
+    // Use environment variables or default credentials for initial setup
+    const email = process.env.ADMIN_EMAIL || "admin@admin.com";
+    const password = process.env.ADMIN_PASSWORD || "admin123";
+    
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
       "INSERT INTO admins (email, password) VALUES (?, ?)",
       [email, hashedPassword]
     );
-    res.status(201).json({ success: true, data: { id: result.insertId, email } });
+    
+    res.status(201).json({ 
+      success: true, 
+      data: { id: result.insertId, email },
+      message: "Initial admin created successfully" 
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
 // List all admins (protected)
-adminRouter.get("/", verifyToken, async (req, res) => {
+adminRouter.get("/", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT id, email, created_at FROM admins");
     res.json({ success: true, data: rows });
@@ -69,7 +117,7 @@ adminRouter.get("/", verifyToken, async (req, res) => {
 });
 
 
-adminRouter.get("/dashboard", verifyToken, async (req, res) => {
+adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
   try {
     // Shopkeepers count
     const [shopkeepers] = await pool.query(
@@ -225,7 +273,7 @@ adminRouter.get("/dashboard", verifyToken, async (req, res) => {
 // --- Admin CRUD for global_products (admin only) ---
 
 // List all global products
-adminRouter.get("/global-products", verifyToken, async (req, res) => {
+adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT id, name, price, category, description, image, created_at FROM global_products ORDER BY created_at DESC"
@@ -239,7 +287,7 @@ adminRouter.get("/global-products", verifyToken, async (req, res) => {
 // Create a global product (admin)
 adminRouter.post(
   "/global-products",
-  verifyToken,
+  verifyAdminToken,
   upload.single("image"),
   async (req, res) => {
     const { name, price, category, description } = req.body;
@@ -286,7 +334,7 @@ adminRouter.post(
 // Update a global product (admin)
 adminRouter.put(
   "/global-products/:id",
-  verifyToken,
+  verifyAdminToken,
   upload.single("image"),
   async (req, res) => {
     const { name, price, category, description } = req.body;
@@ -322,7 +370,7 @@ adminRouter.put(
 );
 
 // Delete a global product (admin)
-adminRouter.delete("/global-products/:id", verifyToken, async (req, res) => {
+adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) => {
   try {
     const [result] = await pool.query("DELETE FROM global_products WHERE id = ?", [
       req.params.id,
@@ -337,7 +385,7 @@ adminRouter.delete("/global-products/:id", verifyToken, async (req, res) => {
 });
 
 // Fetch all orders (admin)
-adminRouter.get("/orders", verifyToken, async (req, res) => {
+adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
   try {
     const [orders] = await pool.query(
       `SELECT 
@@ -415,7 +463,7 @@ adminRouter.get("/orders", verifyToken, async (req, res) => {
 // });
 
 // Get admin by ID (protected) - keep this at the end
-adminRouter.get("/:id", verifyToken, async (req, res) => {
+adminRouter.get("/:id", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT id, email, created_at FROM admins WHERE id = ?",
@@ -431,7 +479,7 @@ adminRouter.get("/:id", verifyToken, async (req, res) => {
 });
 
 // Update admin email or password (protected)
-adminRouter.put("/:id", verifyToken, async (req, res) => {
+adminRouter.put("/:id", verifyAdminToken, async (req, res) => {
   const { email, password } = req.body;
   if (!email && !password) {
     return res.status(400).json({ success: false, message: "Nothing to update" });
@@ -463,7 +511,7 @@ adminRouter.put("/:id", verifyToken, async (req, res) => {
 });
 
 // Delete admin (protected)
-adminRouter.delete("/:id", verifyToken, async (req, res) => {
+adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
   try {
     const [result] = await pool.query("DELETE FROM admins WHERE id = ?", [
       req.params.id,
@@ -480,34 +528,53 @@ adminRouter.delete("/:id", verifyToken, async (req, res) => {
 // Admin Login
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
+  
   if (!email || !password) {
     return res.status(400).json({ success: false, message: "Email and password are required" });
   }
+
   try {
-    const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [
-      email,
-    ]);
+    const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [email]);
+    
     if (rows.length === 0) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
+
     const admin = rows[0];
     const isMatch = await bcrypt.compare(password, admin.password);
+    
     if (!isMatch) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-    // Generate JWT
+
+    // Generate JWT with admin-specific payload
     const token = jwt.sign(
-      { id: admin.id, email: admin.email },
-      process.env.JWT_SECRET || "secretkey"
+      { 
+        id: admin.id, 
+        email: admin.email,
+        role: 'admin' // Add role for additional security
+      },
+      process.env.JWT_SECRET || "secretkey",
+      { expiresIn: '24h' } // Add token expiration
     );
-    res.json({ success: true, token, admin: { id: admin.id, email: admin.email } });
+
+    res.json({ 
+      success: true, 
+      token, 
+      admin: { 
+        id: admin.id, 
+        email: admin.email 
+      },
+      message: "Admin login successful"
+    });
   } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    console.error("Admin login error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
 // Example protected route
-adminRouter.get("/profile", verifyToken, async (req, res) => {
+adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT id, email, created_at FROM admins WHERE id = ?",
