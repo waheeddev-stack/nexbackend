@@ -83,12 +83,27 @@ if (shouldUseSsl) {
   console.log("NOT using SSL for MySQL connection (DB_SSL not set and no CA available inside container)");
 }
 
+// Validate basic DB config before attempting to create a pool
+const dbHost = process.env.DB_HOST;
+const dbPort = process.env.DB_PORT || 4000;
+const dbUser = process.env.DB_USER;
+const dbName = process.env.DB_NAME;
+
+if (!dbHost) {
+  console.error("FATAL: DB_HOST is not set. The application cannot connect to MySQL without DB_HOST.");
+  console.error("Set DB_HOST in your environment (Railway variables or mounted .env) to your database host.");
+  // Exit early to surface configuration error in deployment logs
+  process.exit(1);
+}
+
+console.log(`Creating MySQL pool for ${dbUser || 'unknown user'}@${dbHost}:${dbPort}/${dbName || ''}`);
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 4000,
-  user: process.env.DB_USER,
+  host: dbHost,
+  port: dbPort,
+  user: dbUser,
   password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
+  database: dbName,
   ssl: sslConfig,
   waitForConnections: true,
   connectionLimit: 10,
