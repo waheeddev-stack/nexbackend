@@ -121,16 +121,21 @@ if (!dbHost) {
   });
 }
 
-(async () => {
-  try {
-    const connection = await pool.getConnection();
-    console.log("MySQL connected successfully!");
-    connection.release();
-  } catch (err) {
-    console.error("MySQL connection failed:", err && err.message ? err.message : err);
-    // Print stack where available for debugging
-    if (err && err.stack) console.error(err.stack);
-  }
-})();
+// Only attempt an initial DB connection check when a real DB_HOST is configured.
+if (dbHost) {
+  (async () => {
+    try {
+      const connection = await pool.getConnection();
+      console.log("MySQL connected successfully!");
+      connection.release();
+    } catch (err) {
+      console.error("MySQL connection failed:", err && err.message ? err.message : err);
+      // Print stack where available for debugging
+      if (err && err.stack) console.error(err.stack);
+    }
+  })();
+} else {
+  console.log("Skipping initial DB connection check because DB_HOST is not configured.");
+}
 
 export default pool;
