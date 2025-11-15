@@ -89,26 +89,37 @@ const dbPort = process.env.DB_PORT || 4000;
 const dbUser = process.env.DB_USER;
 const dbName = process.env.DB_NAME;
 
+let pool;
 if (!dbHost) {
   console.error("FATAL: DB_HOST is not set. The application cannot connect to MySQL without DB_HOST.");
   console.error("Set DB_HOST in your environment (Railway variables or mounted .env) to your database host.");
-  // Exit early to surface configuration error in deployment logs
-  process.exit(1);
+  console.error("The server will continue to run, but any DB calls will throw a clear error until DB_HOST is configured.");
+
+  // Create a fake pool that surfaces a helpful error when used. This avoids process.exit
+  // so the server can start (useful for local dev / static pages) while DB is not configured.
+  const missingErr = new Error("Database not configured: DB_HOST is not set in environment variables.");
+  pool = {
+    query: async function () { throw missingErr; },
+    execute: async function () { throw missingErr; },
+    getConnection: async function () { throw missingErr; },
+    // keep an end/close method just in case
+    end: async function () { /* no-op */ },
+  };
+} else {
+  console.log(`Creating MySQL pool for ${dbUser || 'unknown user'}@${dbHost}:${dbPort}/${dbName || ''}`);
+
+  pool = mysql.createPool({
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: process.env.DB_PASS,
+    database: dbName,
+    ssl: sslConfig,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+  });
 }
-
-console.log(`Creating MySQL pool for ${dbUser || 'unknown user'}@${dbHost}:${dbPort}/${dbName || ''}`);
-
-const pool = mysql.createPool({
-  host: dbHost,
-  port: dbPort,
-  user: dbUser,
-  password: process.env.DB_PASS,
-  database: dbName,
-  ssl: sslConfig,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-});
 
 (async () => {
   try {
