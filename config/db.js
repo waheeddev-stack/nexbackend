@@ -7,21 +7,40 @@ import path from "path";
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 let sslConfig = undefined;
-const dbSsl = process.env.DB_SSL && process.env.DB_SSL.trim().toLowerCase() === "true";
-const caPath = process.env.DB_SSL_CA || "/etc/secrets/ca.pem";
+// Accept common truthy values for DB_SSL
+const dbSslRaw = (process.env.DB_SSL || "").toString().trim().toLowerCase();
+const dbSsl = dbSslRaw === "1" || dbSslRaw === "true" || dbSslRaw === "yes";
+
+// Support two ways of providing CA:
+// 1) DB_SSL_CA: path to a file (e.g. /etc/secrets/ca.pem)
+// 2) DB_SSL_CA: inline PEM content (starts with -----BEGIN CERTIFICATE-----)
+// Also accept DB_SSL_CA_CONTENT as alternate env var containing PEM content.
+const caEnv = process.env.DB_SSL_CA || process.env.DB_SSL_CA_CONTENT || "/etc/secrets/ca.pem";
 
 console.log("DB_SSL:", process.env.DB_SSL);
-console.log("DB_SSL_CA:", caPath);
+console.log("DB_SSL_CA (env/raw):", typeof caEnv === 'string' ? (caEnv.length > 200 ? `${caEnv.slice(0,200)}...` : caEnv) : caEnv);
 
 if (dbSsl) {
   try {
+    let caBuffer;
+    if (typeof caEnv === "string" && caEnv.includes("-----BEGIN")) {
+      // Inline PEM provided in env var
+      caBuffer = Buffer.from(caEnv, "utf8");
+      console.log("Using inline CA PEM from env for MySQL SSL");
+    } else {
+      // treat as path
+      const caPath = caEnv;
+      caBuffer = fs.readFileSync(caPath);
+      console.log("Using CA file for MySQL SSL:", caPath);
+    }
+
     sslConfig = {
-      ca: fs.readFileSync(caPath),
+      ca: caBuffer,
       rejectUnauthorized: true,
     };
     console.log("Using SSL for MySQL connection");
   } catch (err) {
-    console.error("Failed to read CA file:", caPath, err.message);
+    console.error("Failed to load CA data for MySQL SSL:", err?.message || err);
   }
 } else {
   console.log("NOT using SSL for MySQL connection");
