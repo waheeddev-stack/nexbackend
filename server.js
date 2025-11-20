@@ -8,6 +8,7 @@ import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
+import notificationRouter from "./routes/notificationRoute.js";
 
 dotenv.config();
 
@@ -66,7 +67,7 @@ app.use("/api/users/v1", userrouter);
 app.use("/api/shopkeepers/v1", shopkeeperRouter);
 app.use("/api/admin/v1", adminRouter);
 app.use("/api/orders/v1", ordersRouter);
-
+app.use("/api/notifications/v1", notificationRouter);
 // Default route
 app.get("/", (req, res) => {
   res.send("Server is running!");
