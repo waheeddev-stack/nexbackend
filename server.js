@@ -63,11 +63,18 @@ io.on("connection", (socket) => {
 });
 
 // Routes
-app.use("/api/users/v1", userrouter);
-app.use("/api/shopkeepers/v1", shopkeeperRouter);
-app.use("/api/admin/v1", adminRouter);
-app.use("/api/orders/v1", ordersRouter);
-app.use("/api/notifications/v1", notificationRouter);
+// app.use("/api/users/v1", userrouter);
+// app.use("/api/shopkeepers/v1", shopkeeperRouter);
+// app.use("/api/admin/v1", adminRouter);
+// app.use("/api/orders/v1", ordersRouter);
+// app.use("/api/notifications/v1", notificationRouter);
+
+app.use("/api/users", userrouter);
+app.use("/api/shopkeepers", shopkeeperRouter);
+app.use("/api/admin", adminRouter);
+app.use("/api/orders", ordersRouter);
+app.use("/api/notifications", notificationRouter);
+
 // Default route
 app.get("/", (req, res) => {
   res.send("Server is running!");
