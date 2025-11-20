@@ -5,6 +5,7 @@ CREATE TABLE shopkeepers (
   email VARCHAR(200) UNIQUE,
   password VARCHAR(255),
   phone VARCHAR(30),
+  is_verified BOOLEAN DEFAULT FALSE,
   address TEXT,
   img VARCHAR(255),                -- URL to shopkeeper photo
   expo_push_token VARCHAR(255),    -- for push notifications
