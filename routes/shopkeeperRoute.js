@@ -5,8 +5,10 @@ import jwt from "jsonwebtoken";
 import fetch from "node-fetch";
 import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
+import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
+import checkPaymentStatus from "../middleware/checkPaymentStatus.js";
 
 // Middleware to check if shopkeeper is verified
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -399,7 +401,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
-shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkPaymentStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { status } = req.query; // Optional filter by status
@@ -453,7 +455,7 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
 });
 
 // Update order status (shopkeeper can update orders assigned to them)
-shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, checkPaymentStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
@@ -499,6 +501,42 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
+    // Broadcast via sockets: to shop room and to the specific customer room
+    try {
+      // fetch user_id for this order
+      const [[orderRow]] = await pool.query("SELECT user_id FROM orders WHERE id = ?", [orderIdNum]);
+      const customerId = orderRow?.user_id;
+      if (req.io) {
+        req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        if (customerId) req.io.to(`customer_${customerId}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+      }
+
+      // send push notification to customer
+      if (customerId) {
+        const [[cust]] = await pool.query(
+          `SELECT u.id AS user_id, u.expo_push_token FROM users u WHERE u.id = ?`,
+          [customerId]
+        );
+        const token = cust?.expo_push_token;
+        if (token) {
+          try {
+            const pushResult = await sendExpoPush(token, "🛒 Order Update", `Your order #${orderIdNum} is now ${status}.`, { orderId: orderIdNum, status });
+            if (pushResult?.invalidTokens?.length) {
+              await pool.query("UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)", [pushResult.invalidTokens]);
+              console.warn("Cleared invalid user tokens:", pushResult.invalidTokens);
+            }
+            if (pushResult?.nonExpoTokens?.length) {
+              console.warn("Non-Expo tokens for user:", pushResult.nonExpoTokens);
+            }
+          } catch (pushErr) {
+            console.error("Customer push error (shopkeeper route):", pushErr);
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Notification after status update failed:", notifyErr);
+    }
+
     res.json({ 
       success: true, 
       message: `Order status updated to ${status}`,
@@ -514,7 +552,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
 /**
  * GET all products of the logged-in shopkeeper
  */
-shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkPaymentStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const [products] = await pool.query(
@@ -531,7 +569,7 @@ shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, async (re
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.single("image"), async (req, res) => {
+shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkPaymentStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { name, description, category, price, stock } = req.body;
@@ -765,6 +803,231 @@ shopkeeperRouter.post("/push-token", verifyToken, verifyShopkeeperStatus, async 
   } catch (err) {
     console.error("Save shopkeeper push token error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// EARNINGS ENDPOINTS
+
+// Calculate earnings based on order amount
+const calculateOrderEarning = (orderAmount) => {
+  if (orderAmount <= 100) return { amount: 5, rate: "5 (≤100)" };
+  if (orderAmount <= 300) return { amount: 8, rate: "8 (100-300)" };
+  return { amount: 15, rate: "15 (>300)" };
+};
+
+// Get earnings data for shopkeeper
+shopkeeperRouter.get("/earnings", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    // Get or create earnings record
+    let [earningsRows] = await pool.query(
+      "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    if (earningsRows.length === 0) {
+      // Create initial earnings record
+      await pool.query(
+        "INSERT INTO earnings (shopkeeper_id, last_payment_date) VALUES (?, ?)",
+        [shopkeeper_id, new Date()]
+      );
+      [earningsRows] = await pool.query(
+        "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+        [shopkeeper_id]
+      );
+    }
+
+    const earnings = earningsRows[0];
+
+    // Calculate current cycle dates
+    const lastPayment = new Date(earnings.last_payment_date);
+    const nextPayment = new Date(lastPayment);
+    nextPayment.setDate(nextPayment.getDate() + 15);
+    
+    const currentCycleStart = new Date(lastPayment);
+    currentCycleStart.setDate(currentCycleStart.getDate() + 1);
+
+    // Get delivered orders in current cycle
+    const [currentCycleOrders] = await pool.query(
+      `SELECT id, total_amount, created_at FROM orders 
+       WHERE shopkeeper_id = ? AND status = 'Delivered' 
+       AND created_at >= ? AND created_at <= ?`,
+      [shopkeeper_id, currentCycleStart, new Date()]
+    );
+
+    // Calculate current cycle earnings and update order_earnings table
+    let currentCycleEarnings = 0;
+    for (const order of currentCycleOrders) {
+      const earning = calculateOrderEarning(Number(order.total_amount));
+      currentCycleEarnings += earning.amount;
+
+      // Insert or update order_earnings record
+      await pool.query(
+        `INSERT INTO order_earnings 
+         (order_id, shopkeeper_id, order_amount, earning_amount, earning_rate, payment_cycle_start, payment_cycle_end, is_paid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, FALSE)
+         ON DUPLICATE KEY UPDATE 
+         earning_amount = VALUES(earning_amount),
+         earning_rate = VALUES(earning_rate)`,
+        [order.id, shopkeeper_id, order.total_amount, earning.amount, earning.rate, currentCycleStart, nextPayment]
+      );
+    }
+
+    // Update pending amount in earnings table
+    await pool.query(
+      "UPDATE earnings SET pending_amount = ?, next_payment_date = ? WHERE shopkeeper_id = ?",
+      [currentCycleEarnings, nextPayment, shopkeeper_id]
+    );
+
+    // Calculate payment status
+    const now = new Date();
+    const daysUntilPayment = Math.ceil((nextPayment - now) / (1000 * 60 * 60 * 24));
+    
+    let paymentStatus = 'active';
+    if (daysUntilPayment < 0 && currentCycleEarnings > 0) {
+      paymentStatus = 'blocked';
+    } else if (daysUntilPayment <= 2 && currentCycleEarnings > 0) {
+      paymentStatus = 'overdue';
+    } else if (daysUntilPayment <= 7 && currentCycleEarnings > 0) {
+      paymentStatus = 'due_soon';
+    }
+
+    // Update payment status
+    await pool.query(
+      "UPDATE earnings SET payment_status = ? WHERE shopkeeper_id = ?",
+      [paymentStatus, shopkeeper_id]
+    );
+
+    // Get updated earnings data
+    const [updatedEarnings] = await pool.query(
+      "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    res.json({
+      success: true,
+      earnings: updatedEarnings[0],
+      currentCycleEarnings,
+      daysUntilPayment: Math.max(0, daysUntilPayment),
+      paymentStatus
+    });
+
+  } catch (err) {
+    console.error("Get earnings error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Submit payment request for admin approval
+shopkeeperRouter.post("/earnings/payment", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { amount, payment_method, transaction_id } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Valid amount is required" });
+    }
+
+    // Get current earnings
+    const [earningsRows] = await pool.query(
+      "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    if (earningsRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Earnings record not found" });
+    }
+
+    // Check if there's already a pending payment request
+    const [pendingRequests] = await pool.query(
+      "SELECT COUNT(*) as count FROM earnings_history WHERE shopkeeper_id = ? AND status = 'pending'",
+      [shopkeeper_id]
+    );
+
+    if (pendingRequests[0].count > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "You already have a pending payment request. Please wait for admin approval." 
+      });
+    }
+
+    // Create payment request (pending status)
+    await pool.query(
+      `INSERT INTO earnings_history 
+       (shopkeeper_id, amount, payment_method, transaction_id, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [shopkeeper_id, amount, payment_method || 'UPI', transaction_id || null]
+    );
+
+    res.json({
+      success: true,
+      message: "Payment request submitted successfully. Please wait for admin approval.",
+      status: 'pending'
+    });
+
+  } catch (err) {
+    console.error("Submit payment request error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get payment history for shopkeeper
+shopkeeperRouter.get("/earnings/history", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    const [history] = await pool.query(
+      `SELECT * FROM earnings_history 
+       WHERE shopkeeper_id = ? 
+       ORDER BY payment_date DESC`,
+      [shopkeeper_id]
+    );
+
+    res.json({
+      success: true,
+      history
+    });
+
+  } catch (err) {
+    console.error("Get payment history error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Check if shopkeeper is blocked due to overdue payment
+shopkeeperRouter.get("/earnings/status", verifyToken, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    const [earningsRows] = await pool.query(
+      "SELECT payment_status, pending_amount, next_payment_date FROM earnings WHERE shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    if (earningsRows.length === 0) {
+      return res.json({
+        success: true,
+        isBlocked: false,
+        status: 'active',
+        pendingAmount: 0
+      });
+    }
+
+    const earnings = earningsRows[0];
+    const isBlocked = earnings.payment_status === 'blocked';
+
+    res.json({
+      success: true,
+      isBlocked,
+      status: earnings.payment_status,
+      pendingAmount: earnings.pending_amount,
+      nextPaymentDate: earnings.next_payment_date
+    });
+
+  } catch (err) {
+    console.error("Get earnings status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

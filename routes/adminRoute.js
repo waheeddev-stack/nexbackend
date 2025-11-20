@@ -35,11 +35,46 @@ adminRouter.get("/customers", verifyAdminToken, async (req, res) => {
   }
 });
 
+// Test endpoint to debug verification issues
+adminRouter.get("/test-verify/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.params.id;
+    console.log(`Testing verification for shopkeeper ${shopkeeperId}`);
+    
+    // Check if shopkeeper exists
+    const [shopkeeper] = await pool.query(
+      "SELECT id, name, email, verification_status FROM shopkeepers WHERE id = ?",
+      [shopkeeperId]
+    );
+    
+    if (shopkeeper.length === 0) {
+      return res.json({ 
+        success: false, 
+        message: "Shopkeeper not found",
+        shopkeeperId,
+        found: false
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Shopkeeper found",
+      shopkeeper: shopkeeper[0],
+      found: true
+    });
+  } catch (error) {
+    console.error("Test verify error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
 // Verify/Reject shopkeeper (protected)
 adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
     const { action } = req.body; // "approve" or "reject"
+
+    console.log(`Verification request: shopkeeper ${shopkeeperId}, action: ${action}`);
 
     if (!["approve", "reject"].includes(action)) {
       return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'" });
@@ -47,27 +82,107 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
 
     const verification_status = action === "approve" ? "verified" : "rejected";
 
-    // Update shopkeeper verification status
-    const [result] = await pool.query(
-      "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
-      [verification_status, shopkeeperId]
+    // First check if shopkeeper exists
+    const [existingShopkeeper] = await pool.query(
+      "SELECT id, name, email FROM shopkeepers WHERE id = ?",
+      [shopkeeperId]
     );
 
-    if (result.affectedRows === 0) {
+    if (existingShopkeeper.length === 0) {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Get shopkeeper details for response
+    // Try to update verification status - handle case where column might not exist
+    try {
+      const [result] = await pool.query(
+        "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
+        [verification_status, shopkeeperId]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
+      }
+    } catch (dbError) {
+      console.error("Database update error:", dbError);
+      
+      // If column doesn't exist, try to add it
+      if (dbError.code === 'ER_BAD_FIELD_ERROR') {
+        try {
+          await pool.query(
+            "ALTER TABLE shopkeepers ADD COLUMN verification_status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending'"
+          );
+          
+          // Try the update again
+          await pool.query(
+            "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
+            [verification_status, shopkeeperId]
+          );
+        } catch (alterError) {
+          console.error("Failed to add verification_status column:", alterError);
+          return res.status(500).json({ 
+            success: false, 
+            message: "Database schema issue. Please contact administrator." 
+          });
+        }
+      } else {
+        throw dbError;
+      }
+    }
+
+    // Get updated shopkeeper details for response
     const [shopkeeper] = await pool.query(
       "SELECT id, name, email, verification_status FROM shopkeepers WHERE id = ?",
       [shopkeeperId]
     );
+
+    console.log(`Verification successful: ${JSON.stringify(shopkeeper[0])}`);
 
     res.json({ 
       success: true, 
       message: `Shopkeeper ${action}d successfully`,
       shopkeeper: shopkeeper[0]
     });
+  } catch (err) {
+    console.error("Shopkeeper verification error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Simple verification endpoint as fallback
+adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.params.id;
+    const { status } = req.body; // "verified", "rejected", "pending"
+    
+    console.log(`Simple verification: shopkeeper ${shopkeeperId}, status: ${status}`);
+    
+    if (!["verified", "rejected", "pending"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+    
+    // Check if shopkeeper exists first
+    const [existingShopkeeper] = await pool.query(
+      "SELECT id, name FROM shopkeepers WHERE id = ?",
+      [shopkeeperId]
+    );
+    
+    if (existingShopkeeper.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+    
+    // Simple update without complex error handling
+    await pool.query(
+      "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
+      [status, shopkeeperId]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: `Shopkeeper status updated to ${status}`,
+      shopkeeperId,
+      status
+    });
+    
   } catch (err) {
     console.error("Shopkeeper verification error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
@@ -87,8 +202,8 @@ adminRouter.post("/register", async (req, res) => {
     }
 
     // Use environment variables or default credentials for initial setup
-    const email = process.env.ADMIN_EMAIL || "admin@admin.com";
-    const password = process.env.ADMIN_PASSWORD || "admin123";
+    const email = process.env.ADMIN_EMAIL || "nexkirana@kirana.com";
+    const password = process.env.ADMIN_PASSWORD || "qwI41L5U47RwaI47DasA";
     
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
@@ -589,5 +704,341 @@ adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
   }
 });
 
+// EARNINGS MANAGEMENT ENDPOINTS
+
+// Get all shopkeeper earnings
+adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
+  try {
+    const [earnings] = await pool.query(`
+      SELECT 
+        e.*,
+        s.name as shopkeeper_name,
+        s.shop_name,
+        s.email as shopkeeper_email,
+        s.phone as shopkeeper_phone
+      FROM earnings e
+      JOIN shopkeepers s ON e.shopkeeper_id = s.id
+      ORDER BY e.updated_at DESC
+    `);
+
+    res.json({ success: true, earnings });
+  } catch (err) {
+    console.error("Get earnings error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get payment history for a specific shopkeeper
+adminRouter.get("/earnings/:shopkeeperId/history", verifyAdminToken, async (req, res) => {
+  try {
+    const { shopkeeperId } = req.params;
+
+    const [history] = await pool.query(
+      "SELECT * FROM earnings_history WHERE shopkeeper_id = ? ORDER BY payment_date DESC",
+      [shopkeeperId]
+    );
+
+    res.json({ success: true, history });
+  } catch (err) {
+    console.error("Get payment history error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Record payment for a shopkeeper
+adminRouter.post("/earnings/:shopkeeperId/payment", verifyAdminToken, async (req, res) => {
+  try {
+    const { shopkeeperId } = req.params;
+    const { amount, payment_method, transaction_id } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Valid amount is required" });
+    }
+
+    // Get current earnings
+    const [earningsRows] = await pool.query(
+      "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+      [shopkeeperId]
+    );
+
+    if (earningsRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Earnings record not found" });
+    }
+
+    const earnings = earningsRows[0];
+
+    // Record payment in history
+    await pool.query(
+      `INSERT INTO earnings_history 
+       (shopkeeper_id, amount, payment_method, transaction_id, status)
+       VALUES (?, ?, ?, ?, 'completed')`,
+      [shopkeeperId, amount, payment_method || 'manual', transaction_id || null]
+    );
+
+    // Update earnings record
+    const newTotalPaid = Number(earnings.total_paid) + Number(amount);
+    const newPendingAmount = Math.max(0, Number(earnings.pending_amount) - Number(amount));
+    const newLastPaymentDate = new Date();
+    const newNextPaymentDate = new Date();
+    newNextPaymentDate.setDate(newNextPaymentDate.getDate() + 15);
+
+    await pool.query(
+      `UPDATE earnings SET 
+       total_paid = ?, 
+       pending_amount = ?, 
+       last_payment_date = ?, 
+       next_payment_date = ?,
+       payment_status = 'active'
+       WHERE shopkeeper_id = ?`,
+      [newTotalPaid, newPendingAmount, newLastPaymentDate, newNextPaymentDate, shopkeeperId]
+    );
+
+    // Mark paid orders as paid
+    await pool.query(
+      "UPDATE order_earnings SET is_paid = TRUE WHERE shopkeeper_id = ? AND is_paid = FALSE",
+      [shopkeeperId]
+    );
+
+    res.json({
+      success: true,
+      message: "Payment recorded successfully",
+      newTotalPaid,
+      newPendingAmount
+    });
+
+  } catch (err) {
+    console.error("Record payment error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get earnings summary/stats
+adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
+  try {
+    const [summary] = await pool.query(`
+      SELECT 
+        COUNT(*) as total_shopkeepers,
+        SUM(pending_amount) as total_pending,
+        SUM(total_paid) as total_paid,
+        COUNT(CASE WHEN payment_status = 'blocked' THEN 1 END) as blocked_count,
+        COUNT(CASE WHEN payment_status = 'overdue' THEN 1 END) as overdue_count,
+        COUNT(CASE WHEN payment_status = 'due_soon' THEN 1 END) as due_soon_count
+      FROM earnings
+    `);
+
+    res.json({ success: true, summary: summary[0] });
+  } catch (err) {
+    console.error("Get earnings summary error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get pending payment requests from shopkeepers
+adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
+  try {
+    const [requests] = await pool.query(`
+      SELECT 
+        eh.*,
+        s.name as shopkeeper_name,
+        s.shop_name,
+        s.email as shopkeeper_email,
+        s.phone as shopkeeper_phone,
+        e.pending_amount,
+        e.payment_status
+      FROM earnings_history eh
+      JOIN shopkeepers s ON eh.shopkeeper_id = s.id
+      JOIN earnings e ON eh.shopkeeper_id = e.shopkeeper_id
+      WHERE eh.status = 'pending'
+      ORDER BY eh.created_at DESC
+    `);
+
+    res.json({ success: true, requests });
+  } catch (err) {
+    console.error("Get payment requests error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Approve or reject payment request
+adminRouter.patch("/payment-requests/:requestId", verifyAdminToken, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { action, admin_notes } = req.body; // action: 'approve' or 'reject'
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'" });
+    }
+
+    // Get the payment request
+    const [requestRows] = await pool.query(
+      "SELECT * FROM earnings_history WHERE id = ? AND status = 'pending'",
+      [requestId]
+    );
+
+    if (requestRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Payment request not found or already processed" });
+    }
+
+    const request = requestRows[0];
+
+    if (action === 'approve') {
+      // Update request status to completed
+      await pool.query(
+        "UPDATE earnings_history SET status = 'completed', admin_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [admin_notes || 'Approved by admin', requestId]
+      );
+
+      // Get current earnings
+      const [earningsRows] = await pool.query(
+        "SELECT * FROM earnings WHERE shopkeeper_id = ?",
+        [request.shopkeeper_id]
+      );
+
+      if (earningsRows.length > 0) {
+        const earnings = earningsRows[0];
+        const newTotalPaid = Number(earnings.total_paid) + Number(request.amount);
+        const newPendingAmount = Math.max(0, Number(earnings.pending_amount) - Number(request.amount));
+        const newLastPaymentDate = new Date();
+        const newNextPaymentDate = new Date();
+        newNextPaymentDate.setDate(newNextPaymentDate.getDate() + 15);
+
+        // Update earnings record
+        await pool.query(
+          `UPDATE earnings SET 
+           total_paid = ?, 
+           pending_amount = ?, 
+           last_payment_date = ?, 
+           next_payment_date = ?,
+           payment_status = 'active'
+           WHERE shopkeeper_id = ?`,
+          [newTotalPaid, newPendingAmount, newLastPaymentDate, newNextPaymentDate, request.shopkeeper_id]
+        );
+
+        // Mark paid orders as paid
+        await pool.query(
+          "UPDATE order_earnings SET is_paid = TRUE WHERE shopkeeper_id = ? AND is_paid = FALSE",
+          [request.shopkeeper_id]
+        );
+      }
+
+      res.json({
+        success: true,
+        message: "Payment request approved successfully",
+        request: { ...request, status: 'completed' }
+      });
+
+    } else { // reject
+      // Update request status to failed
+      await pool.query(
+        "UPDATE earnings_history SET status = 'failed', admin_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [admin_notes || 'Rejected by admin', requestId]
+      );
+
+      res.json({
+        success: true,
+        message: "Payment request rejected",
+        request: { ...request, status: 'failed' }
+      });
+    }
+
+  } catch (err) {
+    console.error("Process payment request error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PAYMENT INFO MANAGEMENT ENDPOINTS
+
+// Get payment information (public endpoint for shopkeepers)
+adminRouter.get("/payment-info", async (req, res) => {
+  try {
+    const [paymentInfo] = await pool.query(
+      "SELECT upi_id, upi_qr, bank_account, bank_name, ifsc_code, account_holder_name FROM payment_info WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1"
+    );
+
+    res.json({ 
+      success: true, 
+      paymentInfo: paymentInfo.length > 0 ? paymentInfo[0] : null 
+    });
+  } catch (err) {
+    console.error("Get payment info error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get payment information for admin
+adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
+  try {
+    const [paymentInfo] = await pool.query(
+      "SELECT * FROM payment_info ORDER BY created_at DESC"
+    );
+
+    res.json({ success: true, paymentInfo });
+  } catch (err) {
+    console.error("Get payment info error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Update payment information
+adminRouter.put("/payment-info", verifyAdminToken, upload.single("upi_qr"), async (req, res) => {
+  try {
+    const { upi_id, bank_account, bank_name, ifsc_code, account_holder_name } = req.body;
+    
+    let upiQrUrl = null;
+
+    // Handle UPI QR image upload
+    if (req.file) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "payment_info" }, 
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          );
+          streamifier.createReadStream(req.file.buffer).pipe(stream);
+        });
+        upiQrUrl = result.secure_url;
+      } catch (uploadErr) {
+        console.error("UPI QR upload error:", uploadErr);
+        return res.status(500).json({ success: false, message: "Failed to upload UPI QR image" });
+      }
+    }
+
+    // Deactivate existing payment info
+    await pool.query("UPDATE payment_info SET is_active = FALSE");
+
+    // Insert new payment info
+    const [result] = await pool.query(
+      `INSERT INTO payment_info (upi_id, upi_qr, bank_account, bank_name, ifsc_code, account_holder_name, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
+      [
+        upi_id || null,
+        upiQrUrl,
+        bank_account || null,
+        bank_name || null,
+        ifsc_code || null,
+        account_holder_name || null
+      ]
+    );
+
+    const [newPaymentInfo] = await pool.query(
+      "SELECT * FROM payment_info WHERE id = ?",
+      [result.insertId]
+    );
+
+    res.json({
+      success: true,
+      message: "Payment information updated successfully",
+      paymentInfo: newPaymentInfo[0]
+    });
+
+  } catch (err) {
+    console.error("Update payment info error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 export default adminRouter;
