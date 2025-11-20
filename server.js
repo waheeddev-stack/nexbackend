@@ -62,10 +62,10 @@ io.on("connection", (socket) => {
 });
 
 // Routes
-app.use("/api/user", userrouter);
-app.use("/api/shopkeeper", shopkeeperRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/orders", ordersRouter);
+app.use("/api/users/v1", userrouter);
+app.use("/api/shopkeepers/v1", shopkeeperRouter);
+app.use("/api/admin/v1", adminRouter);
+app.use("/api/orders/v1", ordersRouter);
 
 // Default route
 app.get("/", (req, res) => {
