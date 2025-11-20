@@ -449,7 +449,7 @@ export const updateOrderStatus = async (req, res) => {
 };
 
 // fetch myorder details
-export const getOrderDetails = async (req, res) => {
+export const getMyOrders = async (req, res) => {
   try {
     const userId = req.user.id;
     const [orders] = await pool.query(
@@ -497,7 +497,7 @@ export const getOrderDetails = async (req, res) => {
 };
 
 // fetch order live order
-export const getLiveOrder = async (req, res) => {
+export const getLiveOrders = async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const [orders] = await pool.query(

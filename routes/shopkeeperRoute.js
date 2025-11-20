@@ -7,7 +7,7 @@ import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
-import verifyToken from "../middleware/auth.js";
+import verifyToken from "../middleware/authMiddleware.js";
 dotenv.config();
 
 const shopkeeperRouter = express.Router();

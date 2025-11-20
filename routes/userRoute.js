@@ -6,7 +6,7 @@ import { sendExpoPush } from "../utils/expoPush.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
-import  verifyToken  from "../middleware/auth.js";
+import  verifyToken  from "../middleware/authMiddleware.js";
 
 dotenv.config();
 
