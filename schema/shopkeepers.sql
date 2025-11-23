@@ -12,5 +12,6 @@ CREATE TABLE shopkeepers (
   upi_qr VARCHAR(255),            -- optional: URL to stored QR image
   latitude DECIMAL(10,7),
   longitude DECIMAL(10,7),
+  verification_status ENUM('pending', 'verified', 'rejected') DEFAULT 'pending',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
