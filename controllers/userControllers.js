@@ -2,7 +2,6 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
-import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 
@@ -202,11 +201,12 @@ export const registerPushToken = async (req, res) => {
   }
 };
 
-
-// orders 
-export const getorderHistory =async (req, res) => {
+// orders
+export const getorderHistory = async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM orders ORDER BY created_at DESC");
+    const [rows] = await pool.query(
+      "SELECT * FROM orders ORDER BY created_at DESC"
+    );
     res.json({ success: true, orders: rows });
   } catch (err) {
     console.error(err);
@@ -261,5 +261,35 @@ export const getNearbyShops = async (req, res) => {
   } catch (err) {
     console.error("Nearby shops error:", err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export const refreshUserToken = async (req, res, next) => {
+  try {
+    const { refreshToken } = req.cookies || req.body;
+    if (!refreshToken)
+      return res.status(401).json({ error: "No refresh token" });
+    let payload;
+    try {
+      payload = jwt.verify(refreshToken, process.env.REFRESH_JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: "Invalid refresh token" });
+    }
+    const [rows] = await pool.execute(
+      "SELECT id FROM users WHERE id = ? AND refresh_token = ?",
+      [payload.sub, refreshToken]
+    );
+    if (!rows.length)
+      return res.status(401).json({ error: "Invalid refresh token" });
+    const newToken = jwt.sign({ sub: payload.sub }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+    });
+    res.cookie("token", newToken, {
+      ...COOKIE_OPTIONS,
+      maxAge: 15 * 60 * 1000,
+    });
+    return res.json({ message: "Token refreshed" });
+  } catch (err) {
+    next(err);
   }
 };

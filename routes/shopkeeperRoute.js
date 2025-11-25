@@ -8,6 +8,7 @@ import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/authMiddleware.js";
+import checkPaymentStatus from "../middleware/checkPaymentStatus.js";
 dotenv.config();
 
 const shopkeeperRouter = express.Router();
@@ -349,7 +350,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
-shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/orders", verifyToken, checkPaymentStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { status } = req.query; // Optional filter by status
@@ -403,7 +404,7 @@ shopkeeperRouter.get("/orders", verifyToken, async (req, res) => {
 });
 
 // Update order status (shopkeeper can update orders assigned to them)
-shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) => {
+shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, checkPaymentStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
@@ -500,7 +501,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, async (req, res) 
 /**
  * GET all products of the logged-in shopkeeper
  */
-shopkeeperRouter.get("/products", verifyToken, async (req, res) => {
+shopkeeperRouter.get("/products", verifyToken, checkPaymentStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const [products] = await pool.query(
@@ -517,7 +518,7 @@ shopkeeperRouter.get("/products", verifyToken, async (req, res) => {
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/products", verifyToken, upload.single("image"), async (req, res) => {
+shopkeeperRouter.post("/products", verifyToken, checkPaymentStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { name, description, category, price, stock } = req.body;
@@ -642,7 +643,6 @@ shopkeeperRouter.delete("/products/:id", verifyToken, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 // --- Access global products (shopkeeper) ---
 // List all global products (read-only for shopkeepers)
 shopkeeperRouter.get("/global-products", verifyToken, async (req, res) => {
