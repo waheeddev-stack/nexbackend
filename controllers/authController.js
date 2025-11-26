@@ -37,7 +37,7 @@ async function login(req, res, next) {
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
     const payload = { sub: user.id };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
     const refreshToken = jwt.sign(payload, process.env.REFRESH_JWT_SECRET, { expiresIn: process.env.REFRESH_JWT_EXPIRES_IN || '7d' });
     await pool.execute('UPDATE users SET refresh_token = ? WHERE id = ?', [refreshToken, user.id]);
     res.cookie('token', token, { ...COOKIE_OPTIONS, maxAge: 15 * 60 * 1000 });
@@ -60,7 +60,7 @@ async function refreshToken(req, res, next) {
     }
     const [rows] = await pool.execute('SELECT id FROM users WHERE id = ? AND refresh_token = ?', [payload.sub, refreshToken]);
     if (!rows.length) return res.status(401).json({ error: 'Invalid refresh token' });
-    const newToken = jwt.sign({ sub: payload.sub }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '15m' });
+    const newToken = jwt.sign({ sub: payload.sub }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
     res.cookie('token', newToken, { ...COOKIE_OPTIONS, maxAge: 15 * 60 * 1000 });
     return res.json({ message: 'Token refreshed' });
   } catch (err) {

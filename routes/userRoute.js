@@ -93,8 +93,19 @@ userrouter.post("/signup", async (req, res) => {
     // Fetch the newly created user
   const [userRows] = await pool.query("SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?", [result.insertId]);
   const user = userRows[0];
+    // Issue access + refresh tokens for mobile clients
+    const payload = { sub: user.id };
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
+    const refreshToken = jwt.sign(payload, process.env.REFRESH_JWT_SECRET || "refreshsecret", { expiresIn: process.env.REFRESH_JWT_EXPIRES_IN || "7d" });
 
-  return res.json({ success: true, user, message: "User registered successfully" });
+    // Persist refresh token
+    try {
+      await pool.query("UPDATE users SET refresh_token = ? WHERE id = ?", [refreshToken, user.id]);
+    } catch (persistErr) {
+      console.warn("Failed to persist refresh token:", persistErr?.message || persistErr);
+    }
+
+    return res.json({ success: true, user, token: accessToken, refreshToken, message: "User registered successfully" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

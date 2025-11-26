@@ -9,7 +9,7 @@ export const sendNotification = async (req, res) => {
         .status(400)
         .json({ success: false, message: "token, title and body required" });
 
-    const result = sendExpoPush(token, title, body, req.body.data || {});
+    const result = await sendExpoPush(token, title, body, req.body.data || {});
 
     // optional cleanup: if invalid tokens returned and caller provided target table+id, clear token field
     if (

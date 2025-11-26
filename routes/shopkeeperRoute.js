@@ -182,7 +182,7 @@ shopkeeperRouter.post(
       );
 
       const user = userRows[0];
-      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET );
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
 
       return res.json({ success: true, token, user, message: "Shopkeeper registered successfully" });
     } catch (err) {
@@ -215,7 +215,7 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
+    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "7d" });
     
     res.json({
       success: true,

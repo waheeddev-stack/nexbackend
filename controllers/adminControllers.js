@@ -59,13 +59,19 @@ export const loginAdmin = async (req, res) => {
         .json({ success: false, message: "Invalid credentials" });
     }
     // Generate JWT
-    const token = jwt.sign(
-      { id: admin.id, email: admin.email },
-      process.env.JWT_SECRET || "secretkey"
-    );
+    const accessToken = jwt.sign({ sub: admin.id, email: admin.email }, process.env.JWT_SECRET || "secretkey", {
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    });
+    const refreshToken = jwt.sign({ sub: admin.id }, process.env.REFRESH_JWT_SECRET || "refreshsecret", {
+      expiresIn: process.env.REFRESH_JWT_EXPIRES_IN || "7d",
+    });
+
+    // Note: admins table may not have a refresh_token column; refresh token is returned
+    // to the client for mobile apps but not persisted here.
     res.json({
       success: true,
-      token,
+      token: accessToken,
+      refreshToken,
       admin: { id: admin.id, email: admin.email },
     });
   } catch (err) {

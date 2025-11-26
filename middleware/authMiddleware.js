@@ -1,22 +1,36 @@
 import jwt from "jsonwebtoken";
 
+// Backwards-compatible JWT verify middleware (same behavior as auth.js)
 const verifyToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
+  try {
+    const authHeader = req.headers["authorization"] || req.headers["Authorization"];
+    let token = null;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ success: false, message: "No token provided" });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ success: false, message: "Invalid or expired token" });
+    if (authHeader && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    } else if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
     }
 
-    req.user = decoded; // attach user info from token
-    next();
-  });
+    if (!token) {
+      return res.status(401).json({ success: false, message: "No token provided" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const normalized = {};
+    if (decoded && typeof decoded === "object") {
+      normalized.id = decoded.sub ?? decoded.id ?? decoded.userId ?? decoded.uid ?? null;
+      normalized.raw = decoded;
+    } else {
+      normalized.id = decoded;
+      normalized.raw = decoded;
+    }
+
+    req.user = normalized;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: "Invalid or expired token" });
+  }
 };
 
 export default verifyToken;

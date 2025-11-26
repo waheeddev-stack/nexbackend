@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
@@ -14,16 +16,48 @@ dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+// Configure allowed origins via env (comma-separated). Default includes common local Expo origins.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:19006,http://localhost:19000,http://localhost:19001,http://localhost:3000").split(",").map(s => s.trim()).filter(Boolean);
+
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // allow non-browser (mobile/native) requests
+      if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PATCH", "DELETE"],
   },
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+// Security middleware
+app.use(helmet());
+
+// Configure CORS for browser-based requests. Mobile/native clients often don't set an Origin,
+// so we allow requests without an Origin while restricting browser origins.
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PATCH", "DELETE"],
+  credentials: true,
+}));
+
+// Basic rate limiter to mitigate brute-force and abuse
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Limit request body size
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Attach io instance to requests (for routes to use)
 app.use((req, res, next) => {
@@ -85,3 +119,6 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+
+// Export app and server for testing
+export { app, server };

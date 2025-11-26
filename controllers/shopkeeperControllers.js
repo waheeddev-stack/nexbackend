@@ -7,6 +7,9 @@ import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
+import { generateOtpCode, hashOtp, verifyOtpHash } from "../utils/otp.js";
+import { sendVerificationEmail } from "../utils/email.js";
+import { sendVerificationSms } from "../utils/sms.js";
 
 // shopkeeper stats
 export const getShopkeeperStats = async (req, res) => {
@@ -201,12 +204,47 @@ export const shopkeeperSignup = [
       );
 
       const user = userRows[0];
-      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET);
+      // Issue access + refresh tokens for mobile clients
+      const payload = { sub: user.id };
+      const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+        expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+      });
+      const refreshToken = jwt.sign(payload, process.env.REFRESH_JWT_SECRET || "refreshsecret", {
+        expiresIn: process.env.REFRESH_JWT_EXPIRES_IN || "7d",
+      });
+
+      // Persist refresh token for revocation/verification
+      try {
+        await pool.query("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [refreshToken, user.id]);
+      } catch (persistErr) {
+        console.warn("Failed to persist shopkeeper refresh token:", persistErr?.message || persistErr);
+      }
+
+      // Create OTP and send verification (phone preferred, fallback to email)
+      try {
+        const otp = generateOtpCode(6);
+        const otpHash = await hashOtp(otp);
+        const recipient = user.phone || user.email;
+        const channel = user.phone ? "sms" : "email";
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        await pool.query(
+          "INSERT INTO otp_verifications (user_id, channel, recipient, otp_hash, expires_at) VALUES (?, ?, ?, ?, ?)",
+          [user.id, channel, recipient, otpHash, expiresAt]
+        );
+        if (channel === "sms") {
+          await sendVerificationSms(recipient, otp, { ttlMinutes: 10 });
+        } else {
+          await sendVerificationEmail(recipient, otp, { ttlMinutes: 10 });
+        }
+      } catch (otpErr) {
+        console.warn("Failed to create/send OTP:", otpErr?.message || otpErr);
+      }
 
       return res.json({
         success: true,
-        token,
         user,
+        token: accessToken,
+        refreshToken,
         message: "Shopkeeper registered successfully",
       });
     } catch (err) {
@@ -245,11 +283,26 @@ export const shopkeeperLogin = async (req, res) => {
         .json({ success: false, message: "Invalid credentials" });
     }
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
+    // Issue access + refresh tokens
+    const payload = { sub: user[0].id };
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    });
+    const refreshToken = jwt.sign(payload, process.env.REFRESH_JWT_SECRET || "refreshsecret", {
+      expiresIn: process.env.REFRESH_JWT_EXPIRES_IN || "7d",
+    });
+
+    // Persist refresh token
+    try {
+      await pool.query("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [refreshToken, user[0].id]);
+    } catch (persistErr) {
+      console.warn("Failed to persist shopkeeper refresh token:", persistErr?.message || persistErr);
+    }
 
     res.json({
       success: true,
-      token,
+      token: accessToken,
+      refreshToken,
       user: {
         id: user[0].id,
         email: user[0].email,
@@ -263,13 +316,81 @@ export const shopkeeperLogin = async (req, res) => {
   }
 };
 
+// POST /shopkeepers/forgot-password  body: { email }
+export const shopkeeperForgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+
+    const [rows] = await pool.query("SELECT id, email FROM shopkeepers WHERE email = ?", [email]);
+    if (!rows.length) return res.json({ success: true, message: "If an account with that email exists, a reset OTP has been sent." });
+
+    const user = rows[0];
+    const otp = generateOtpCode(6);
+    const otpHash = await hashOtp(otp);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+
+    await pool.query(
+      "INSERT INTO otp_verifications (user_id, channel, recipient, otp_hash, expires_at) VALUES (?, ?, ?, ?, ?)",
+      [user.id, "password_reset", user.email, otpHash, expiresAt]
+    );
+
+    try {
+      await sendVerificationEmail(user.email, otp, { subject: "Password reset", ttlMinutes: 30 });
+    } catch (sendErr) {
+      console.warn("Failed to send shopkeeper password reset email:", sendErr?.message || sendErr);
+    }
+
+    return res.json({ success: true, message: "If an account with that email exists, a reset OTP has been sent." });
+  } catch (err) {
+    console.error("Shopkeeper forgot password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// POST /shopkeepers/reset-password  body: { userId, otp, newPassword }
+export const shopkeeperResetPassword = async (req, res) => {
+  try {
+    const { userId, otp, newPassword } = req.body || {};
+    if (!userId || !otp || !newPassword)
+      return res.status(400).json({ success: false, message: "userId, otp and newPassword are required" });
+
+    if (typeof newPassword !== "string" || newPassword.length < 6)
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+
+    const [rows] = await pool.query(
+      "SELECT * FROM otp_verifications WHERE user_id = ? AND channel = 'password_reset' AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1",
+      [userId]
+    );
+    if (!rows.length) return res.status(400).json({ success: false, message: "No reset request found" });
+
+    const row = rows[0];
+    if (new Date(row.expires_at) < new Date()) return res.status(400).json({ success: false, message: "OTP expired" });
+    if (row.attempts >= 5) return res.status(429).json({ success: false, message: "Too many attempts" });
+
+    const ok = await verifyOtpHash(otp, row.otp_hash);
+    if (!ok) {
+      await pool.query("UPDATE otp_verifications SET attempts = attempts + 1 WHERE id = ?", [row.id]);
+      return res.status(400).json({ success: false, message: "Invalid OTP" });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await pool.query("UPDATE shopkeepers SET password = ? WHERE id = ?", [hashed, userId]);
+    await pool.query("UPDATE otp_verifications SET consumed_at = NOW() WHERE id = ?", [row.id]);
+
+    return res.json({ success: true, message: "Password has been reset successfully" });
+  } catch (err) {
+    console.error("Shopkeeper reset password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 
 //  shopkeeper refresh t
 export const refreshUserToken = async (req, res, next) => {
   try {
-    const { refreshToken } = req.cookies || req.body;
-    if (!refreshToken)
-      return res.status(401).json({ error: "No refresh token" });
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) return res.status(401).json({ error: "No refresh token" });
     let payload;
     try {
       payload = jwt.verify(refreshToken, process.env.REFRESH_JWT_SECRET);
@@ -283,13 +404,10 @@ export const refreshUserToken = async (req, res, next) => {
     if (!rows.length)
       return res.status(401).json({ error: "Invalid refresh token" });
     const newToken = jwt.sign({ sub: payload.sub }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
     });
-    res.cookie("token", newToken, {
-      ...COOKIE_OPTIONS,
-      maxAge: 15 * 60 * 1000,
-    });
-    return res.json({ message: "Token refreshed" });
+    // Mobile clients expect JSON response with token
+    return res.json({ success: true, token: newToken });
   } catch (err) {
     next(err);
   }
@@ -974,4 +1092,5 @@ export const addGlobalProductToShopkeeper = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 
