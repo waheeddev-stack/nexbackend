@@ -9,6 +9,7 @@ import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
+import clerkUserRouter from "./routes/clerkUser.js";
 
 dotenv.config();
 
@@ -74,6 +75,7 @@ app.use("/api/shopkeepers", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/notifications", notificationRouter);
+app.use("/api/clerk", clerkUserRouter);
 
 // Default route
 app.get("/", (req, res) => {
