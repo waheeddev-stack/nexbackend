@@ -201,9 +201,16 @@ adminRouter.post("/register", async (req, res) => {
       });
     }
 
-    // Use environment variables or default credentials for initial setup
-    const email = process.env.ADMIN_EMAIL || "nexkirana@kirana.com";
-    const password = process.env.ADMIN_PASSWORD || "qwI41L5U47RwaI47DasA";
+    // Use environment variables for admin credentials
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+    
+    if (!email || !password) {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Admin credentials not configured" 
+      });
+    }
     
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
@@ -669,7 +676,7 @@ adminRouter.post("/login", async (req, res) => {
         email: admin.email,
         role: 'admin' // Add role for additional security
       },
-      process.env.JWT_SECRET || "secretkey",
+      process.env.JWT_SECRET,
       { expiresIn: '24h' } // Add token expiration
     );
 

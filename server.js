@@ -8,21 +8,83 @@ import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
+import db from "./config/db.js";
 
 dotenv.config();
+
+// Validate required environment variables
+const requiredEnvVars = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME'];
+const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+  console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
+  process.exit(1);
+}
+
+if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
+  console.error('❌ JWT_SECRET must be at least 32 characters long for security');
+  process.exit(1);
+}
+
+console.log('🚀 Starting NexKirana Backend Server...');
+if (process.env.NODE_ENV !== 'production') {
+  console.log('Environment Variables Check:');
+  console.log('- NODE_ENV:', process.env.NODE_ENV);
+  console.log('- PORT:', process.env.PORT);
+  console.log('- DB_HOST:', process.env.DB_HOST ? 'SET' : 'NOT SET');
+  console.log('- DB_SSL:', process.env.DB_SSL);
+  console.log('- JWT_SECRET:', process.env.JWT_SECRET ? 'SET' : 'NOT SET');
+}
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: process.env.NODE_ENV === 'production' 
+      ? ["https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app", "exp://", "exps://"]
+      : true, // Allow all origins in development
     methods: ["GET", "POST", "PATCH", "DELETE"],
+    credentials: true
   },
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? (origin, callback) => {
+        // Allow admin panel domains and mobile apps
+        const allowedOrigins = ["https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app"];
+        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('exp://') || origin.startsWith('exps://')) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      }
+    : true, // Allow all origins in development
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.removeHeader('X-Powered-By');
+  next();
+});
+
+// Debug middleware to log requests (only in development)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+  });
+}
 
 // Attach io instance to requests (for routes to use)
 app.use((req, res, next) => {
@@ -149,19 +211,117 @@ io.on("connection", (socket) => {
   });
 });
 
+// Health check endpoints (MUST be before routes)
+app.get("/", (req, res) => {
+  res.json({ 
+    message: 'NexKirana Backend Server is running!',
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0'
+  });
+});
+
+// Health check with database status
+app.get("/health", async (req, res) => {
+  try {
+    const connection = await db.getConnection();
+    await connection.execute('SELECT 1 as test');
+    connection.release();
+    
+    res.json({ 
+      status: 'healthy',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+      server: 'running'
+    });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(500).json({ 
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// API status endpoint
+app.get("/api", (req, res) => {
+  res.json({
+    message: "NexKirana API is running",
+    endpoints: {
+      user: "/api/user",
+      shopkeeper: "/api/shopkeeper", 
+      admin: "/api/admin",
+      orders: "/api/orders"
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Routes
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
 
-// Default route
-app.get("/", (req, res) => {
-  res.send("Server is running!");
+// 404 handler for unmatched routes (MUST be last)
+app.use((req, res, next) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.originalUrl,
+    method: req.method,
+    availableRoutes: [
+      'GET /',
+      'GET /health',
+      'GET /api',
+      'POST /api/user/signin',
+      'POST /api/user/signup',
+      'POST /api/shopkeeper/signin',
+      'POST /api/admin/login'
+    ],
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Global error handler (MUST be last)
+app.use((error, req, res, next) => {
+  console.error('Global error handler:', error);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: error.message,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Server start
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server successfully started on port ${PORT}`);
+  console.log(`🌐 Server accessible at: http://0.0.0.0:${PORT}`);
+  console.log('📋 Available endpoints:');
+  console.log('  - GET  / (Health check)');
+  console.log('  - GET  /health (Database status)');
+  console.log('  - GET  /api (API info)');
+  console.log('  - POST /api/admin/login');
+  console.log('  - POST /api/user/signin');
+  console.log('  - POST /api/shopkeeper/signin');
+});
+
+server.on('error', (error) => {
+  console.error('❌ Server failed to start:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
