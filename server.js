@@ -368,9 +368,32 @@ app.post("/api/init-db", async (req, res) => {
       }
     }
 
+    // Create a test user for mobile app testing
+    const testEmail = 'test@nexkirana.com';
+    const testPassword = 'test123';
+    
+    const [existingUser] = await db.execute(
+      'SELECT id FROM users WHERE email = ?',
+      [testEmail]
+    );
+    
+    if (existingUser.length === 0) {
+      const bcrypt = await import('bcryptjs');
+      const hashedPassword = await bcrypt.default.hash(testPassword, 12);
+      await db.execute(
+        'INSERT INTO users (name, email, password, phone) VALUES (?, ?, ?, ?)',
+        ['Test User', testEmail, hashedPassword, '1234567890']
+      );
+      console.log('✅ Test user created');
+    }
+
     res.json({
       success: true,
       message: 'Database initialized successfully',
+      testUser: {
+        email: testEmail,
+        password: testPassword
+      },
       timestamp: new Date().toISOString()
     });
     
