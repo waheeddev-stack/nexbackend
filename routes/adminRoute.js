@@ -647,7 +647,7 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
-// Admin Login
+// Admin Login - Compatible with existing database
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
   
@@ -656,6 +656,7 @@ adminRouter.post("/login", async (req, res) => {
   }
 
   try {
+    // Query existing admins table structure
     const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [email]);
     
     if (rows.length === 0) {
@@ -663,21 +664,33 @@ adminRouter.post("/login", async (req, res) => {
     }
 
     const admin = rows[0];
-    const isMatch = await bcrypt.compare(password, admin.password);
+    
+    // Handle different password storage formats in existing database
+    let isMatch = false;
+    
+    if (admin.password) {
+      try {
+        // Try bcrypt first (if password is hashed)
+        isMatch = await bcrypt.compare(password, admin.password);
+      } catch (bcryptError) {
+        // If bcrypt fails, try plain text comparison (for existing data)
+        isMatch = (password === admin.password);
+      }
+    }
     
     if (!isMatch) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Generate JWT with admin-specific payload
+    // Generate JWT token
     const token = jwt.sign(
       { 
         id: admin.id, 
         email: admin.email,
-        role: 'admin' // Add role for additional security
+        role: 'admin'
       },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' } // Add token expiration
+      { expiresIn: '24h' }
     );
 
     res.json({ 

@@ -268,140 +268,40 @@ app.get("/api", (req, res) => {
   });
 });
 
-// Database initialization endpoint (for production setup)
-app.post("/api/init-db", async (req, res) => {
+// Database status endpoint (connects to existing tables)
+app.get("/api/db-status", async (req, res) => {
   try {
-    console.log('🚀 Initializing database tables...');
+    // Check existing tables without modifying them
+    const tables = ['admins', 'global_products', 'order_items', 'orders', 'products', 'shopkeepers', 'users'];
+    const tableStatus = {};
     
-    // Create users table
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        phone VARCHAR(20),
-        address TEXT,
-        img VARCHAR(255),
-        store_credits DECIMAL(10,2) DEFAULT 0.00,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create shopkeepers table
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS shopkeepers (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        phone VARCHAR(20),
-        address TEXT,
-        shop_name VARCHAR(100),
-        img VARCHAR(255),
-        verification_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
-        latitude DECIMAL(10, 8),
-        longitude DECIMAL(11, 8),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create admins table
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS admins (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create products table
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS products (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        shop_id INT NOT NULL,
-        name VARCHAR(100) NOT NULL,
-        description TEXT,
-        image VARCHAR(255),
-        category VARCHAR(50),
-        price DECIMAL(10,2) NOT NULL,
-        stock INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (shop_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Create orders table
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        shopkeeper_id INT NOT NULL,
-        total_amount DECIMAL(10,2) NOT NULL,
-        status ENUM('pending', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
-        delivery_address TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Create admin user if not exists
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    
-    if (adminEmail && adminPassword) {
-      const bcrypt = await import('bcryptjs');
-      const [existingAdmin] = await db.execute(
-        'SELECT id FROM admins WHERE email = ?',
-        [adminEmail]
-      );
-      
-      if (existingAdmin.length === 0) {
-        const hashedPassword = await bcrypt.default.hash(adminPassword, 12);
-        await db.execute(
-          'INSERT INTO admins (email, password) VALUES (?, ?)',
-          [adminEmail, hashedPassword]
-        );
-        console.log('✅ Admin user created');
+    for (const table of tables) {
+      try {
+        const [rows] = await db.execute(`SELECT COUNT(*) as count FROM ${table}`);
+        tableStatus[table] = {
+          exists: true,
+          records: rows[0].count
+        };
+      } catch (error) {
+        tableStatus[table] = {
+          exists: false,
+          error: error.message
+        };
       }
-    }
-
-    // Create a test user for mobile app testing
-    const testEmail = 'test@nexkirana.com';
-    const testPassword = 'test123';
-    
-    const [existingUser] = await db.execute(
-      'SELECT id FROM users WHERE email = ?',
-      [testEmail]
-    );
-    
-    if (existingUser.length === 0) {
-      const bcrypt = await import('bcryptjs');
-      const hashedPassword = await bcrypt.default.hash(testPassword, 12);
-      await db.execute(
-        'INSERT INTO users (name, email, password, phone) VALUES (?, ?, ?, ?)',
-        ['Test User', testEmail, hashedPassword, '1234567890']
-      );
-      console.log('✅ Test user created');
     }
 
     res.json({
       success: true,
-      message: 'Database initialized successfully',
-      testUser: {
-        email: testEmail,
-        password: testPassword
-      },
+      message: 'Connected to existing database successfully',
+      tables: tableStatus,
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    console.error('❌ Database initialization failed:', error);
+    console.error('❌ Database status check failed:', error);
     res.status(500).json({
       success: false,
-      message: 'Database initialization failed',
+      message: 'Database status check failed',
       error: error.message,
       timestamp: new Date().toISOString()
     });
