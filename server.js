@@ -268,6 +268,123 @@ app.get("/api", (req, res) => {
   });
 });
 
+// Database initialization endpoint (for production setup)
+app.post("/api/init-db", async (req, res) => {
+  try {
+    console.log('🚀 Initializing database tables...');
+    
+    // Create users table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        phone VARCHAR(20),
+        address TEXT,
+        img VARCHAR(255),
+        store_credits DECIMAL(10,2) DEFAULT 0.00,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create shopkeepers table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS shopkeepers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        phone VARCHAR(20),
+        address TEXT,
+        shop_name VARCHAR(100),
+        img VARCHAR(255),
+        verification_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        latitude DECIMAL(10, 8),
+        longitude DECIMAL(11, 8),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create admins table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS admins (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create products table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        shop_id INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        image VARCHAR(255),
+        category VARCHAR(50),
+        price DECIMAL(10,2) NOT NULL,
+        stock INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (shop_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create orders table
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        shopkeeper_id INT NOT NULL,
+        total_amount DECIMAL(10,2) NOT NULL,
+        status ENUM('pending', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
+        delivery_address TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create admin user if not exists
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    
+    if (adminEmail && adminPassword) {
+      const bcrypt = await import('bcryptjs');
+      const [existingAdmin] = await db.execute(
+        'SELECT id FROM admins WHERE email = ?',
+        [adminEmail]
+      );
+      
+      if (existingAdmin.length === 0) {
+        const hashedPassword = await bcrypt.default.hash(adminPassword, 12);
+        await db.execute(
+          'INSERT INTO admins (email, password) VALUES (?, ?)',
+          [adminEmail, hashedPassword]
+        );
+        console.log('✅ Admin user created');
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Database initialized successfully',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Database initialization failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Routes
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
