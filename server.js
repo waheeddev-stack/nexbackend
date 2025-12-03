@@ -308,19 +308,31 @@ app.get("/api/db-status", async (req, res) => {
   }
 });
 
-// Debug admin table structure
+// Debug admin table structure - handle single admin
 app.get("/api/debug-admin", async (req, res) => {
   try {
     // Get table structure
     const [tableInfo] = await db.execute("DESCRIBE admins");
     
-    // Get sample admin data (without passwords) - flexible column selection
-    const [adminSample] = await db.execute("SELECT * FROM admins LIMIT 3");
+    // Get the single admin data (without showing password)
+    const [adminData] = await db.execute("SELECT * FROM admins LIMIT 1");
+    
+    // Remove password from response for security
+    const safeAdminData = adminData.map(admin => {
+      const safe = { ...admin };
+      delete safe.password;
+      delete safe.Password;
+      delete safe.pass;
+      delete safe.pwd;
+      return safe;
+    });
     
     res.json({
       success: true,
+      message: 'Single admin table structure',
       tableStructure: tableInfo,
-      sampleData: adminSample,
+      adminData: safeAdminData[0] || null,
+      adminCount: adminData.length,
       timestamp: new Date().toISOString()
     });
     

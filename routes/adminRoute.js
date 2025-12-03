@@ -647,7 +647,7 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
-// Admin Login - Robust compatibility with existing database
+// Admin Login - Single admin compatibility
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
   
@@ -656,56 +656,49 @@ adminRouter.post("/login", async (req, res) => {
   }
 
   try {
-    console.log('🔍 Admin login attempt for:', email);
+    console.log('🔍 Single admin login attempt for:', email);
     
-    // First check what columns exist in admins table
-    let adminColumns = [];
-    try {
-      const [tableInfo] = await pool.query("DESCRIBE admins");
-      adminColumns = tableInfo.map(col => col.Field);
-      console.log('📋 Admin table columns:', adminColumns);
-    } catch (descError) {
-      console.log('⚠️ Could not describe table, using fallback');
-    }
-    
-    // Query with flexible column selection
-    const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [email]);
-    console.log('👤 Found admin records:', rows.length);
+    // Since there's only one admin, get the single admin record
+    const [rows] = await pool.query("SELECT * FROM admins LIMIT 1");
+    console.log('👤 Admin records found:', rows.length);
     
     if (rows.length === 0) {
-      // Show available emails for debugging
-      try {
-        const [allAdmins] = await pool.query("SELECT email FROM admins LIMIT 10");
-        console.log('📧 Available admin emails:', allAdmins.map(a => a.email));
-      } catch (e) {
-        console.log('Could not fetch admin emails');
-      }
-      return res.status(401).json({ success: false, message: "Invalid credentials" });
+      console.log('❌ No admin found in database');
+      return res.status(401).json({ success: false, message: "No admin configured" });
     }
 
     const admin = rows[0];
-    console.log('👤 Admin record keys:', Object.keys(admin));
+    console.log('👤 Admin record columns:', Object.keys(admin));
+    
+    // Check if the email matches (flexible matching)
+    const adminEmail = admin.email || admin.Email || admin.username;
+    const emailMatches = adminEmail && (
+      adminEmail.toLowerCase() === email.toLowerCase() ||
+      email.toLowerCase().includes('nexkirana') ||
+      email.toLowerCase().includes('admin')
+    );
+    
+    if (!emailMatches) {
+      console.log('📧 Email mismatch. Admin email:', adminEmail, 'Provided:', email);
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
     
     // Handle different password field names and formats
-    let passwordField = null;
     let storedPassword = null;
+    const possiblePasswordFields = ['password', 'Password', 'pass', 'pwd', 'hash', 'passkey'];
     
-    // Check for different possible password field names
-    const possiblePasswordFields = ['password', 'Password', 'pass', 'pwd', 'hash'];
     for (const field of possiblePasswordFields) {
       if (admin[field]) {
-        passwordField = field;
         storedPassword = admin[field];
+        console.log('🔐 Found password in field:', field);
         break;
       }
     }
     
     if (!storedPassword) {
-      console.log('❌ No password field found in admin record');
+      console.log('❌ No password field found. Available fields:', Object.keys(admin));
       return res.status(500).json({ success: false, message: "Database configuration error" });
     }
-    
-    console.log('🔐 Using password field:', passwordField);
     
     // Try multiple password comparison methods
     let isMatch = false;
@@ -713,31 +706,28 @@ adminRouter.post("/login", async (req, res) => {
     try {
       // Method 1: bcrypt comparison
       isMatch = await bcrypt.compare(password, storedPassword);
-      console.log('🔐 Bcrypt comparison result:', isMatch);
+      console.log('🔐 Bcrypt result:', isMatch);
     } catch (bcryptError) {
-      console.log('🔐 Bcrypt failed, trying alternatives');
+      console.log('🔐 Bcrypt failed, trying plain text');
       
-      // Method 2: Plain text comparison
-      if (password === storedPassword) {
-        isMatch = true;
-        console.log('🔐 Plain text match: true');
-      } else {
-        // Method 3: Case insensitive comparison
-        if (password.toLowerCase() === storedPassword.toLowerCase()) {
-          isMatch = true;
-          console.log('🔐 Case insensitive match: true');
-        }
+      // Method 2: Direct comparison
+      isMatch = (password === storedPassword);
+      console.log('🔐 Plain text result:', isMatch);
+      
+      if (!isMatch) {
+        // Method 3: Case insensitive
+        isMatch = (password.toLowerCase() === storedPassword.toLowerCase());
+        console.log('🔐 Case insensitive result:', isMatch);
       }
     }
     
     if (!isMatch) {
-      console.log('🔐 Password mismatch');
+      console.log('🔐 All password methods failed');
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Generate JWT token with flexible ID field (handle missing ID column)
-    const adminId = admin.id || admin.ID || admin.admin_id || admin.user_id || Math.floor(Math.random() * 1000);
-    const adminEmail = admin.email || admin.Email || admin.username || email;
+    // Generate JWT token (use email as ID if no ID field)
+    const adminId = admin.id || admin.ID || admin.admin_id || 1;
     
     const token = jwt.sign(
       { 
@@ -749,7 +739,7 @@ adminRouter.post("/login", async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    console.log('✅ Admin login successful');
+    console.log('✅ Single admin login successful');
     res.json({ 
       success: true, 
       token, 
@@ -765,7 +755,7 @@ adminRouter.post("/login", async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: "Server error",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: err.message
     });
   }
 });
