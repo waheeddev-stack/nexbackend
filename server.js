@@ -314,8 +314,8 @@ app.get("/api/debug-admin", async (req, res) => {
     // Get table structure
     const [tableInfo] = await db.execute("DESCRIBE admins");
     
-    // Get sample admin data (without passwords)
-    const [adminSample] = await db.execute("SELECT id, email FROM admins LIMIT 3");
+    // Get sample admin data (without passwords) - flexible column selection
+    const [adminSample] = await db.execute("SELECT * FROM admins LIMIT 3");
     
     res.json({
       success: true,

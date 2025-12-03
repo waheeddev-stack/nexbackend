@@ -735,9 +735,9 @@ adminRouter.post("/login", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Generate JWT token with flexible ID field
-    const adminId = admin.id || admin.ID || admin.admin_id || 1;
-    const adminEmail = admin.email || admin.Email || email;
+    // Generate JWT token with flexible ID field (handle missing ID column)
+    const adminId = admin.id || admin.ID || admin.admin_id || admin.user_id || Math.floor(Math.random() * 1000);
+    const adminEmail = admin.email || admin.Email || admin.username || email;
     
     const token = jwt.sign(
       { 
