@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import  verifyToken  from "../middleware/auth.js";
+import { deductWellnessPoints, validatePointsUsage } from "../utils/wellnessPoints.js";
 
 dotenv.config();
 
@@ -69,6 +70,12 @@ userrouter.post("/signup", async (req, res) => {
     // Validate inputs
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: "All fields are required" });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: "Invalid email format" });
     }
 
     if (password.length < 6) {
@@ -189,9 +196,36 @@ userrouter.get("/products", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-userrouter.get("/orders", async (req, res) => {
+userrouter.get("/orders", verifyToken, async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM orders ORDER BY created_at DESC");
+    const user_id = req.user.id;
+    if (!user_id) {
+      return res.status(401).json({ success: false, message: "User ID not found in token" });
+    }
+    const [rows] = await pool.query(
+      `SELECT 
+        o.id AS order_id,
+        o.status,
+        o.total_amount,
+        o.created_at,
+        o.delivery_address,
+        JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'product_id', oi.product_id,
+            'product_name', p.name,
+            'product_image', p.image,
+            'quantity', oi.quantity,
+            'price', oi.price
+          )
+        ) AS items
+       FROM orders o
+       JOIN order_items oi ON o.id = oi.order_id
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE o.user_id = ?
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [user_id]
+    );
     res.json({ success: true, orders: rows });
   } catch (err) {
     console.error(err);
@@ -199,97 +233,142 @@ userrouter.get("/orders", async (req, res) => {
   }
 });
 
-userrouter.post("/orders", async (req, res) => {
+userrouter.post("/orders", verifyToken, async (req, res) => {
   try {
-    const { user_id, products, total, address } = req.body;
-    if (!user_id || !Array.isArray(products) || products.length === 0 || !total || !address) {
+    const user_id = req.user.id;
+    if (!user_id) {
+      return res.status(401).json({ success: false, message: "User ID not found in token" });
+    }
+    const { products, total, address, pointsToRedeem = 0 } = req.body;
+    if (!Array.isArray(products) || products.length === 0 || !total || !address) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    // Insert order
-    const [orderResult] = await pool.query(
-      "INSERT INTO orders (user_id, total, address, status) VALUES (?, ?, ?, ?)",
-      [user_id, total, address, "Pending"]
-    );
-    const orderId = orderResult.insertId;
-
-    // Insert order items and collect product ids
-    const productIds = [];
-    for (const item of products) {
-      await pool.query(
-        "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
-        [orderId, item.product_id, item.quantity, item.price]
-      );
-      productIds.push(item.product_id);
-    }
-
-    // Notify involved shopkeepers (one notification per distinct shop)
-    try {
-      if (productIds.length > 0) {
-        // Get shop mapping for products
-        const [prodRows] = await pool.query("SELECT id, shop_id, name, image FROM products WHERE id IN (?)", [productIds]);
-        const productToShop = new Map(prodRows.map((p) => [p.id, p.shop_id]));
-
-        const [shopRows] = await pool.query(
-          "SELECT DISTINCT shop_id FROM products WHERE id IN (?)",
-          [productIds]
-        );
-
-        const distinctShopIds = shopRows.map((r) => r.shop_id).filter(Boolean);
-
-        // group items per shop
-        const itemsByShop = new Map();
-        for (const item of products) {
-          const pid = item.product_id;
-          const shopId = productToShop.get(pid) || null;
-          if (!shopId) continue;
-          if (!itemsByShop.has(shopId)) itemsByShop.set(shopId, []);
-          // enrich item with product name/image if available
-          const prodMeta = prodRows.find((p) => p.id === pid) || {};
-          itemsByShop.get(shopId).push({
-            product_id: pid,
-            quantity: item.quantity,
-            price: item.price,
-            name: prodMeta.name || null,
-            image: prodMeta.image || null,
-          });
+    // Handle wellness points redemption if requested
+    let pointsDiscount = 0;
+    if (pointsToRedeem > 0) {
+      try {
+        // Get user's current points
+        const [[user]] = await pool.query('SELECT store_credits FROM users WHERE id = ?', [user_id]);
+        if (!user) {
+          return res.status(404).json({ success: false, message: "User not found" });
         }
 
-        for (const shopId of distinctShopIds) {
-          const shopItems = itemsByShop.get(shopId) || [];
-          const shopTotal = shopItems.reduce((s, it) => s + (Number(it.price || 0) * Number(it.quantity || 0)), 0);
+        // Validate points usage
+        const validation = validatePointsUsage(pointsToRedeem, user.store_credits, total);
+        if (!validation.valid) {
+          return res.status(400).json({ success: false, message: validation.message });
+        }
 
-          // Build payload similar to shopkeeper live order structure
-          const orderPayload = {
-            orderId,
-            total: Number(total),
-            status: "Pending",
-            address,
-            items: shopItems,
-            user_id,
-            shop_id: shopId,
-            shop_total: shopTotal,
-            created_at: new Date().toISOString(),
-          };
+        // Deduct points and calculate discount
+        const pointsResult = await deductWellnessPoints(pool, user_id, pointsToRedeem);
+        pointsDiscount = pointsResult.discountAmount;
+      } catch (pointsError) {
+        console.error("Error processing wellness points:", pointsError);
+        return res.status(400).json({ success: false, message: pointsError.message });
+      }
+    }
 
-          // Emit socket event for live update
-          try {
-            if (req.io) req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
-            if (req.io) req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
-          } catch (emitErr) {
-            console.warn("Socket emit failed for shop", shopId, emitErr);
+    // Get shopkeeper IDs from products and create separate orders per shopkeeper
+    const productIds = products.map(p => p.product_id);
+    const [prodRows] = await pool.query("SELECT id, shop_id FROM products WHERE id IN (?)", [productIds]);
+    const productToShop = new Map(prodRows.map((p) => [p.id, p.shop_id]));
+
+    // Group products by shopkeeper
+    const ordersByShop = new Map();
+    for (const item of products) {
+      const shopId = productToShop.get(item.product_id);
+      if (!shopId) {
+        return res.status(400).json({ success: false, message: `Product ${item.product_id} not found or has no shopkeeper` });
+      }
+      
+      if (!ordersByShop.has(shopId)) {
+        ordersByShop.set(shopId, []);
+      }
+      ordersByShop.get(shopId).push(item);
+    }
+
+    const createdOrders = [];
+
+    // Create separate order for each shopkeeper
+    for (const [shopId, shopItems] of ordersByShop) {
+      const shopSubtotal = shopItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      
+      // Apply proportional discount from wellness points
+      const shopDiscountRatio = shopSubtotal / total;
+      const shopDiscount = pointsDiscount * shopDiscountRatio;
+      const shopTotal = shopSubtotal - shopDiscount;
+      
+      // Insert order for this shopkeeper
+      const [orderResult] = await pool.query(
+        "INSERT INTO orders (user_id, shopkeeper_id, total_amount, delivery_address, status, points_discount) VALUES (?, ?, ?, ?, ?, ?)",
+        [user_id, shopId, shopTotal, address, "Pending", shopDiscount]
+      );
+      const orderId = orderResult.insertId;
+
+      // Insert order items for this order
+      for (const item of shopItems) {
+        await pool.query(
+          "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
+          [orderId, item.product_id, item.quantity, item.price]
+        );
+      }
+
+      createdOrders.push({
+        orderId,
+        shopId,
+        shopTotal,
+        items: shopItems
+      });
+    }
+
+    // Notify shopkeepers and send real-time updates
+    try {
+      for (const order of createdOrders) {
+        const { orderId, shopId, shopTotal, items } = order;
+        
+        // Get product details for notification
+        const itemIds = items.map(i => i.product_id);
+        const [productDetails] = await pool.query("SELECT id, name, image FROM products WHERE id IN (?)", [itemIds]);
+        const productMap = new Map(productDetails.map(p => [p.id, p]));
+        
+        const enrichedItems = items.map(item => ({
+          ...item,
+          name: productMap.get(item.product_id)?.name || 'Unknown Product',
+          image: productMap.get(item.product_id)?.image || null
+        }));
+
+        // Build payload for real-time updates
+        const orderPayload = {
+          orderId,
+          total: shopTotal,
+          status: "Pending",
+          address,
+          items: enrichedItems,
+          user_id,
+          shop_id: shopId,
+          created_at: new Date().toISOString(),
+        };
+
+        // Emit socket events
+        try {
+          if (req.io) {
+            req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
+            req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
           }
+        } catch (emitErr) {
+          console.warn("Socket emit failed for shop", shopId, emitErr);
+        }
 
-          // Send push notification to shopkeeper
-          try {
-            const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
-            const token = shop?.expo_push_token;
-            if (!token) continue;
-
+        // Send push notification to shopkeeper
+        try {
+          const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
+          const token = shop?.expo_push_token;
+          if (token) {
             const result = await sendExpoPush(
               token,
               "📦 New Order Received!",
-              `You have a new order (#${orderId}).`,
+              `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
               { orderId, shopId }
             );
 
@@ -297,19 +376,23 @@ userrouter.post("/orders", async (req, res) => {
               await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
               console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
             }
-            if (result?.nonExpoTokens?.length) {
-              console.warn("Non-Expo tokens for shopkeeper:", result.nonExpoTokens);
-            }
-          } catch (pushErr) {
-            console.error("Error sending push to shopkeeper", shopId, pushErr);
           }
+        } catch (pushErr) {
+          console.error("Error sending push to shopkeeper", shopId, pushErr);
         }
       }
     } catch (notifyErr) {
       console.error("Error notifying shopkeepers:", notifyErr);
     }
 
-    res.json({ success: true, order_id: orderId, message: "Order placed successfully" });
+    res.json({ 
+      success: true, 
+      orders: createdOrders.map(o => ({ order_id: o.orderId, shopkeeper_id: o.shopId, total: o.shopTotal })),
+      message: `${createdOrders.length} order(s) placed successfully`,
+      pointsRedeemed: pointsToRedeem,
+      pointsDiscount: pointsDiscount,
+      finalTotal: total - pointsDiscount
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });

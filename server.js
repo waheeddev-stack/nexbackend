@@ -34,30 +34,118 @@ app.use((req, res, next) => {
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id);
 
-  // join as shopkeeper (socket.emit after auth on client)
+  // Join as shopkeeper
   socket.on("joinShop", (shopkeeper_id) => {
     if (!shopkeeper_id) return;
     const room = `shop_${shopkeeper_id}`;
     socket.join(room);
+    socket.shopkeeper_id = shopkeeper_id;
     console.log(`Socket ${socket.id} joined ${room}`);
+    
+    // Notify admin of shopkeeper connection
+    socket.to("admin").emit("shopkeeperOnline", { shopkeeper_id, socket_id: socket.id });
   });
 
-  // join as customer
+  // Join as customer
   socket.on("joinCustomer", (user_id) => {
     if (!user_id) return;
     const room = `customer_${user_id}`;
     socket.join(room);
+    socket.user_id = user_id;
     console.log(`Socket ${socket.id} joined ${room}`);
+    
+    // Notify admin of customer connection
+    socket.to("admin").emit("customerOnline", { user_id, socket_id: socket.id });
   });
 
+  // Join as admin
+  socket.on("joinAdmin", (admin_id) => {
+    if (!admin_id) return;
+    socket.join("admin");
+    socket.admin_id = admin_id;
+    console.log(`Socket ${socket.id} joined admin room`);
+  });
+
+  // Handle order status updates from shopkeeper
+  socket.on("updateOrderStatus", (data) => {
+    const { orderId, status, shopkeeperId } = data;
+    
+    // Broadcast to admin
+    socket.to("admin").emit("orderStatusUpdate", { orderId, status, shopkeeperId });
+    
+    // Broadcast to specific customer if available
+    if (data.customerId) {
+      socket.to(`customer_${data.customerId}`).emit("orderStatusUpdate", { orderId, status });
+    }
+  });
+
+  // Handle customer notifications
+  socket.on("notifyCustomer", (data) => {
+    const { customerId, message, shopkeeperId } = data;
+    socket.to(`customer_${customerId}`).emit("notification", {
+      type: "shopkeeper_message",
+      message,
+      shopkeeperId,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // Handle admin broadcasts
+  socket.on("broadcastToShopkeepers", (message) => {
+    if (socket.admin_id) {
+      io.emit("adminBroadcast", {
+        type: "shopkeeper",
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  socket.on("broadcastToCustomers", (message) => {
+    if (socket.admin_id) {
+      io.emit("adminBroadcast", {
+        type: "customer", 
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  socket.on("notifyShopkeeper", (data) => {
+    if (socket.admin_id) {
+      const { shopkeeperId, message } = data;
+      socket.to(`shop_${shopkeeperId}`).emit("adminNotification", {
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  // Handle room leaving
   socket.on("leaveRoom", (room) => {
     if (!room) return;
     socket.leave(room);
     console.log(`Socket ${socket.id} left ${room}`);
   });
 
+  // Handle disconnection
   socket.on("disconnect", (reason) => {
     console.log("Socket disconnected:", socket.id, reason);
+    
+    // Notify admin of disconnections
+    if (socket.shopkeeper_id) {
+      socket.to("admin").emit("shopkeeperOffline", { 
+        shopkeeper_id: socket.shopkeeper_id, 
+        socket_id: socket.id 
+      });
+    }
+    
+    if (socket.user_id) {
+      socket.to("admin").emit("customerOffline", { 
+        user_id: socket.user_id, 
+        socket_id: socket.id 
+      });
+    }
   });
 });
 

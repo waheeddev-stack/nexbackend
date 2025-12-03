@@ -9,6 +9,7 @@ import { sendExpoPush } from "../utils/expoPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
 import checkPaymentStatus from "../middleware/checkPaymentStatus.js";
+import { awardWellnessPoints } from "../utils/wellnessPoints.js";
 
 // Middleware to check if shopkeeper is verified
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -499,6 +500,30 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         success: false, 
         message: "Failed to update order status" 
       });
+    }
+
+    // Award wellness points if order is delivered
+    if (status === "Delivered") {
+      try {
+        const [[orderDetails]] = await pool.query(
+          "SELECT user_id, created_at FROM orders WHERE id = ?",
+          [orderIdNum]
+        );
+        
+        if (orderDetails) {
+          const pointsData = await awardWellnessPoints(
+            pool, 
+            orderDetails.user_id, 
+            new Date(), // delivery time (now)
+            orderDetails.created_at // order creation time
+          );
+          
+          console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for order ${orderIdNum}`);
+        }
+      } catch (pointsError) {
+        console.error("Error awarding wellness points:", pointsError);
+        // Don't fail the order update if points awarding fails
+      }
     }
 
     // Broadcast via sockets: to shop room and to the specific customer room
