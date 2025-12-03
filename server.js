@@ -308,6 +308,33 @@ app.get("/api/db-status", async (req, res) => {
   }
 });
 
+// Debug admin table structure
+app.get("/api/debug-admin", async (req, res) => {
+  try {
+    // Get table structure
+    const [tableInfo] = await db.execute("DESCRIBE admins");
+    
+    // Get sample admin data (without passwords)
+    const [adminSample] = await db.execute("SELECT id, email FROM admins LIMIT 3");
+    
+    res.json({
+      success: true,
+      tableStructure: tableInfo,
+      sampleData: adminSample,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug admin failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug admin failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Routes
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
