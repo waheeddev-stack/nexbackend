@@ -78,13 +78,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Debug middleware to log requests (only in development)
-if (process.env.NODE_ENV !== 'production') {
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-    next();
-  });
-}
+// Request logging middleware (always enabled for debugging)
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`📡 ${timestamp} - ${req.method} ${req.path}`);
+  console.log(`📡 Headers:`, req.headers);
+  console.log(`📡 Query:`, req.query);
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log(`📡 Body:`, req.body);
+  }
+  next();
+});
 
 // Attach io instance to requests (for routes to use)
 app.use((req, res, next) => {
