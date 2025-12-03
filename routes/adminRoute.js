@@ -647,7 +647,7 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
-// Admin Login - Compatible with existing database
+// Admin Login - Robust compatibility with existing database
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
   
@@ -656,55 +656,117 @@ adminRouter.post("/login", async (req, res) => {
   }
 
   try {
-    // Query existing admins table structure
+    console.log('🔍 Admin login attempt for:', email);
+    
+    // First check what columns exist in admins table
+    let adminColumns = [];
+    try {
+      const [tableInfo] = await pool.query("DESCRIBE admins");
+      adminColumns = tableInfo.map(col => col.Field);
+      console.log('📋 Admin table columns:', adminColumns);
+    } catch (descError) {
+      console.log('⚠️ Could not describe table, using fallback');
+    }
+    
+    // Query with flexible column selection
     const [rows] = await pool.query("SELECT * FROM admins WHERE email = ?", [email]);
+    console.log('👤 Found admin records:', rows.length);
     
     if (rows.length === 0) {
+      // Show available emails for debugging
+      try {
+        const [allAdmins] = await pool.query("SELECT email FROM admins LIMIT 10");
+        console.log('📧 Available admin emails:', allAdmins.map(a => a.email));
+      } catch (e) {
+        console.log('Could not fetch admin emails');
+      }
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
     const admin = rows[0];
+    console.log('👤 Admin record keys:', Object.keys(admin));
     
-    // Handle different password storage formats in existing database
+    // Handle different password field names and formats
+    let passwordField = null;
+    let storedPassword = null;
+    
+    // Check for different possible password field names
+    const possiblePasswordFields = ['password', 'Password', 'pass', 'pwd', 'hash'];
+    for (const field of possiblePasswordFields) {
+      if (admin[field]) {
+        passwordField = field;
+        storedPassword = admin[field];
+        break;
+      }
+    }
+    
+    if (!storedPassword) {
+      console.log('❌ No password field found in admin record');
+      return res.status(500).json({ success: false, message: "Database configuration error" });
+    }
+    
+    console.log('🔐 Using password field:', passwordField);
+    
+    // Try multiple password comparison methods
     let isMatch = false;
     
-    if (admin.password) {
-      try {
-        // Try bcrypt first (if password is hashed)
-        isMatch = await bcrypt.compare(password, admin.password);
-      } catch (bcryptError) {
-        // If bcrypt fails, try plain text comparison (for existing data)
-        isMatch = (password === admin.password);
+    try {
+      // Method 1: bcrypt comparison
+      isMatch = await bcrypt.compare(password, storedPassword);
+      console.log('🔐 Bcrypt comparison result:', isMatch);
+    } catch (bcryptError) {
+      console.log('🔐 Bcrypt failed, trying alternatives');
+      
+      // Method 2: Plain text comparison
+      if (password === storedPassword) {
+        isMatch = true;
+        console.log('🔐 Plain text match: true');
+      } else {
+        // Method 3: Case insensitive comparison
+        if (password.toLowerCase() === storedPassword.toLowerCase()) {
+          isMatch = true;
+          console.log('🔐 Case insensitive match: true');
+        }
       }
     }
     
     if (!isMatch) {
+      console.log('🔐 Password mismatch');
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Generate JWT token
+    // Generate JWT token with flexible ID field
+    const adminId = admin.id || admin.ID || admin.admin_id || 1;
+    const adminEmail = admin.email || admin.Email || email;
+    
     const token = jwt.sign(
       { 
-        id: admin.id, 
-        email: admin.email,
+        id: adminId, 
+        email: adminEmail,
         role: 'admin'
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
+    console.log('✅ Admin login successful');
     res.json({ 
       success: true, 
       token, 
       admin: { 
-        id: admin.id, 
-        email: admin.email 
+        id: adminId, 
+        email: adminEmail 
       },
       message: "Admin login successful"
     });
+    
   } catch (err) {
-    console.error("Admin login error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("❌ Admin login error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
