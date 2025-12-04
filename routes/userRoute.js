@@ -301,8 +301,8 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       
       // Insert order for this shopkeeper
       const [orderResult] = await pool.query(
-        "INSERT INTO orders (user_id, shopkeeper_id, total_amount, delivery_address, status, points_discount) VALUES (?, ?, ?, ?, ?, ?)",
-        [user_id, shopId, shopTotal, address, "Pending", shopDiscount]
+        "INSERT INTO orders (user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used) VALUES (?, ?, ?, ?, ?, ?)",
+        [user_id, shopId, shopTotal, address, "Pending", pointsToRedeem]
       );
       const orderId = orderResult.insertId;
 
