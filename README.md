@@ -1,6 +1,6 @@
 # NexKirana Backend API
 
-A comprehensive backend API for the NexKirana grocery delivery platform, built with Node.js, Express, and XAMPP MySQL.
+A comprehensive backend API for the NexKirana grocery delivery platform, built with Node.js, Express, and TiDB Cloud.
 
 ## 🚀 Features
 
@@ -9,7 +9,7 @@ A comprehensive backend API for the NexKirana grocery delivery platform, built w
 - **Admin Panel**: Administrative controls and dashboard
 - **Order Management**: Complete order lifecycle management
 - **Real-time Communication**: Socket.IO integration for live updates
-- **Product Management**: Global and shop-specific product catalogs (250K+ products)
+- **Product Management**: Global and shop-specific product catalogs (300+ products)
 - **Payment Integration**: COD and UPI payment methods
 - **Location Services**: GPS-based delivery tracking
 
@@ -17,18 +17,11 @@ A comprehensive backend API for the NexKirana grocery delivery platform, built w
 
 - **Runtime**: Node.js
 - **Framework**: Express.js
-- **Database**: XAMPP MySQL (localhost:3306)
+- **Database**: TiDB Cloud (MySQL-compatible)
 - **Authentication**: JWT (JSON Web Tokens)
 - **Real-time**: Socket.IO
 - **File Upload**: Cloudinary
 - **Security**: bcrypt, CORS, Security Headers
-
-## 📋 Prerequisites
-
-1. **XAMPP** installed and running
-2. **MySQL** service started in XAMPP
-3. **phpMyAdmin** accessible at `http://localhost/phpmyadmin`
-4. **Database** `nexkiranadb` imported with 250K+ products
 
 ## 🔧 Installation
 
@@ -46,19 +39,10 @@ npm install
 3. **Set up environment variables:**
 ```bash
 cp .env.example .env
+# Edit .env with your actual configuration values
 ```
 
-4. **Start XAMPP MySQL:**
-   - Open XAMPP Control Panel
-   - Start Apache and MySQL services
-   - Verify MySQL is running on port 3306
-
-5. **Test database connection:**
-```bash
-npm run test-xampp
-```
-
-6. **Start the server:**
+4. **Start the server:**
 ```bash
 npm start
 # or for development
@@ -67,37 +51,23 @@ npm run dev
 
 The server will start on `http://localhost:5000`
 
-## 🗄️ Database Setup
-
-### XAMPP MySQL Configuration:
-- **Host**: localhost
-- **Port**: 3306
-- **Username**: root
-- **Password**: (empty)
-- **Database**: nexkiranadb
-
-### Import Database:
-1. Open phpMyAdmin: `http://localhost/phpmyadmin`
-2. Create database `nexkiranadb`
-3. Import your SQL file with 250K+ products
-4. Verify tables exist: users, shopkeepers, products, orders, etc.
-
 ## 🌐 Environment Variables
 
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `ADMIN_EMAIL` | nexkirana@gmail.com | Admin login email |
-| `ADMIN_PASSWORD` | nexkirana123 | Admin login password |
-| `CLOUDINARY_API_KEY` | 115424958181214 | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | 913y9mHUE2JA4hrNIaYR5jMOSQM | Cloudinary API secret |
-| `CLOUDINARY_CLOUD_NAME` | dbhjho1kv | Cloudinary cloud name |
-| `DB_HOST` | localhost | XAMPP MySQL host |
-| `DB_NAME` | nexkiranadb | Database name |
-| `DB_PASS` | (empty) | MySQL password |
-| `DB_PORT` | 3306 | MySQL port |
-| `DB_USER` | root | MySQL username |
-| `JWT_SECRET` | nexkiranadbhsmsu | JWT signing secret |
-| `PORT` | 5000 | Server port |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `ADMIN_EMAIL` | Admin login email | Yes |
+| `ADMIN_PASSWORD` | Admin login password | Yes |
+| `CLOUDINARY_API_KEY` | Cloudinary API key | Yes |
+| `CLOUDINARY_API_SECRET` | Cloudinary API secret | Yes |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name | Yes |
+| `DB_HOST` | TiDB Cloud host | Yes |
+| `DB_NAME` | Database name | Yes |
+| `DB_PASS` | Database password | Yes |
+| `DB_PORT` | Database port | Yes |
+| `DB_SSL` | Enable SSL connection | Yes |
+| `DB_USER` | Database username | Yes |
+| `JWT_SECRET` | JWT signing secret | Yes |
+| `PORT` | Server port | No (default: 5000) |
 
 ## 🔗 API Endpoints
 
@@ -109,8 +79,9 @@ The server will start on `http://localhost:5000`
 - `POST /api/shopkeeper/signup` - Shopkeeper registration
 
 ### Products
-- `GET /api/products` - Get all products
-- `GET /api/shopkeepers/:id/products` - Get shopkeeper products
+- `GET /api/user/products` - Get all products
+- `GET /api/shopkeeper/products` - Get shopkeeper products
+- `GET /api/shopkeeper/global-products` - Get global products
 
 ### Orders
 - `POST /api/orders` - Create new order
@@ -121,46 +92,24 @@ The server will start on `http://localhost:5000`
 - `GET /health` - Database health check
 - `GET /api` - API information
 
-## 🧪 Testing
+## 🚀 Production Deployment
 
-### Test Database Connection:
-```bash
-npm run test-db
-```
-
-### Test XAMPP Connection:
-```bash
-npm run test-xampp
-```
-
-### Manual API Testing:
-```bash
-# Test health endpoint
-curl http://localhost:5000/health
-
-# Test admin login
-curl -X POST http://localhost:5000/api/admin/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"nexkirana@gmail.com","password":"nexkirana123"}'
-```
-
-## 🚀 Production Deployment (Render.com)
-
-1. **Environment Variables on Render:**
-```
-DB_HOST=your_production_mysql_host
-DB_PORT=3306
-DB_USER=your_production_mysql_user
-DB_PASS=your_production_mysql_password
+### Environment Variables for Production:
+```env
+DB_HOST=your_tidb_cloud_host
+DB_PORT=4000
+DB_USER=your_tidb_user
+DB_PASS=your_tidb_password
 DB_NAME=nexkiranadb
+DB_SSL=true
 ```
 
-2. **Build Command:**
+### Build Command:
 ```bash
 npm install
 ```
 
-3. **Start Command:**
+### Start Command:
 ```bash
 npm start
 ```
@@ -171,8 +120,8 @@ The application uses 7 main tables:
 - `users` - Customer information
 - `shopkeepers` - Store owner information  
 - `admins` - Administrative users
-- `products` - Shop-specific products (250K+ records)
-- `global_products` - Global product catalog
+- `products` - Shop-specific products
+- `global_products` - Global product catalog (300+ products)
 - `orders` - Order information
 - `order_items` - Order line items
 
@@ -183,24 +132,7 @@ The application uses 7 main tables:
 - CORS protection
 - Security headers
 - Input validation
-- No SSL required for localhost
-
-## 🐛 Troubleshooting
-
-### Common Issues:
-
-1. **MySQL Connection Failed:**
-   - Ensure XAMPP MySQL is running
-   - Check port 3306 is not blocked
-   - Verify database `nexkiranadb` exists
-
-2. **Database Not Found:**
-   - Import your SQL file in phpMyAdmin
-   - Check database name matches `nexkiranadb`
-
-3. **Port 5000 Already in Use:**
-   - Change PORT in .env file
-   - Or kill existing process: `taskkill /f /im node.exe`
+- SSL database connections
 
 ## 📝 License
 
