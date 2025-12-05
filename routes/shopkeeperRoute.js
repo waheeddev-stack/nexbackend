@@ -23,20 +23,34 @@ const verifyShopkeeperStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Check if verification_status column exists, otherwise assume verified
+    // Check verification status with proper handling for all states
     const shopkeeper = user[0];
-    const isVerified = shopkeeper.verification_status === 'verified' || 
-                      shopkeeper.verification_status === 'approved' || 
-                      shopkeeper.is_verified === 1 ||
-                      !shopkeeper.hasOwnProperty('verification_status'); // If column doesn't exist, assume verified
-
-    if (!isVerified && shopkeeper.verification_status === 'pending') {
+    const verificationStatus = shopkeeper.is_verified;
+    
+    if (verificationStatus === 0) {
+      // Rejected
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account has been denied. Please contact support for more information.",
+        verification_status: 'rejected'
+      });
+    } else if (verificationStatus === null || verificationStatus === '' || verificationStatus === undefined) {
+      // Pending
       return res.status(403).json({ 
         success: false, 
         message: "Your account is pending verification. Please wait for admin approval.",
-        verification_status: shopkeeper.verification_status
+        verification_status: 'pending'
+      });
+    } else if (verificationStatus !== 1) {
+      // Any other invalid status
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account verification status is unclear. Please contact support.",
+        verification_status: 'unknown'
       });
     }
+    
+    // Only approved shopkeepers (is_verified = 1) can proceed
 
     next();
   } catch (err) {
@@ -192,14 +206,36 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Check verification status
-    if (!user[0].is_verified) {
+    // Check verification status with proper handling for all states
+    const verificationStatus = user[0].is_verified;
+    
+    if (verificationStatus === 0) {
+      // Rejected
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account has been denied. Please contact support for more information.",
+        status: 'rejected',
+        verification_status: 'rejected'
+      });
+    } else if (verificationStatus === null || verificationStatus === '' || verificationStatus === undefined) {
+      // Pending
       return res.status(403).json({ 
         success: false, 
         message: "Your account is pending verification. Please wait for admin approval.",
-        status: 'pending'
+        status: 'pending',
+        verification_status: 'pending'
+      });
+    } else if (verificationStatus !== 1) {
+      // Any other invalid status
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account verification status is unclear. Please contact support.",
+        status: 'unknown',
+        verification_status: 'unknown'
       });
     }
+    
+    // Only approved shopkeepers (is_verified = 1) can proceed
 
     const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
     
