@@ -451,8 +451,19 @@ adminRouter.put(
   verifyAdminToken,
   upload.single("image"),
   async (req, res) => {
+    const productId = req.params.id;
+    
+    // Validate product ID
+    if (!productId || productId === 'null' || productId === 'undefined') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid product ID. Product ID is required for update." 
+      });
+    }
+
     const { name, price, category, description } = req.body;
     let imageUrl = req.body.image || null;
+    
     try {
       if (req.file) {
         const streamUpload = () =>
@@ -469,7 +480,7 @@ adminRouter.put(
 
       const [dbResult] = await pool.query(
         "UPDATE global_products SET name=?, price=?, category=?, description=?, image=? WHERE id=?",
-        [name, price, category || null, description || "", imageUrl, req.params.id]
+        [name, price, category || null, description || "", imageUrl, productId]
       );
 
       if (dbResult.affectedRows === 0) {
@@ -478,6 +489,7 @@ adminRouter.put(
 
       res.json({ success: true, message: "Global product updated" });
     } catch (err) {
+      console.error("Update global product error:", err);
       res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
@@ -485,15 +497,26 @@ adminRouter.put(
 
 // Delete a global product (admin)
 adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) => {
+  const productId = req.params.id;
+  
+  // Validate product ID
+  if (!productId || productId === 'null' || productId === 'undefined') {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Invalid product ID. Product ID is required for deletion." 
+    });
+  }
+
   try {
     const [result] = await pool.query("DELETE FROM global_products WHERE id = ?", [
-      req.params.id,
+      productId,
     ]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Global product not found" });
     }
     res.json({ success: true, message: "Global product deleted" });
   } catch (err) {
+    console.error("Delete global product error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
