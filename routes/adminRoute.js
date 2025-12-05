@@ -15,9 +15,16 @@ const adminRouter = express.Router();
 adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, is_verified, created_at FROM shopkeepers ORDER BY created_at DESC"
+      "SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers ORDER BY created_at DESC"
     );
-    res.json({ success: true, data: rows });
+    
+    // Map is_verified to verification_status for frontend compatibility
+    const mappedRows = rows.map(row => ({
+      ...row,
+      verification_status: row.is_verified === 1 ? 'approved' : 'pending'
+    }));
+    
+    res.json({ success: true, data: mappedRows });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
@@ -390,10 +397,29 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, basic_price, premium_price, enterprise_price, category, description, image, brand, barcode, created_at FROM global_products ORDER BY created_at DESC"
+      "SELECT id, name, price, category, description, image, brand, barcode, shop_scales, created_at FROM global_products ORDER BY created_at DESC"
     );
-    res.json({ success: true, data: rows });
+    
+    // Parse shop_scales JSON for each product
+    const products = rows.map(product => {
+      let shopScales = ['all'];
+      if (product.shop_scales) {
+        try {
+          shopScales = JSON.parse(product.shop_scales);
+        } catch (e) {
+          console.warn('Failed to parse shop_scales for product', product.id, ':', e.message);
+          shopScales = ['all'];
+        }
+      }
+      return {
+        ...product,
+        shopScales: shopScales
+      };
+    });
+    
+    res.json({ success: true, data: products });
   } catch (err) {
+    console.error("Get global products error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
@@ -406,19 +432,18 @@ adminRouter.post(
   async (req, res) => {
     const { 
       name, 
-      basic_price, 
-      premium_price, 
-      enterprise_price, 
+      price, 
       category, 
       description, 
       brand, 
-      barcode 
+      barcode,
+      shopScales
     } = req.body;
     
-    if (!name || !basic_price) {
+    if (!name || !price) {
       return res.status(400).json({ 
         success: false, 
-        message: "Name and basic price are required" 
+        message: "Name and price are required" 
       });
     }
     
@@ -437,34 +462,47 @@ adminRouter.post(
         imageUrl = result.secure_url;
       }
 
+      // Parse shopScales if it's a string, otherwise use as-is
+      let parsedShopScales = ['all']; // default
+      if (shopScales) {
+        try {
+          parsedShopScales = typeof shopScales === 'string' ? JSON.parse(shopScales) : shopScales;
+        } catch (e) {
+          console.warn('Failed to parse shopScales, using default:', e);
+        }
+      }
+
+      // Generate a unique ID manually for TiDB compatibility
+      const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products");
+      const nextId = maxIdResult[0].next_id;
+      
       const [dbResult] = await pool.query(
-        "INSERT INTO global_products (name, basic_price, premium_price, enterprise_price, category, description, image, brand, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
+          nextId,
           name, 
-          basic_price, 
-          premium_price || basic_price, 
-          enterprise_price || basic_price, 
+          parseFloat(price), 
           category || null, 
           description || "", 
           imageUrl,
           brand || null,
-          barcode || null
+          barcode || null,
+          JSON.stringify(parsedShopScales)
         ]
       );
 
       res.status(201).json({
         success: true,
         data: {
-          id: dbResult.insertId,
+          id: nextId,
           name,
-          basic_price,
-          premium_price: premium_price || basic_price,
-          enterprise_price: enterprise_price || basic_price,
+          price,
           category: category || null,
           description,
           image: imageUrl,
           brand: brand || null,
           barcode: barcode || null,
+          shopScales: parsedShopScales,
         },
       });
     } catch (err) {
@@ -492,13 +530,12 @@ adminRouter.put(
 
     const { 
       name, 
-      basic_price, 
-      premium_price, 
-      enterprise_price, 
+      price, 
       category, 
       description, 
       brand, 
-      barcode 
+      barcode,
+      shopScales
     } = req.body;
     let imageUrl = req.body.image || null;
     
@@ -516,19 +553,28 @@ adminRouter.put(
         imageUrl = result.secure_url;
       }
 
+      // Parse shopScales if it's a string, otherwise use as-is
+      let parsedShopScales = ['all']; // default
+      if (shopScales) {
+        try {
+          parsedShopScales = typeof shopScales === 'string' ? JSON.parse(shopScales) : shopScales;
+        } catch (e) {
+          console.warn('Failed to parse shopScales, using default:', e);
+        }
+      }
+
       const [dbResult] = await pool.query(
-        "UPDATE global_products SET name=?, basic_price=?, premium_price=?, enterprise_price=?, category=?, description=?, image=?, brand=?, barcode=? WHERE id=?",
+        "UPDATE global_products SET name=?, price=?, category=?, description=?, image=?, brand=?, barcode=?, shop_scales=? WHERE id=?",
         [
           name, 
-          basic_price, 
-          premium_price, 
-          enterprise_price, 
+          parseFloat(price), 
           category || null, 
           description || "", 
           imageUrl, 
           brand || null, 
           barcode || null, 
-          productId
+          JSON.stringify(parsedShopScales),
+          parseInt(productId)
         ]
       );
 
@@ -558,7 +604,7 @@ adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) =>
 
   try {
     const [result] = await pool.query("DELETE FROM global_products WHERE id = ?", [
-      productId,
+      parseInt(productId),
     ]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Global product not found" });
@@ -574,7 +620,7 @@ adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) =>
 adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   try {
     const [products] = await pool.query(`
-      SELECT p.*, s.shop_name, s.name as shopkeeper_name, s.shop_tier
+      SELECT p.*, s.shop_name, s.name as shopkeeper_name, s.shop_scale
       FROM products p 
       LEFT JOIN shopkeepers s ON p.shop_id = s.id 
       ORDER BY p.created_at DESC
@@ -586,61 +632,65 @@ adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   }
 });
 
-// GET /api/admin/global-products/pricing/:shopTier - Get global products with tier-specific pricing
-adminRouter.get("/global-products/pricing/:shopTier", verifyAdminToken, async (req, res) => {
+// GET /api/admin/global-products/scale/:shopScale - Get global products available for specific shop scale
+adminRouter.get("/global-products/scale/:shopScale", verifyAdminToken, async (req, res) => {
   try {
-    const { shopTier } = req.params;
+    const { shopScale } = req.params;
     
-    if (!['basic', 'premium', 'enterprise'].includes(shopTier)) {
+    if (!['small', 'medium', 'large'].includes(shopScale)) {
       return res.status(400).json({ 
         success: false, 
-        message: "Invalid shop tier. Must be basic, premium, or enterprise" 
+        message: "Invalid shop scale. Must be small, medium, or large" 
       });
     }
 
-    const priceColumn = `${shopTier}_price`;
-    
     const [rows] = await pool.query(`
       SELECT 
         id, 
         name, 
-        ${priceColumn} as price,
-        basic_price,
-        premium_price, 
-        enterprise_price,
+        price,
         category, 
         description, 
         image, 
         brand, 
         barcode, 
+        shop_scales,
         created_at 
       FROM global_products 
+      WHERE JSON_CONTAINS(shop_scales, '"all"') 
+         OR JSON_CONTAINS(shop_scales, ?)
       ORDER BY created_at DESC
-    `);
+    `, [JSON.stringify(shopScale)]);
     
-    res.json({ success: true, data: rows, shopTier });
+    // Parse shop_scales for response
+    const products = rows.map(product => ({
+      ...product,
+      shopScales: product.shop_scales ? JSON.parse(product.shop_scales) : ['all']
+    }));
+    
+    res.json({ success: true, data: products, shopScale });
   } catch (err) {
-    console.error("Get tiered pricing error:", err);
+    console.error("Get scale-specific products error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
-// PUT /api/admin/shopkeepers/:id/tier - Update shopkeeper tier
-adminRouter.put("/shopkeepers/:id/tier", verifyAdminToken, async (req, res) => {
+// PUT /api/admin/shopkeepers/:id/scale - Update shopkeeper scale
+adminRouter.put("/shopkeepers/:id/scale", verifyAdminToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
-    const { shop_tier } = req.body;
+    const { shop_scale } = req.body;
     
-    if (!['basic', 'premium', 'enterprise'].includes(shop_tier)) {
+    if (!['small', 'medium', 'large'].includes(shop_scale)) {
       return res.status(400).json({ 
         success: false, 
-        message: "Invalid shop tier. Must be basic, premium, or enterprise" 
+        message: "Invalid shop scale. Must be small, medium, or large" 
       });
     }
     
     const [result] = await pool.query(
-      "UPDATE shopkeepers SET shop_tier = ? WHERE id = ?",
-      [shop_tier, shopkeeperId]
+      "UPDATE shopkeepers SET shop_scale = ? WHERE id = ?",
+      [shop_scale, shopkeeperId]
     );
     
     if (result.affectedRows === 0) {
@@ -649,12 +699,12 @@ adminRouter.put("/shopkeepers/:id/tier", verifyAdminToken, async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: `Shopkeeper tier updated to ${shop_tier}`,
+      message: `Shopkeeper scale updated to ${shop_scale}`,
       shopkeeperId,
-      shop_tier
+      shop_scale
     });
   } catch (err) {
-    console.error("Update shopkeeper tier error:", err);
+    console.error("Update shopkeeper scale error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });

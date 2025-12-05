@@ -46,19 +46,23 @@ const initDatabase = async () => {
     console.log('📋 Creating shopkeepers table...');
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS shopkeepers (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        phone VARCHAR(20),
-        address TEXT,
-        shop_name VARCHAR(100),
-        img VARCHAR(255),
-        verification_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
-        shop_tier ENUM('basic', 'premium', 'enterprise') DEFAULT 'basic',
-        latitude DECIMAL(10, 8),
-        longitude DECIMAL(11, 8),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id BIGINT(20) NOT NULL PRIMARY KEY,
+        name VARCHAR(512) NOT NULL,
+        email VARCHAR(512) NOT NULL UNIQUE,
+        password VARCHAR(512) NOT NULL,
+        phone BIGINT(20),
+        address VARCHAR(512),
+        shop_name VARCHAR(512),
+        img VARCHAR(512),
+        is_verified BIGINT(20) DEFAULT 0,
+        shop_scale ENUM('small', 'medium', 'large') DEFAULT 'small',
+        latitude DOUBLE,
+        longitude VARCHAR(512),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expo_push_token VARCHAR(512),
+        upi_id VARCHAR(512),
+        upi_qr VARCHAR(512),
+        refresh_token VARCHAR(512)
       )
     `);
 
@@ -77,16 +81,15 @@ const initDatabase = async () => {
     console.log('📋 Creating global_products table...');
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS global_products (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
+        id BIGINT(20) NOT NULL PRIMARY KEY,
+        name VARCHAR(512) NOT NULL,
         description TEXT,
-        image VARCHAR(255),
-        category VARCHAR(50),
-        brand VARCHAR(50),
-        barcode VARCHAR(50),
-        basic_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        premium_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        enterprise_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        image VARCHAR(512),
+        category VARCHAR(512),
+        brand VARCHAR(100),
+        barcode VARCHAR(100),
+        price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        shop_scales JSON DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);

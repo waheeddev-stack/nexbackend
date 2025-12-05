@@ -656,12 +656,12 @@ shopkeeperRouter.delete("/products/:id", verifyToken, verifyShopkeeperStatus, as
 });
 
 // --- Access global products (shopkeeper) ---
-// List all global products (read-only for shopkeepers) with tier-based pricing
+// List all global products (read-only for shopkeepers) filtered by shop scale
 shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
-    // Get shopkeeper's tier
+    // Get shopkeeper's scale
     const [shopkeeper] = await pool.query(
-      "SELECT shop_tier FROM shopkeepers WHERE id = ?",
+      "SELECT shop_scale FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
     
@@ -669,28 +669,48 @@ shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, as
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
     
-    const shopTier = shopkeeper[0].shop_tier || 'basic';
-    const priceColumn = `${shopTier}_price`;
+    const shopScale = shopkeeper[0].shop_scale || 'small';
     
+    // Get products available for this shop scale
     const [rows] = await pool.query(`
       SELECT 
         id, 
         name, 
-        ${priceColumn} as price,
+        price,
         category, 
         description, 
         image, 
         brand,
         barcode,
+        shop_scales,
         created_at 
       FROM global_products 
+      WHERE JSON_CONTAINS(shop_scales, '"all"') 
+         OR JSON_CONTAINS(shop_scales, ?)
       ORDER BY created_at DESC
-    `);
+    `, [JSON.stringify(shopScale)]);
+    
+    // Parse shop_scales for response
+    const products = rows.map(product => {
+      let shopScales = ['all'];
+      if (product.shop_scales) {
+        try {
+          shopScales = JSON.parse(product.shop_scales);
+        } catch (e) {
+          console.warn('Failed to parse shop_scales for product', product.id, ':', e.message);
+          shopScales = ['all'];
+        }
+      }
+      return {
+        ...product,
+        shopScales: shopScales
+      };
+    });
     
     res.json({ 
       success: true, 
-      products: rows,
-      shopTier: shopTier
+      products: products,
+      shopScale: shopScale
     });
   } catch (err) {
     console.error("Get global products error:", err);
