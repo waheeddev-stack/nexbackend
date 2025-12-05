@@ -92,25 +92,40 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Try to update verification status
+    // Try to update verification status - compatible with existing database
     try {
-      const [result] = await pool.query(
-        "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
-        [is_verified, shopkeeperId]
-      );
-
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
+      // First try with verification_status column
+      const verification_status = action === "approve" ? "verified" : "rejected";
+      
+      try {
+        const [result] = await pool.query(
+          "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
+          [verification_status, shopkeeperId]
+        );
+        
+        if (result.affectedRows === 0) {
+          return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
+        }
+      } catch (columnError) {
+        // If verification_status column doesn't exist, try is_verified
+        console.log("Trying is_verified column...");
+        const [result] = await pool.query(
+          "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
+          [is_verified, shopkeeperId]
+        );
+        
+        if (result.affectedRows === 0) {
+          return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
+        }
       }
     } catch (dbError) {
       console.error("Database update error:", dbError);
-      
-      throw dbError;
+      return res.status(500).json({ success: false, message: "Database schema incompatible" });
     }
 
     // Get updated shopkeeper details for response
     const [shopkeeper] = await pool.query(
-      "SELECT id, name, email, is_verified FROM shopkeepers WHERE id = ?",
+      "SELECT * FROM shopkeepers WHERE id = ?",
       [shopkeeperId]
     );
 
