@@ -498,6 +498,52 @@ adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) =>
   }
 });
 
+// GET /api/admin/products - Get all shop-specific products
+adminRouter.get("/products", verifyAdminToken, async (req, res) => {
+  try {
+    const [products] = await pool.query(`
+      SELECT p.*, s.shop_name, s.name as shopkeeper_name 
+      FROM products p 
+      LEFT JOIN shopkeepers s ON p.shop_id = s.id 
+      ORDER BY p.created_at DESC
+    `);
+    res.json({ success: true, data: products });
+  } catch (err) {
+    console.error("Get products error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/admin/order-items - Get all order items
+adminRouter.get("/order-items", verifyAdminToken, async (req, res) => {
+  try {
+    const [orderItems] = await pool.query(`
+      SELECT oi.*, o.total_amount, o.status as order_status,
+             p.name as product_name, u.name as customer_name
+      FROM order_items oi
+      LEFT JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN products p ON oi.product_id = p.id
+      LEFT JOIN users u ON o.user_id = u.id
+      ORDER BY oi.created_at DESC
+    `);
+    res.json({ success: true, data: orderItems });
+  } catch (err) {
+    console.error("Get order items error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/admin/admins - Get all admins
+adminRouter.get("/admins", verifyAdminToken, async (req, res) => {
+  try {
+    const [admins] = await pool.query("SELECT id, email, created_at FROM admins ORDER BY created_at DESC");
+    res.json({ success: true, data: admins });
+  } catch (err) {
+    console.error("Get admins error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // Fetch all orders (admin)
 adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
   try {
@@ -712,15 +758,17 @@ adminRouter.post("/login", async (req, res) => {
 // Example protected route
 adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      "SELECT id, email, created_at FROM admins WHERE id = ?",
-      [req.admin.id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Admin not found" });
-    }
-    res.json({ success: true, data: rows[0] });
+    // Since admin login uses environment variables, return the admin info from JWT token
+    const adminInfo = {
+      id: req.admin.id,
+      email: req.admin.email,
+      role: req.admin.role,
+      created_at: new Date().toISOString() // Placeholder since we don't have DB record
+    };
+    
+    res.json({ success: true, data: adminInfo });
   } catch (err) {
+    console.error("Admin profile error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });

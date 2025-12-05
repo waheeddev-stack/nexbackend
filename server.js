@@ -8,6 +8,7 @@ import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
+import notificationRouter from "./routes/notificationRoute.js";
 import db from "./config/db.js";
 
 dotenv.config();
@@ -69,6 +70,10 @@ app.use(cors({
   methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+// Serve static files (for favicon and other assets)
+app.use(express.static('public'));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -219,6 +224,22 @@ io.on("connection", (socket) => {
   });
 });
 
+// Favicon handlers (prevents 404 errors)
+app.get("/favicon.ico", (req, res) => {
+  // Redirect to SVG favicon or return 204 if not found
+  res.redirect(301, '/favicon.svg');
+});
+
+app.get("/favicon.svg", (req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+  const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+    <rect width="32" height="32" fill="#4F46E5"/>
+    <text x="16" y="22" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="white">N</text>
+  </svg>`;
+  res.send(favicon);
+});
+
 // Health check endpoints (MUST be before routes)
 app.get("/", (req, res) => {
   res.json({ 
@@ -352,6 +373,7 @@ app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
+app.use("/api/notifications", notificationRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use((req, res, next) => {

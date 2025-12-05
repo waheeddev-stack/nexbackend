@@ -1,8 +1,6 @@
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
 
 dotenv.config();
 
@@ -74,12 +72,28 @@ const initDatabase = async () => {
       )
     `);
 
+    // Create global_products table
+    console.log('📋 Creating global_products table...');
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS global_products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        image VARCHAR(255),
+        category VARCHAR(50),
+        brand VARCHAR(50),
+        barcode VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create products table
     console.log('📋 Creating products table...');
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS products (
         id INT AUTO_INCREMENT PRIMARY KEY,
         shop_id INT NOT NULL,
+        global_product_id INT,
         name VARCHAR(100) NOT NULL,
         description TEXT,
         image VARCHAR(255),
@@ -87,7 +101,8 @@ const initDatabase = async () => {
         price DECIMAL(10,2) NOT NULL,
         stock INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (shop_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
+        FOREIGN KEY (shop_id) REFERENCES shopkeepers(id) ON DELETE CASCADE,
+        FOREIGN KEY (global_product_id) REFERENCES global_products(id) ON DELETE SET NULL
       )
     `);
 
@@ -104,6 +119,21 @@ const initDatabase = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create order_items table
+    console.log('📋 Creating order_items table...');
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        product_id INT NOT NULL,
+        quantity INT NOT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
       )
     `);
     

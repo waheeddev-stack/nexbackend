@@ -101,135 +101,73 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, 
   }
 });
 
-// SHOPKEEPER SIGNUP (accept img, upi_id, upi_qr, expo_push_token, latitude/longitude)
-shopkeeperRouter.post(
-  "/signup",
-  upload.fields([{ name: "img", maxCount: 1 }, { name: "upi_qr", maxCount: 1 }]),
-  async (req, res) => {
-    try {
-      const {
-        name,
-        email,
-        password,
-        phone,
-        latitude,
-        longitude,
-        shop_name,
-        upi_id,
-        expo_push_token,
-      } = req.body;
+// SHOPKEEPER SIGNUP - Simplified version
+shopkeeperRouter.post("/signup", async (req, res) => {
+  try {
+    const { name, email, password, phone, shop_name } = req.body;
 
-      if (!name || !email || !password || !phone || !shop_name) {
-        return res.status(400).json({
-          success: false,
-          message: "Name, email, password, phone, and shop_name are required",
-        });
-      }
-
-      if (password.length < 6) {
-        return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
-      }
-
-      if (!/^\d{10}$/.test(phone)) {
-        return res.status(400).json({ success: false, message: "Phone number must be 10 digits" });
-      }
-
-      const [existingUser] = await pool.query("SELECT id FROM shopkeepers WHERE email = ?", [email]);
-      if (existingUser.length > 0) {
-        return res.status(400).json({ success: false, message: "Shopkeeper already exists" });
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      // Optional reverse geocode (keeps null on failure)
-      let address = null;
-      if (latitude && longitude) {
-        try {
-          const geoRes = await fetch(
-            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${process.env.GOOGLE_MAPS_API_KEY}`
-          );
-          const geoData = await geoRes.json();
-          if (geoData.results && geoData.results.length > 0) {
-            address = geoData.results[0].formatted_address;
-          }
-        } catch (err) {
-          console.warn("Geocoding failed:", err.message);
-        }
-      }
-
-      // Handle image uploads (img and upi_qr)
-      let imgUrl = null;
-      let upiQrUrl = null;
-      try {
-        const streamifier = await import("streamifier");
-
-        if (req.files?.img && req.files.img[0]) {
-          const file = req.files.img[0];
-          const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers" }, (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            });
-            streamifier.default.createReadStream(file.buffer).pipe(stream);
-          });
-          imgUrl = result.secure_url;
-        }
-
-        if (req.files?.upi_qr && req.files.upi_qr[0]) {
-          const file = req.files.upi_qr[0];
-          const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers/upi_qr" }, (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            });
-            streamifier.default.createReadStream(file.buffer).pipe(stream);
-          });
-          upiQrUrl = result.secure_url;
-        }
-      } catch (uploadErr) {
-        console.error("Signup image upload error:", uploadErr);
-        return res.status(500).json({ success: false, message: "Failed to upload image(s)" });
-      }
-
-      // Insert with only basic columns that exist in your database
-      const [result] = await pool.query(
-        `INSERT INTO shopkeepers 
-         (name, email, password, phone, shop_name, address, latitude, longitude, img) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          name,
-          email,
-          hashedPassword,
-          phone,
-          shop_name,
-          address,
-          latitude || null,
-          longitude || null,
-          imgUrl
-        ]
-      );
-
-      const [userRows] = await pool.query(
-        "SELECT id, name, email, phone, address, shop_name, img, latitude, longitude, created_at FROM shopkeepers WHERE id = ?",
-        [result.insertId]
-      );
-
-      const user = userRows[0];
-      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET );
-
-      return res.json({ 
-        success: true, 
-        token, 
-        shopkeeper: user, 
-        message: "Shopkeeper registered successfully. Your account is pending verification.",
-        requiresVerification: true
+    // Validation
+    if (!name || !email || !password || !phone || !shop_name) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, password, phone, and shop_name are required",
       });
-    } catch (err) {
-      console.error("Signup error:", err);
-      return res.status(500).json({ success: false, message: "Server error" });
     }
+
+    if (password.length < 6) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Password must be at least 6 characters" 
+      });
+    }
+
+    // Check if shopkeeper already exists
+    const [existingUser] = await pool.query(
+      "SELECT id FROM shopkeepers WHERE email = ?", 
+      [email]
+    );
+    
+    if (existingUser.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Shopkeeper already exists" 
+      });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert new shopkeeper
+    const [result] = await pool.query(
+      `INSERT INTO shopkeepers (name, email, password, phone, shop_name) VALUES (?, ?, ?, ?, ?)`,
+      [name, email, hashedPassword, phone, shop_name]
+    );
+
+    // Get the created shopkeeper
+    const [userRows] = await pool.query(
+      "SELECT id, name, email, phone, shop_name FROM shopkeepers WHERE id = ?",
+      [result.insertId]
+    );
+
+    const user = userRows[0];
+    
+    // Generate JWT token
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    return res.json({ 
+      success: true, 
+      token,
+      user,
+      message: "Shopkeeper registered successfully"
+    });
+  } catch (err) {
+    console.error("Shopkeeper signup error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Server error" 
+    });
   }
-);
+});
 
 // SHOPKEEPER LOGIN
 shopkeeperRouter.post("/signin", async (req, res) => {
