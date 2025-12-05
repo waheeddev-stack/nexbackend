@@ -11,11 +11,11 @@ import verifyToken from "../middleware/auth.js";
 // import checkPaymentStatus from "../middleware/checkPaymentStatus.js"; // Disabled - earnings system not implemented
 import { awardWellnessPoints } from "../utils/wellnessPoints.js";
 
-// Middleware to check if shopkeeper is verified
+// Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
   try {
     const [user] = await pool.query(
-      "SELECT is_verified FROM shopkeepers WHERE id = ?",
+      "SELECT * FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
 
@@ -23,11 +23,18 @@ const verifyShopkeeperStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    if (!user[0].is_verified) {
+    // Check if verification_status column exists, otherwise assume verified
+    const shopkeeper = user[0];
+    const isVerified = shopkeeper.verification_status === 'verified' || 
+                      shopkeeper.verification_status === 'approved' || 
+                      shopkeeper.is_verified === 1 ||
+                      !shopkeeper.hasOwnProperty('verification_status'); // If column doesn't exist, assume verified
+
+    if (!isVerified && shopkeeper.verification_status === 'pending') {
       return res.status(403).json({ 
         success: false, 
-        message: "Account verification required. Please wait for admin approval.",
-        is_verified: user[0].is_verified
+        message: "Your account is pending verification. Please wait for admin approval.",
+        verification_status: shopkeeper.verification_status
       });
     }
 
@@ -184,28 +191,26 @@ shopkeeperRouter.post(
         return res.status(500).json({ success: false, message: "Failed to upload image(s)" });
       }
 
+      // Insert with only basic columns that exist in your database
       const [result] = await pool.query(
         `INSERT INTO shopkeepers 
-         (name, email, password, phone, address, shop_name, latitude, longitude, img, upi_id, upi_qr, expo_push_token, is_verified) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         (name, email, password, phone, shop_name, address, latitude, longitude, img) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           name,
           email,
           hashedPassword,
           phone,
-          address,
           shop_name,
+          address,
           latitude || null,
           longitude || null,
-          imgUrl,
-          upi_id || null,
-          upiQrUrl,
-          expo_push_token || null,
+          imgUrl
         ]
       );
 
       const [userRows] = await pool.query(
-        "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, created_at FROM shopkeepers WHERE id = ?",
+        "SELECT id, name, email, phone, address, shop_name, img, latitude, longitude, created_at FROM shopkeepers WHERE id = ?",
         [result.insertId]
       );
 
@@ -215,9 +220,9 @@ shopkeeperRouter.post(
       return res.json({ 
         success: true, 
         token, 
-        user, 
+        shopkeeper: user, 
         message: "Shopkeeper registered successfully. Your account is pending verification.",
-        requiresVerification: !user.is_verified
+        requiresVerification: true
       });
     } catch (err) {
       console.error("Signup error:", err);
