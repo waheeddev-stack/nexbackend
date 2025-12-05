@@ -46,7 +46,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production' 
-      ? ["https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app", "exp://", "exps://"]
+      ? ["https://nexadminpanel.vercel.app", "https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app", "exp://", "exps://"]
       : true, // Allow all origins in development
     methods: ["GET", "POST", "PATCH", "DELETE"],
     credentials: true
@@ -58,7 +58,7 @@ app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? (origin, callback) => {
         // Allow admin panel domains and mobile apps
-        const allowedOrigins = ["https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app"];
+        const allowedOrigins = ["https://nexadminpanel.vercel.app", "https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app"];
         if (!origin || allowedOrigins.includes(origin) || origin.startsWith('exp://') || origin.startsWith('exps://')) {
           callback(null, true);
         } else {
