@@ -15,17 +15,21 @@ const adminRouter = express.Router();
 adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers ORDER BY created_at DESC"
+      "SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers WHERE id IS NOT NULL ORDER BY created_at DESC"
     );
     
-    // Map is_verified to verification_status for frontend compatibility
-    const mappedRows = rows.map(row => ({
-      ...row,
-      verification_status: row.is_verified === 1 ? 'approved' : 'pending'
-    }));
+    // Map is_verified to verification_status for frontend compatibility and ensure valid IDs
+    const mappedRows = rows
+      .filter(row => row.id != null && row.id !== 0) // Filter out any invalid IDs
+      .map(row => ({
+        ...row,
+        id: parseInt(row.id), // Ensure ID is a number
+        verification_status: row.is_verified === 1 ? 'approved' : 'pending'
+      }));
     
     res.json({ success: true, data: mappedRows });
   } catch (err) {
+    console.error("Get shopkeepers error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
@@ -80,6 +84,14 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
   try {
     const shopkeeperId = req.params.id;
     const { action } = req.body; // "approve" or "reject"
+
+    // Validate shopkeeper ID
+    if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid shopkeeper ID. Please refresh the page and try again." 
+      });
+    }
 
     console.log(`Verification request: shopkeeper ${shopkeeperId}, action: ${action}`);
 
