@@ -472,39 +472,52 @@ adminRouter.post(
         }
       }
 
-      // Generate a unique ID manually for TiDB compatibility
-      const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products");
-      const nextId = maxIdResult[0].next_id;
+      // Use database transaction for thread-safe ID generation
+      await pool.query('START TRANSACTION');
       
-      const [dbResult] = await pool.query(
-        "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-          nextId,
-          name, 
-          parseFloat(price), 
-          category || null, 
-          description || "", 
-          imageUrl,
-          brand || null,
-          barcode || null,
-          JSON.stringify(parsedShopScales)
-        ]
-      );
+      try {
+        // Lock the table and get next ID
+        const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE");
+        const nextId = maxIdResult[0].next_id;
+        
+        const [dbResult] = await pool.query(
+          "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            nextId,
+            name, 
+            parseFloat(price), 
+            category || null, 
+            description || "", 
+            imageUrl,
+            brand || null,
+            barcode || null,
+            JSON.stringify(parsedShopScales)
+          ]
+        );
+        
+        await pool.query('COMMIT');
+        
+        // Use nextId for response since insertId might be 0
+        const actualId = dbResult.insertId || nextId;
 
-      res.status(201).json({
-        success: true,
-        data: {
-          id: nextId,
-          name,
-          price,
-          category: category || null,
-          description,
-          image: imageUrl,
-          brand: brand || null,
-          barcode: barcode || null,
-          shopScales: parsedShopScales,
-        },
-      });
+        res.status(201).json({
+          success: true,
+          data: {
+            id: actualId,
+            name,
+            price,
+            category: category || null,
+            description,
+            image: imageUrl,
+            brand: brand || null,
+            barcode: barcode || null,
+            shopScales: parsedShopScales,
+          },
+        });
+      } catch (transactionError) {
+        await pool.query('ROLLBACK');
+        throw transactionError;
+      }
     } catch (err) {
       console.error("Create global product error:", err);
       res.status(500).json({ success: false, message: "Server error", error: err.message });
