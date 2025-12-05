@@ -1,5 +1,11 @@
 /*!40014 SET FOREIGN_KEY_CHECKS=0*/;
+SET AUTOCOMMIT=0;
+SET SQL_MODE="NO_AUTO_VALUE_ON_ZERO";
+
 /*!40101 SET NAMES binary*/;
+
+DROP TABLE IF EXISTS `products`;
+
 CREATE TABLE `products` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `shop_id` int(11) DEFAULT NULL,
@@ -12,9 +18,11 @@ CREATE TABLE `products` (
   `image` varchar(255) DEFAULT NULL,
   `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  PRIMARY KEY (`id`),
   KEY `fk_1` (`shop_id`),
-  KEY `fk_global_product` (`global_product_id`),
-  CONSTRAINT `fk_1` FOREIGN KEY (`shop_id`) REFERENCES `nexkiranadb`.`shopkeepers` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_global_product` FOREIGN KEY (`global_product_id`) REFERENCES `nexkiranadb`.`global_products` (`id`) ON DELETE SET NULL
+  KEY `fk_global_product` (`global_product_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=600001;
+
+COMMIT;
+SET FOREIGN_KEY_CHECKS=1;
+

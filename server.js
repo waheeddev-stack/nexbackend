@@ -12,9 +12,14 @@ import db from "./config/db.js";
 
 dotenv.config();
 
-// Validate required environment variables
-const requiredEnvVars = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME'];
+// Validate required environment variables (DB_PASS can be empty for XAMPP)
+const requiredEnvVars = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_NAME'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+
+// DB_PASS is allowed to be empty for XAMPP
+if (process.env.DB_PASS === undefined) {
+  missingEnvVars.push('DB_PASS');
+}
 
 if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));

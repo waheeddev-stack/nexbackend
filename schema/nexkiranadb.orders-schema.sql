@@ -1,5 +1,12 @@
-/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
+SET FOREIGN_KEY_CHECKS = 0;
+SET AUTOCOMMIT = 0;
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+
 /*!40101 SET NAMES binary*/;
+
+-- Drop and recreate orders table WITHOUT foreign keys
+DROP TABLE IF EXISTS `orders`;
+
 CREATE TABLE `orders` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `user_id` int(11) NOT NULL,
@@ -14,9 +21,14 @@ CREATE TABLE `orders` (
   `longitude` decimal(9,6) DEFAULT NULL,
   `delivery_address` varchar(255) DEFAULT NULL,
   `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  PRIMARY KEY (`id`),
   KEY `fk_1` (`user_id`),
-  KEY `fk_2` (`shopkeeper_id`),
-  CONSTRAINT `fk_1` FOREIGN KEY (`user_id`) REFERENCES `nexkiranadb`.`users` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_2` FOREIGN KEY (`shopkeeper_id`) REFERENCES `nexkiranadb`.`shopkeepers` (`id`) ON DELETE CASCADE
+  KEY `fk_2` (`shopkeeper_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2220001;
+
+-- NOW import your data file safely
+-- Go to Import tab → nexkiranadb.orders.0000000010000.sql → GO
+
+COMMIT;
+SET FOREIGN_KEY_CHECKS = 1;
+SET AUTOCOMMIT = 1;
