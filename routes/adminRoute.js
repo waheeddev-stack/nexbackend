@@ -1092,4 +1092,114 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
 });
 */
 
+// Get pending payments
+adminRouter.get("/pending-payments", verifyAdminToken, async (req, res) => {
+  try {
+    const [payments] = await pool.query(`
+      SELECT 
+        bp.*,
+        s.name as shopkeeper_name,
+        s.shop_name,
+        s.email as shopkeeper_email,
+        s.shop_scale
+      FROM billing_payments bp
+      JOIN shopkeepers s ON bp.shopkeeper_id = s.id
+      WHERE bp.status = 'pending'
+      ORDER BY bp.payment_date DESC
+    `);
+    
+    res.json({ success: true, data: payments });
+  } catch (err) {
+    console.error("Get pending payments error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Approve/reject payment
+adminRouter.patch("/payments/:id/status", verifyAdminToken, async (req, res) => {
+  try {
+    const paymentId = req.params.id;
+    const { status, notes } = req.body; // 'approved' or 'rejected'
+    
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Status must be 'approved' or 'rejected'" 
+      });
+    }
+    
+    // Update payment status
+    const [result] = await pool.query(
+      "UPDATE billing_payments SET status = ?, approved_by = ?, approved_at = NOW(), notes = ? WHERE id = ?",
+      [status, req.admin.id, notes || '', paymentId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Payment not found" });
+    }
+    
+    // If approved, update shopkeeper subscription
+    if (status === 'approved') {
+      const [payment] = await pool.query(
+        "SELECT shopkeeper_id FROM billing_payments WHERE id = ?",
+        [paymentId]
+      );
+      
+      if (payment.length > 0) {
+        const shopkeeperId = payment[0].shopkeeper_id;
+        const nextPaymentDue = new Date();
+        nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // Next 15 days
+        
+        await pool.query(
+          "UPDATE shopkeepers SET subscription_status = 'active', last_payment_date = NOW(), next_payment_due = ? WHERE id = ?",
+          [nextPaymentDue, shopkeeperId]
+        );
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `Payment ${status} successfully`
+    });
+  } catch (err) {
+    console.error("Update payment status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get payment statistics
+adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
+  try {
+    const [stats] = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_payments,
+        COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected_payments,
+        SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as total_revenue,
+        SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) as pending_amount
+      FROM billing_payments
+    `);
+    
+    const [subscriptionStats] = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN subscription_status = 'trial' THEN 1 END) as trial_users,
+        COUNT(CASE WHEN subscription_status = 'active' THEN 1 END) as active_users,
+        COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
+        COUNT(CASE WHEN subscription_status = 'suspended' THEN 1 END) as suspended_users
+      FROM shopkeepers
+    `);
+    
+    res.json({ 
+      success: true, 
+      data: {
+        payments: stats[0],
+        subscriptions: subscriptionStats[0]
+      }
+    });
+  } catch (err) {
+    console.error("Get payment stats error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default adminRouter;

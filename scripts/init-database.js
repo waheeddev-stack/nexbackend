@@ -55,14 +55,36 @@ const initDatabase = async () => {
         shop_name VARCHAR(512),
         img VARCHAR(512),
         is_verified BIGINT(20) DEFAULT 0,
-        shop_scale ENUM('small', 'medium', 'large') DEFAULT 'small',
+        shop_scale ENUM('small', 'medium', 'large') DEFAULT NULL,
         latitude DOUBLE,
         longitude VARCHAR(512),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         expo_push_token VARCHAR(512),
         upi_id VARCHAR(512),
         upi_qr VARCHAR(512),
-        refresh_token VARCHAR(512)
+        refresh_token VARCHAR(512),
+        trial_ends_at DATETIME DEFAULT NULL,
+        subscription_status ENUM('trial', 'active', 'overdue', 'suspended') DEFAULT 'trial',
+        last_payment_date DATETIME DEFAULT NULL,
+        next_payment_due DATETIME DEFAULT NULL
+      )
+    `);
+    
+    // Create billing_payments table
+    console.log('📋 Creating billing_payments table...');
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS billing_payments (
+        id BIGINT(20) NOT NULL PRIMARY KEY,
+        shopkeeper_id BIGINT(20) NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        payment_method VARCHAR(50),
+        transaction_id VARCHAR(255),
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+        approved_by BIGINT(20) DEFAULT NULL,
+        approved_at DATETIME DEFAULT NULL,
+        notes TEXT,
+        FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id) ON DELETE CASCADE
       )
     `);
 

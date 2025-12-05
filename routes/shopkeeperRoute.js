@@ -892,4 +892,137 @@ shopkeeperRouter.get("/earnings", verifyToken, verifyShopkeeperStatus, async (re
 });
 */
 
+// Update shop scale
+shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.params.id;
+    const { shop_scale } = req.body;
+    
+    if (!['small', 'medium', 'large'].includes(shop_scale)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid shop scale. Must be small, medium, or large" 
+      });
+    }
+    
+    // Set trial period for new scale selection
+    const trialEndDate = new Date();
+    trialEndDate.setDate(trialEndDate.getDate() + 90);
+    
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET shop_scale = ?, trial_ends_at = ?, subscription_status = 'trial' WHERE id = ?",
+      [shop_scale, trialEndDate, shopkeeperId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `Shop scale updated to ${shop_scale}`,
+      trial_ends_at: trialEndDate
+    });
+  } catch (err) {
+    console.error("Update shop scale error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Get subscription status
+shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
+  try {
+    const [shopkeeper] = await pool.query(
+      "SELECT shop_scale, trial_ends_at, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
+      [req.user.id]
+    );
+    
+    if (shopkeeper.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+    
+    const data = shopkeeper[0];
+    const now = new Date();
+    const trialEndsAt = new Date(data.trial_ends_at);
+    
+    // Calculate days remaining
+    let daysRemaining = 0;
+    let status = data.subscription_status;
+    
+    if (status === 'trial' && trialEndsAt > now) {
+      daysRemaining = Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24));
+    } else if (status === 'trial' && trialEndsAt <= now) {
+      // Trial expired, update status
+      status = 'overdue';
+      const nextPaymentDue = new Date(trialEndsAt);
+      nextPaymentDue.setDate(nextPaymentDue.getDate() + 17); // 15 + 2 grace days
+      
+      await pool.query(
+        "UPDATE shopkeepers SET subscription_status = 'overdue', next_payment_due = ? WHERE id = ?",
+        [nextPaymentDue, req.user.id]
+      );
+    }
+    
+    res.json({ 
+      success: true, 
+      data: {
+        ...data,
+        subscription_status: status,
+        days_remaining: daysRemaining,
+        is_trial_active: status === 'trial' && daysRemaining > 0
+      }
+    });
+  } catch (err) {
+    console.error("Get subscription status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Submit payment
+shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
+  try {
+    const { amount, payment_method, transaction_id, notes } = req.body;
+    
+    if (!amount || !payment_method || !transaction_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Amount, payment method, and transaction ID are required" 
+      });
+    }
+    
+    // Generate payment ID
+    const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM billing_payments");
+    const paymentId = maxIdResult[0].next_id;
+    
+    await pool.query(
+      "INSERT INTO billing_payments (id, shopkeeper_id, amount, payment_method, transaction_id, notes) VALUES (?, ?, ?, ?, ?, ?)",
+      [paymentId, req.user.id, amount, payment_method, transaction_id, notes || '']
+    );
+    
+    res.json({ 
+      success: true, 
+      message: "Payment submitted successfully. It will be reviewed by admin.",
+      payment_id: paymentId
+    });
+  } catch (err) {
+    console.error("Submit payment error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get payment history
+shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
+  try {
+    const [payments] = await pool.query(
+      "SELECT * FROM billing_payments WHERE shopkeeper_id = ? ORDER BY payment_date DESC",
+      [req.user.id]
+    );
+    
+    res.json({ success: true, data: payments });
+  } catch (err) {
+    console.error("Get payment history error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default shopkeeperRouter;
