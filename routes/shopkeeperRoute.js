@@ -656,13 +656,42 @@ shopkeeperRouter.delete("/products/:id", verifyToken, verifyShopkeeperStatus, as
 });
 
 // --- Access global products (shopkeeper) ---
-// List all global products (read-only for shopkeepers)
+// List all global products (read-only for shopkeepers) with tier-based pricing
 shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      "SELECT id, name, price, category, description, image, created_at FROM global_products ORDER BY created_at DESC"
+    // Get shopkeeper's tier
+    const [shopkeeper] = await pool.query(
+      "SELECT shop_tier FROM shopkeepers WHERE id = ?",
+      [req.user.id]
     );
-    res.json({ success: true, products: rows });
+    
+    if (shopkeeper.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+    
+    const shopTier = shopkeeper[0].shop_tier || 'basic';
+    const priceColumn = `${shopTier}_price`;
+    
+    const [rows] = await pool.query(`
+      SELECT 
+        id, 
+        name, 
+        ${priceColumn} as price,
+        category, 
+        description, 
+        image, 
+        brand,
+        barcode,
+        created_at 
+      FROM global_products 
+      ORDER BY created_at DESC
+    `);
+    
+    res.json({ 
+      success: true, 
+      products: rows,
+      shopTier: shopTier
+    });
   } catch (err) {
     console.error("Get global products error:", err);
     res.status(500).json({ success: false, message: "Server error" });

@@ -390,7 +390,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, price, category, description, image, created_at FROM global_products ORDER BY created_at DESC"
+      "SELECT id, name, basic_price, premium_price, enterprise_price, category, description, image, brand, barcode, created_at FROM global_products ORDER BY created_at DESC"
     );
     res.json({ success: true, data: rows });
   } catch (err) {
@@ -404,10 +404,24 @@ adminRouter.post(
   verifyAdminToken,
   upload.single("image"),
   async (req, res) => {
-    const { name, price, category, description } = req.body;
-    if (!name || !price) {
-      return res.status(400).json({ success: false, message: "Name and price are required" });
+    const { 
+      name, 
+      basic_price, 
+      premium_price, 
+      enterprise_price, 
+      category, 
+      description, 
+      brand, 
+      barcode 
+    } = req.body;
+    
+    if (!name || !basic_price) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Name and basic price are required" 
+      });
     }
+    
     let imageUrl = null;
     try {
       if (req.file) {
@@ -424,8 +438,18 @@ adminRouter.post(
       }
 
       const [dbResult] = await pool.query(
-        "INSERT INTO global_products (name, price, category, description, image) VALUES (?, ?, ?, ?, ?)",
-        [name, price, category || null, description || "", imageUrl]
+        "INSERT INTO global_products (name, basic_price, premium_price, enterprise_price, category, description, image, brand, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          name, 
+          basic_price, 
+          premium_price || basic_price, 
+          enterprise_price || basic_price, 
+          category || null, 
+          description || "", 
+          imageUrl,
+          brand || null,
+          barcode || null
+        ]
       );
 
       res.status(201).json({
@@ -433,13 +457,18 @@ adminRouter.post(
         data: {
           id: dbResult.insertId,
           name,
-          price,
+          basic_price,
+          premium_price: premium_price || basic_price,
+          enterprise_price: enterprise_price || basic_price,
           category: category || null,
           description,
           image: imageUrl,
+          brand: brand || null,
+          barcode: barcode || null,
         },
       });
     } catch (err) {
+      console.error("Create global product error:", err);
       res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
@@ -461,7 +490,16 @@ adminRouter.put(
       });
     }
 
-    const { name, price, category, description } = req.body;
+    const { 
+      name, 
+      basic_price, 
+      premium_price, 
+      enterprise_price, 
+      category, 
+      description, 
+      brand, 
+      barcode 
+    } = req.body;
     let imageUrl = req.body.image || null;
     
     try {
@@ -479,8 +517,19 @@ adminRouter.put(
       }
 
       const [dbResult] = await pool.query(
-        "UPDATE global_products SET name=?, price=?, category=?, description=?, image=? WHERE id=?",
-        [name, price, category || null, description || "", imageUrl, productId]
+        "UPDATE global_products SET name=?, basic_price=?, premium_price=?, enterprise_price=?, category=?, description=?, image=?, brand=?, barcode=? WHERE id=?",
+        [
+          name, 
+          basic_price, 
+          premium_price, 
+          enterprise_price, 
+          category || null, 
+          description || "", 
+          imageUrl, 
+          brand || null, 
+          barcode || null, 
+          productId
+        ]
       );
 
       if (dbResult.affectedRows === 0) {
@@ -525,7 +574,7 @@ adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) =>
 adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   try {
     const [products] = await pool.query(`
-      SELECT p.*, s.shop_name, s.name as shopkeeper_name 
+      SELECT p.*, s.shop_name, s.name as shopkeeper_name, s.shop_tier
       FROM products p 
       LEFT JOIN shopkeepers s ON p.shop_id = s.id 
       ORDER BY p.created_at DESC
@@ -534,6 +583,79 @@ adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   } catch (err) {
     console.error("Get products error:", err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/admin/global-products/pricing/:shopTier - Get global products with tier-specific pricing
+adminRouter.get("/global-products/pricing/:shopTier", verifyAdminToken, async (req, res) => {
+  try {
+    const { shopTier } = req.params;
+    
+    if (!['basic', 'premium', 'enterprise'].includes(shopTier)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid shop tier. Must be basic, premium, or enterprise" 
+      });
+    }
+
+    const priceColumn = `${shopTier}_price`;
+    
+    const [rows] = await pool.query(`
+      SELECT 
+        id, 
+        name, 
+        ${priceColumn} as price,
+        basic_price,
+        premium_price, 
+        enterprise_price,
+        category, 
+        description, 
+        image, 
+        brand, 
+        barcode, 
+        created_at 
+      FROM global_products 
+      ORDER BY created_at DESC
+    `);
+    
+    res.json({ success: true, data: rows, shopTier });
+  } catch (err) {
+    console.error("Get tiered pricing error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// PUT /api/admin/shopkeepers/:id/tier - Update shopkeeper tier
+adminRouter.put("/shopkeepers/:id/tier", verifyAdminToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.params.id;
+    const { shop_tier } = req.body;
+    
+    if (!['basic', 'premium', 'enterprise'].includes(shop_tier)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid shop tier. Must be basic, premium, or enterprise" 
+      });
+    }
+    
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET shop_tier = ? WHERE id = ?",
+      [shop_tier, shopkeeperId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `Shopkeeper tier updated to ${shop_tier}`,
+      shopkeeperId,
+      shop_tier
+    });
+  } catch (err) {
+    console.error("Update shopkeeper tier error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 

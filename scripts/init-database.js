@@ -55,6 +55,7 @@ const initDatabase = async () => {
         shop_name VARCHAR(100),
         img VARCHAR(255),
         verification_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        shop_tier ENUM('basic', 'premium', 'enterprise') DEFAULT 'basic',
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -83,6 +84,9 @@ const initDatabase = async () => {
         category VARCHAR(50),
         brand VARCHAR(50),
         barcode VARCHAR(50),
+        basic_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        premium_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        enterprise_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
