@@ -11,12 +11,30 @@ import streamifier from "streamifier";
 
 const adminRouter = express.Router();
 
-// Fetch all shopkeepers (protected)
+// Fetch all shopkeepers (protected) with optional status filtering
 adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers WHERE id IS NOT NULL ORDER BY created_at DESC"
-    );
+    const { status } = req.query; // Get status filter from query params
+    
+    let whereClause = "WHERE id IS NOT NULL";
+    let queryParams = [];
+    
+    // Add status filtering based on query parameter
+    if (status && status !== 'all') {
+      if (status === 'pending') {
+        whereClause += " AND (is_verified IS NULL OR is_verified = '')";
+      } else if (status === 'approved') {
+        whereClause += " AND is_verified = ?";
+        queryParams.push(1);
+      } else if (status === 'rejected') {
+        whereClause += " AND is_verified = ?";
+        queryParams.push(0);
+      }
+    }
+    
+    const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
+    
+    const [rows] = await pool.query(query, queryParams);
     
     // Map is_verified to verification_status for frontend compatibility and ensure valid IDs
     const mappedRows = rows
@@ -24,12 +42,63 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
       .map(row => ({
         ...row,
         id: parseInt(row.id), // Ensure ID is a number
-        verification_status: row.is_verified === 1 ? 'approved' : 'pending'
+        verification_status: row.is_verified === 1 ? 'approved' : 
+                           row.is_verified === 0 ? 'rejected' : 'pending'
       }));
     
-    res.json({ success: true, data: mappedRows });
+    // Add summary statistics for the admin panel
+    const [stats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
+        COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
+        COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
+      FROM shopkeepers 
+      WHERE id IS NOT NULL
+    `);
+    
+    res.json({ 
+      success: true, 
+      data: mappedRows,
+      stats: stats[0],
+      filter: status || 'all'
+    });
   } catch (err) {
     console.error("Get shopkeepers error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Get shopkeeper statistics for admin panel tabs
+adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
+  try {
+    const [stats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
+        COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
+        COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
+      FROM shopkeepers 
+      WHERE id IS NOT NULL
+    `);
+    
+    const [recentActivity] = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as new_this_week,
+        COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_this_month
+      FROM shopkeepers 
+      WHERE id IS NOT NULL
+    `);
+    
+    res.json({ 
+      success: true, 
+      data: {
+        ...stats[0],
+        ...recentActivity[0]
+      }
+    });
+  } catch (err) {
+    console.error("Get shopkeeper stats error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
@@ -111,36 +180,17 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Try to update verification status - compatible with existing database
-    try {
-      // First try with verification_status column
-      const verification_status = action === "approve" ? "verified" : "rejected";
-      
-      try {
-        const [result] = await pool.query(
-          "UPDATE shopkeepers SET verification_status = ? WHERE id = ?",
-          [verification_status, shopkeeperId]
-        );
-        
-        if (result.affectedRows === 0) {
-          return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
-        }
-      } catch (columnError) {
-        // If verification_status column doesn't exist, try is_verified
-        console.log("Trying is_verified column...");
-        const [result] = await pool.query(
-          "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
-          [is_verified, shopkeeperId]
-        );
-        
-        if (result.affectedRows === 0) {
-          return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
-        }
-      }
-    } catch (dbError) {
-      console.error("Database update error:", dbError);
-      return res.status(500).json({ success: false, message: "Database schema incompatible" });
+    // Update verification status using is_verified column
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
+      [is_verified, parseInt(shopkeeperId)]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
     }
+    
+    console.log(`✅ Updated shopkeeper ${shopkeeperId} verification status to: ${is_verified}`);
 
     // Get updated shopkeeper details for response
     const [shopkeeper] = await pool.query(
@@ -165,33 +215,52 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
 adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
-    const { status } = req.body; // "1" for verified, "0" for not verified
+    const { status } = req.body; // "approved", "rejected", or "pending"
+    
+    // Validate shopkeeper ID
+    if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid shopkeeper ID. Please refresh the page and try again." 
+      });
+    }
     
     console.log(`Simple verification: shopkeeper ${shopkeeperId}, status: ${status}`);
     
-    const is_verified = status === "verified" || status === "1" || status === 1 ? 1 : 0;
+    // Map status to is_verified value
+    let is_verified;
+    if (status === "approved" || status === "verified" || status === "1" || status === 1) {
+      is_verified = 1;
+    } else if (status === "rejected" || status === "0" || status === 0) {
+      is_verified = 0;
+    } else {
+      is_verified = null; // pending
+    }
     
     // Check if shopkeeper exists first
     const [existingShopkeeper] = await pool.query(
       "SELECT id, name FROM shopkeepers WHERE id = ?",
-      [shopkeeperId]
+      [parseInt(shopkeeperId)]
     );
     
     if (existingShopkeeper.length === 0) {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
     
-    // Simple update without complex error handling
+    // Update verification status
     await pool.query(
       "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
-      [is_verified, shopkeeperId]
+      [is_verified, parseInt(shopkeeperId)]
     );
+    
+    const statusText = is_verified === 1 ? 'approved' : is_verified === 0 ? 'rejected' : 'pending';
     
     res.json({ 
       success: true, 
-      message: `Shopkeeper ${is_verified ? 'verified' : 'unverified'} successfully`,
-      shopkeeperId,
-      is_verified
+      message: `Shopkeeper ${statusText} successfully`,
+      shopkeeperId: parseInt(shopkeeperId),
+      is_verified,
+      verification_status: statusText
     });
     
   } catch (err) {
