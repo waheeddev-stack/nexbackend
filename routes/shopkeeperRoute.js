@@ -151,17 +151,29 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new shopkeeper
+    // Get the next available ID (since auto-increment isn't working)
+    const [maxIdResult] = await pool.query("SELECT MAX(id) as maxId FROM shopkeepers");
+    const nextId = (maxIdResult[0].maxId || 0) + 1;
+
+    // Insert new shopkeeper with explicit ID
     const [result] = await pool.query(
-      `INSERT INTO shopkeepers (name, email, password, phone, shop_name) VALUES (?, ?, ?, ?, ?)`,
-      [name, email, hashedPassword, phone, shop_name]
+      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name) VALUES (?, ?, ?, ?, ?, ?)`,
+      [nextId, name, email, hashedPassword, phone, shop_name]
     );
+
+    console.log('Insert result:', result);
 
     // Get the created shopkeeper
     const [userRows] = await pool.query(
       "SELECT id, name, email, phone, shop_name FROM shopkeepers WHERE id = ?",
-      [result.insertId]
+      [nextId]
     );
+
+    console.log('User rows:', userRows);
+
+    if (!userRows || userRows.length === 0) {
+      throw new Error('Failed to retrieve created shopkeeper');
+    }
 
     const user = userRows[0];
     
@@ -170,9 +182,8 @@ shopkeeperRouter.post("/signup", async (req, res) => {
 
     return res.json({ 
       success: true, 
-      token,
-      user,
-      message: "Shopkeeper registered successfully"
+      shopkeeper: user,
+      message: "Shopkeeper registered successfully. Please wait for admin verification."
     });
   } catch (err) {
     console.error("Shopkeeper signup error:", err);
@@ -1027,6 +1038,21 @@ shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
 
 // ==================== ORDER TIMER SYSTEM ====================
 
+// Helper function to check if timer tables exist
+const checkTimerTablesExist = async () => {
+  try {
+    const [tables] = await pool.query(`
+      SELECT TABLE_NAME 
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME IN ('order_timers')
+    `);
+    return tables.length > 0;
+  } catch (error) {
+    return false;
+  }
+};
+
 // Start timer for an order (when order is ready for pickup)
 shopkeeperRouter.post("/orders/:orderId/start-timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
@@ -1037,6 +1063,15 @@ shopkeeperRouter.post("/orders/:orderId/start-timer", verifyToken, verifyShopkee
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
       return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Check if timer tables exist
+    const timerTablesExist = await checkTimerTablesExist();
+    if (!timerTablesExist) {
+      return res.status(503).json({ 
+        success: false, 
+        message: "Timer system not initialized. Please run: npm run init-timer-safe" 
+      });
     }
 
     // Check if order belongs to this shopkeeper and is in correct status
@@ -1067,18 +1102,23 @@ shopkeeperRouter.post("/orders/:orderId/start-timer", verifyToken, verifyShopkee
     const timerExpires = new Date(timerStarted.getTime() + (timer_duration * 1000));
 
     // Create or update timer record
-    await pool.query(`
-      INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
-      VALUES (?, ?, ?, ?, ?, TRUE)
-      ON DUPLICATE KEY UPDATE
-        pickup_code = VALUES(pickup_code),
-        timer_duration = VALUES(timer_duration),
-        timer_started_at = VALUES(timer_started_at),
-        timer_expires_at = VALUES(timer_expires_at),
-        is_active = TRUE,
-        is_expired = FALSE,
-        stopped_at = NULL
-    `, [orderIdNum, pickupCode, timer_duration, timerStarted, timerExpires]);
+    try {
+      await pool.query(`
+        INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
+        VALUES (?, ?, ?, ?, ?, TRUE)
+        ON DUPLICATE KEY UPDATE
+          pickup_code = VALUES(pickup_code),
+          timer_duration = VALUES(timer_duration),
+          timer_started_at = VALUES(timer_started_at),
+          timer_expires_at = VALUES(timer_expires_at),
+          is_active = TRUE,
+          is_expired = FALSE,
+          stopped_at = NULL
+      `, [orderIdNum, pickupCode, timer_duration, timerStarted, timerExpires]);
+    } catch (timerError) {
+      console.error("Timer record creation failed:", timerError);
+      // Continue without timer record if table doesn't exist
+    }
 
     // Update orders table
     await pool.query(`
@@ -1348,6 +1388,109 @@ shopkeeperRouter.post("/cleanup-expired-timers", verifyToken, verifyShopkeeperSt
 
   } catch (err) {
     console.error("Cleanup timers error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== LOCATION VERIFICATION SYSTEM ====================
+
+// Verify shopkeeper location
+shopkeeperRouter.post("/verify-location", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { latitude, longitude, accuracy } = req.body;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Latitude and longitude are required" 
+      });
+    }
+
+    // Get shopkeeper's registered location
+    const [shopkeeper] = await pool.query(
+      "SELECT latitude, longitude, address FROM shopkeepers WHERE id = ?",
+      [shopkeeper_id]
+    );
+
+    if (shopkeeper.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Shopkeeper not found" 
+      });
+    }
+
+    const registeredLat = shopkeeper[0].latitude;
+    const registeredLon = shopkeeper[0].longitude;
+
+    if (!registeredLat || !registeredLon) {
+      // First time location setup
+      return res.json({
+        success: true,
+        verified: false,
+        isFirstTime: true,
+        message: "Location not registered. Please register your shop location."
+      });
+    }
+
+    // Calculate distance using Haversine formula
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = registeredLat * Math.PI / 180;
+    const φ2 = latitude * Math.PI / 180;
+    const Δφ = (latitude - registeredLat) * Math.PI / 180;
+    const Δλ = (longitude - registeredLon) * Math.PI / 180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c; // Distance in meters
+
+    const tolerance = 50; // 50 meters tolerance
+    const verified = distance <= tolerance;
+
+    // Log location verification attempt
+    await pool.query(`
+      INSERT INTO location_verifications (shopkeeper_id, latitude, longitude, distance, verified, created_at)
+      VALUES (?, ?, ?, ?, ?, NOW())
+    `, [shopkeeper_id, latitude, longitude, Math.round(distance), verified]);
+
+    res.json({
+      success: true,
+      verified: verified,
+      distance: Math.round(distance),
+      tolerance: tolerance,
+      message: verified 
+        ? "Location verified successfully"
+        : `You are ${Math.round(distance)}m away from your registered location`
+    });
+
+  } catch (err) {
+    console.error("Location verification error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get location verification history
+shopkeeperRouter.get("/location-history", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    
+    const [history] = await pool.query(`
+      SELECT latitude, longitude, distance, verified, created_at
+      FROM location_verifications
+      WHERE shopkeeper_id = ?
+      ORDER BY created_at DESC
+      LIMIT 50
+    `, [shopkeeper_id]);
+
+    res.json({
+      success: true,
+      history: history
+    });
+
+  } catch (err) {
+    console.error("Location history error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

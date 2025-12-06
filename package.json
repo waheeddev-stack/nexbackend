@@ -10,7 +10,19 @@
     "test-payment-info": "node scripts/test-payment-info.js",
     "test-order-api": "node scripts/test-order-api.js",
     "init-timer-tables": "node scripts/init-timer-tables.js",
-    "order-report": "node scripts/generate-order-report.js"
+    "order-report": "node scripts/generate-order-report.js",
+    "check-orders-schema": "node scripts/check-orders-schema.js",
+    "init-timer-safe": "node scripts/init-timer-tables-safe.js",
+    "test-comprehensive": "node scripts/comprehensive-order-test.js",
+    "test-timer-system": "node scripts/test-timer-system.js",
+    "test-frontend-integration": "node scripts/test-frontend-integration.js",
+    "quick-test": "node scripts/quick-system-test.js",
+    "verify-shopkeeper": "node scripts/verify-test-shopkeeper.js",
+    "fix-shopkeeper": "node scripts/fix-shopkeeper-data.js",
+    "create-test-orders": "node scripts/create-test-orders.js",
+    "test-working": "node scripts/working-features-test.js",
+    "debug-jwt": "node scripts/debug-jwt-shopkeeper.js",
+    "fix-id": "node scripts/fix-shopkeeper-id.js"
   },
   "keywords": [],
   "author": "",
@@ -29,7 +41,8 @@
     "mysql2": "^3.15.3",
     "node-fetch": "^3.3.2",
     "socket.io": "^4.8.1",
-    "streamifier": "^0.1.1"
+    "streamifier": "^0.1.1",
+    "validator": "^13.15.23"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"

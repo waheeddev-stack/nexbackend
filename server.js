@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
 
@@ -11,93 +10,61 @@ import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
 import db from "./config/db.js";
 
-dotenv.config();
+// Import security and configuration
+import { getConfig, validateEnvironment } from "./config/environment.js";
+import securityMiddleware from "./middleware/security.js";
+import { createRateLimiter } from "./middleware/validation.js";
 
-// Validate required environment variables
-const requiredEnvVars = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASS', 'DB_NAME'];
-const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
-
-if (missingEnvVars.length > 0) {
-  console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
+// Validate environment on startup
+try {
+  validateEnvironment();
+  console.log('✅ Environment validation passed');
+} catch (error) {
+  console.error('❌ Environment validation failed:', error.message);
   process.exit(1);
 }
 
-if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 16) {
-  console.error('❌ JWT_SECRET must be at least 16 characters long for security');
-  process.exit(1);
-}
-
-if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
-  console.warn('⚠️ JWT_SECRET should be at least 32 characters for better security');
-}
+const config = getConfig();
 
 console.log('🚀 Starting NexKirana Backend Server...');
-if (process.env.NODE_ENV !== 'production') {
+if (config.NODE_ENV !== 'production') {
   console.log('Environment Variables Check:');
-  console.log('- NODE_ENV:', process.env.NODE_ENV);
-  console.log('- PORT:', process.env.PORT);
-  console.log('- DB_HOST:', process.env.DB_HOST ? 'SET' : 'NOT SET');
-  console.log('- DB_SSL:', process.env.DB_SSL);
-  console.log('- JWT_SECRET:', process.env.JWT_SECRET ? 'SET' : 'NOT SET');
+  console.log('- NODE_ENV:', config.NODE_ENV);
+  console.log('- PORT:', config.PORT);
+  console.log('- DB_HOST:', config.database.host ? 'SET' : 'NOT SET');
+  console.log('- DB_SSL:', config.database.ssl);
+  console.log('- JWT_SECRET:', config.JWT_SECRET ? 'SET' : 'NOT SET');
 }
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? ["https://nexadminpanel.vercel.app", "https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app", "exp://", "exps://"]
-      : true, // Allow all origins in development
-    methods: ["GET", "POST", "PATCH", "DELETE"],
-    credentials: true
-  },
+  cors: securityMiddleware.corsConfig,
 });
 
-// Middleware
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? (origin, callback) => {
-        // Allow admin panel domains and mobile apps
-        const allowedOrigins = ["https://nexadminpanel.vercel.app", "https://nexkirana-admin.vercel.app", "https://nexkirana.vercel.app"];
-        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('exp://') || origin.startsWith('exps://')) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      }
-    : true, // Allow all origins in development
-  credentials: true,
-  methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+// Trust proxy (for rate limiting and IP detection)
+app.set('trust proxy', 1);
 
-// Serve static files (for favicon and other assets)
-app.use(express.static('public'));
+// Security middleware (must be first)
+app.use(securityMiddleware.securityHeaders);
+app.use(securityMiddleware.requestSizeLimiter);
 
+// CORS middleware
+app.use(cors(securityMiddleware.corsConfig));
+
+// Rate limiting (apply to all routes)
+app.use(createRateLimiter(15 * 60 * 1000, 1000)); // 1000 requests per 15 minutes
+
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Security headers
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.removeHeader('X-Powered-By');
-  next();
-});
+// Request sanitization and logging
+app.use(securityMiddleware.sanitizeRequest);
+app.use(securityMiddleware.requestLogger);
 
-// Request logging middleware (always enabled for debugging)
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`📡 ${timestamp} - ${req.method} ${req.path}`);
-  console.log(`📡 Headers:`, req.headers);
-  console.log(`📡 Query:`, req.query);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log(`📡 Body:`, req.body);
-  }
-  next();
-});
+// Serve static files (for favicon and other assets)
+app.use(express.static('public'));
 
 // Attach io instance to requests (for routes to use)
 app.use((req, res, next) => {
@@ -376,36 +343,13 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/notifications", notificationRouter);
 
 // 404 handler for unmatched routes (MUST be last)
-app.use((req, res, next) => {
-  res.status(404).json({
-    error: 'Route not found',
-    path: req.originalUrl,
-    method: req.method,
-    availableRoutes: [
-      'GET /',
-      'GET /health',
-      'GET /api',
-      'POST /api/user/signin',
-      'POST /api/user/signup',
-      'POST /api/shopkeeper/signin',
-      'POST /api/admin/login'
-    ],
-    timestamp: new Date().toISOString()
-  });
-});
+app.use(securityMiddleware.notFoundHandler);
 
 // Global error handler (MUST be last)
-app.use((error, req, res, next) => {
-  console.error('Global error handler:', error);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: error.message,
-    timestamp: new Date().toISOString()
-  });
-});
+app.use(securityMiddleware.errorHandler);
 
 // Server start
-const PORT = process.env.PORT || 5000;
+const PORT = config.PORT;
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server successfully started on port ${PORT}`);

@@ -62,44 +62,38 @@ userrouter.get("/nearby-shops", async (req, res) => {
   }
 });
 
+import { validate, validateUserRegistration, createRateLimiter } from "../middleware/validation.js";
+
+// Rate limiting for auth endpoints
+const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
+
 // REGISTER
-userrouter.post("/signup", async (req, res) => {
+userrouter.post("/signup", authRateLimit, validate(validateUserRegistration), async (req, res) => {
   try {
-    const { name, email, password } = req.body;
-
-    // Validate inputs
-    if (!name || !email || !password) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ success: false, message: "Invalid email format" });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
-    }
+    const validatedData = req.validatedData;
 
     // Check if user already exists
-    const [existingUser] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    const [existingUser] = await pool.query("SELECT * FROM users WHERE email = ?", [validatedData.email]);
     if (existingUser.length > 0) {
       return res.status(400).json({ success: false, message: "User already exists" });
     }
 
     // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(validatedData.password, 12); // Increased rounds for better security
 
-    // Insert new user into database
+    // Get the next available ID (since auto-increment isn't working)
+    const [maxIdResult] = await pool.query("SELECT MAX(id) as maxId FROM users");
+    const nextId = (maxIdResult[0].maxId || 0) + 1;
+
+    // Insert new user into database with explicit ID
     const [result] = await pool.query(
-      "INSERT INTO users (name, email, password) VALUES (?, ?, ?)",
-      [name, email, hashedPassword]
+      "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
+      [nextId, validatedData.name, validatedData.email, hashedPassword]
     );
 
     // Fetch the newly created user
-  const [userRows] = await pool.query("SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?", [result.insertId]);
-  const user = userRows[0];
+    const [userRows] = await pool.query("SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?", [nextId]);
+    const user = userRows[0];
 
   return res.json({ success: true, user, message: "User registered successfully" });
   } catch (err) {
@@ -109,9 +103,14 @@ userrouter.post("/signup", async (req, res) => {
 });
 
 // LOGIN
-userrouter.post("/signin", async (req, res) => {
+userrouter.post("/signin", authRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    // Basic validation
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "Email and password are required" });
+    }
 
     const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
     if (user.length === 0)
@@ -222,7 +221,7 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
        JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN products p ON oi.product_id = p.id
        WHERE o.user_id = ?
-       GROUP BY o.id
+       GROUP BY o.id, o.status, o.total_amount, o.created_at, o.delivery_address
        ORDER BY o.created_at DESC`,
       [user_id]
     );
@@ -614,6 +613,49 @@ userrouter.get("/orders/:orderId", verifyToken, async (req, res) => {
 
   } catch (err) {
     console.error("Get order details error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get shop location for customer
+userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
+  try {
+    const { shopId } = req.params;
+
+    const [shop] = await pool.query(`
+      SELECT id, shop_name, name as shopkeeper_name, address, 
+             latitude, longitude, phone, created_at
+      FROM shopkeepers 
+      WHERE id = ? AND is_verified = 1
+    `, [shopId]);
+
+    if (shop.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Shop not found or not verified" 
+      });
+    }
+
+    const shopData = shop[0];
+    
+    res.json({ 
+      success: true, 
+      shop: {
+        id: shopData.id,
+        name: shopData.shop_name,
+        shopkeeper: shopData.shopkeeper_name,
+        address: shopData.address,
+        location: {
+          latitude: shopData.latitude,
+          longitude: shopData.longitude
+        },
+        phone: shopData.phone,
+        verified: true
+      }
+    });
+
+  } catch (err) {
+    console.error("Get shop location error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

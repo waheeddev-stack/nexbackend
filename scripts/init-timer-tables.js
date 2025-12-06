@@ -12,22 +12,73 @@ async function initializeTimerTables() {
   console.log('🔧 Initializing Order Timer Tables...\n');
 
   try {
-    // Read the SQL schema file
+    // First check existing orders table structure
+    console.log('1. 🔍 Checking existing orders table...');
+    
+    const [ordersTable] = await pool.query(`
+      SELECT TABLE_NAME 
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'orders'
+    `);
+
+    if (ordersTable.length === 0) {
+      console.log('   ⚠️  Orders table does not exist, creating it...');
+    } else {
+      console.log('   ✅ Orders table exists');
+    }
+
+    // Get the ID column type from orders table
+    const [idColumn] = await pool.query(`
+      SELECT DATA_TYPE, COLUMN_TYPE
+      FROM information_schema.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'orders' 
+      AND COLUMN_NAME = 'id'
+    `);
+
+    let idType = 'INT';
+    if (idColumn.length > 0) {
+      idType = idColumn[0].COLUMN_TYPE || 'INT';
+      console.log(`   📋 Orders.id column type: ${idType}`);
+    }
+
+    console.log('\n2. 🔧 Creating/updating timer tables...');
+    console.log('   📋 Creating order_timers table with columns:');
+    console.log('      - pickup_code (6-digit verification code)');
+    console.log('      - timer_duration (default 420 seconds = 7 minutes)');
+    console.log('      - timer_started_at (when timer begins)');
+    console.log('      - timer_expires_at (when timer ends)');
+
+    // Execute schema statements one by one with better error handling
     const schemaPath = path.join(__dirname, '../schema/order_timers.sql');
     const schema = fs.readFileSync(schemaPath, 'utf8');
 
-    // Split by semicolon and execute each statement
-    const statements = schema.split(';').filter(stmt => stmt.trim().length > 0);
+    // Split by semicolon and filter out empty statements
+    const statements = schema
+      .split(';')
+      .map(stmt => stmt.trim())
+      .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
 
-    for (const statement of statements) {
-      const trimmedStatement = statement.trim();
-      if (trimmedStatement) {
-        console.log(`Executing: ${trimmedStatement.substring(0, 50)}...`);
-        await pool.query(trimmedStatement);
+    for (let i = 0; i < statements.length; i++) {
+      const statement = statements[i];
+      try {
+        console.log(`   Executing statement ${i + 1}/${statements.length}...`);
+        await pool.query(statement);
+        console.log(`   ✅ Statement ${i + 1} completed`);
+      } catch (error) {
+        if (error.message.includes('already exists') || 
+            error.message.includes('Duplicate column name') ||
+            error.message.includes('Duplicate key name')) {
+          console.log(`   ⚠️  Statement ${i + 1} skipped (already exists)`);
+        } else {
+          console.error(`   ❌ Statement ${i + 1} failed:`, error.message);
+          // Continue with other statements
+        }
       }
     }
 
-    console.log('\n✅ Timer tables initialized successfully!');
+    console.log('\n✅ Timer tables initialization completed!');
 
     // Test the tables
     console.log('\n🧪 Testing timer tables...');
