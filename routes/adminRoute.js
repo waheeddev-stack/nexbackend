@@ -1366,4 +1366,135 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
   }
 });
 
+// GET /api/admin/payment-requests - Get all payment requests
+adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
+  try {
+    // Create payment_requests table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payment_requests (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        shopkeeper_id INT NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        payment_method VARCHAR(100),
+        transaction_id VARCHAR(255),
+        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        admin_notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id)
+      )
+    `);
+
+    const [requests] = await pool.query(`
+      SELECT pr.*, s.name as shopkeeper_name, s.email as shopkeeper_email, 
+             s.shop_name, s.shop_scale
+      FROM payment_requests pr
+      LEFT JOIN shopkeepers s ON pr.shopkeeper_id = s.id
+      WHERE pr.status = 'pending'
+      ORDER BY pr.created_at DESC
+    `);
+
+    res.json({ success: true, data: requests });
+  } catch (err) {
+    console.error('Get payment requests error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// PATCH /api/admin/payment-requests/:id - Process payment request
+adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const { action, admin_notes } = req.body;
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid action. Use 'approve' or 'reject'" 
+      });
+    }
+
+    const status = action === 'approve' ? 'approved' : 'rejected';
+
+    const [result] = await pool.query(
+      `UPDATE payment_requests 
+       SET status = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = ?`,
+      [status, admin_notes || '', requestId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Payment request not found" 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Payment request ${action}d successfully` 
+    });
+  } catch (err) {
+    console.error('Process payment request error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/earnings - Get earnings summary
+adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
+  try {
+    // Get earnings summary
+    const [earningsData] = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN pr.status = 'pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN pr.status = 'approved' THEN 1 END) as approved_payments,
+        COALESCE(SUM(CASE WHEN pr.status = 'pending' THEN pr.amount END), 0) as pending_amount,
+        COALESCE(SUM(CASE WHEN pr.status = 'approved' THEN pr.amount END), 0) as total_revenue
+      FROM payment_requests pr
+    `);
+
+    // Get subscription stats (mock data for now)
+    const subscriptionStats = {
+      trial_users: 0,
+      active_users: 0,
+      overdue_users: 0,
+      suspended_users: 0
+    };
+
+    res.json({ 
+      success: true, 
+      data: {
+        payments: earningsData[0],
+        subscriptions: subscriptionStats
+      }
+    });
+  } catch (err) {
+    console.error('Get earnings error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/earnings/summary - Get earnings summary (alias)
+adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
+  try {
+    // Redirect to earnings endpoint
+    const earningsResponse = await new Promise((resolve, reject) => {
+      adminRouter.handle({ 
+        method: 'GET', 
+        url: '/earnings',
+        admin: req.admin 
+      }, {
+        json: resolve,
+        status: () => ({ json: reject })
+      });
+    });
+    
+    res.json(earningsResponse);
+  } catch (err) {
+    console.error('Get earnings summary error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 export default adminRouter;

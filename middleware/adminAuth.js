@@ -21,7 +21,16 @@ const verifyAdminToken = async (req, res, next) => {
       });
     }
     
-    // Verify that the token belongs to an admin in database
+    // For environment-based admin (ID 1), skip database lookup
+    if (decoded.id === 1 && decoded.role === 'admin') {
+      const envAdminEmail = process.env.ADMIN_EMAIL || 'nexkirana@kirana.com';
+      if (decoded.email === envAdminEmail) {
+        req.admin = decoded; // attach admin info from token
+        return next();
+      }
+    }
+    
+    // For other admins, verify that the token belongs to an admin in database
     const [adminRows] = await pool.query(
       "SELECT id, email FROM admins WHERE id = ?",
       [decoded.id]
@@ -30,7 +39,7 @@ const verifyAdminToken = async (req, res, next) => {
     if (adminRows.length === 0) {
       return res.status(403).json({ 
         success: false, 
-        message: "Access denied. Admin privileges required." 
+        message: "Admin not found" 
       });
     }
 
