@@ -1202,4 +1202,168 @@ adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
   }
 });
 
+// Payment Info Management Routes
+// GET /api/admin/payment-info - Get payment information
+adminRouter.get("/payment-info", verifyAdminToken, async (req, res) => {
+  try {
+    // Check if payment_info table exists, if not create a default response
+    const [rows] = await pool.query("SELECT * FROM payment_info LIMIT 1").catch(() => [[]]);
+    
+    if (rows.length === 0) {
+      // Return default payment info structure
+      return res.json({
+        success: true,
+        data: {
+          upi_id: '',
+          bank_account: '',
+          ifsc_code: '',
+          account_holder: '',
+          qr_code: null
+        }
+      });
+    }
+    
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    console.error('Payment info fetch error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/payment-info/admin - Get admin payment information
+adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
+  try {
+    // Return admin-specific payment info
+    const [rows] = await pool.query("SELECT * FROM payment_info WHERE type = 'admin' LIMIT 1").catch(() => [[]]);
+    
+    if (rows.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          upi_id: '',
+          bank_account: '',
+          ifsc_code: '',
+          account_holder: 'NexKirana Admin',
+          qr_code: null,
+          type: 'admin'
+        }
+      });
+    }
+    
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    console.error('Admin payment info fetch error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// PUT /api/admin/payment-info - Update payment information
+adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), async (req, res) => {
+  try {
+    const { upi_id, bank_account, ifsc_code, account_holder } = req.body;
+    let qr_code_url = null;
+
+    // Handle QR code upload if provided
+    if (req.file) {
+      try {
+        // Upload to Cloudinary
+        const result = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              resource_type: 'image',
+              folder: 'nexkirana/payment-qr',
+              transformation: [
+                { width: 500, height: 500, crop: 'limit' },
+                { quality: 'auto' }
+              ]
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          
+          streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+        });
+        
+        qr_code_url = result.secure_url;
+      } catch (uploadError) {
+        console.error('QR code upload error:', uploadError);
+        return res.status(500).json({ 
+          success: false, 
+          message: "Failed to upload QR code image" 
+        });
+      }
+    }
+
+    // Check if payment_info table exists, create if not
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payment_info (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        upi_id VARCHAR(255),
+        bank_account VARCHAR(255),
+        ifsc_code VARCHAR(255),
+        account_holder VARCHAR(255),
+        qr_code TEXT,
+        type VARCHAR(50) DEFAULT 'admin',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Check if record exists
+    const [existing] = await pool.query("SELECT id FROM payment_info WHERE type = 'admin' LIMIT 1");
+    
+    if (existing.length > 0) {
+      // Update existing record
+      const updateFields = [];
+      const updateValues = [];
+      
+      if (upi_id !== undefined) {
+        updateFields.push('upi_id = ?');
+        updateValues.push(upi_id);
+      }
+      if (bank_account !== undefined) {
+        updateFields.push('bank_account = ?');
+        updateValues.push(bank_account);
+      }
+      if (ifsc_code !== undefined) {
+        updateFields.push('ifsc_code = ?');
+        updateValues.push(ifsc_code);
+      }
+      if (account_holder !== undefined) {
+        updateFields.push('account_holder = ?');
+        updateValues.push(account_holder);
+      }
+      if (qr_code_url) {
+        updateFields.push('qr_code = ?');
+        updateValues.push(qr_code_url);
+      }
+      
+      updateValues.push(existing[0].id);
+      
+      await pool.query(
+        `UPDATE payment_info SET ${updateFields.join(', ')} WHERE id = ?`,
+        updateValues
+      );
+    } else {
+      // Insert new record
+      await pool.query(
+        `INSERT INTO payment_info (upi_id, bank_account, ifsc_code, account_holder, qr_code, type) 
+         VALUES (?, ?, ?, ?, ?, 'admin')`,
+        [upi_id || '', bank_account || '', ifsc_code || '', account_holder || 'NexKirana Admin', qr_code_url]
+      );
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Payment information updated successfully",
+      qr_code_url: qr_code_url
+    });
+  } catch (err) {
+    console.error('Payment info update error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 export default adminRouter;

@@ -413,4 +413,209 @@ userrouter.post("/push-token", verifyToken, async (req, res) => {
   }
 });
 
+// ==================== ORDER TIMER TRACKING FOR CUSTOMERS ====================
+
+// Get timer status for customer's order
+userrouter.get("/orders/:orderId/timer", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Get timer info for customer's order
+    const [timerInfo] = await pool.query(`
+      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
+             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
+             s.shop_name, s.name as shopkeeper_name, s.phone as shopkeeper_phone
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+      WHERE o.id = ? AND o.user_id = ?
+    `, [orderIdNum, user_id]);
+
+    if (timerInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found" 
+      });
+    }
+
+    const timer = timerInfo[0];
+    let timeLeft = 0;
+
+    if (timer.is_active && timer.timer_expires_at) {
+      const now = new Date();
+      const expiresAt = new Date(timer.timer_expires_at);
+      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    }
+
+    res.json({ 
+      success: true, 
+      timer: {
+        order_id: timer.id,
+        status: timer.status,
+        has_timer: timer.has_timer,
+        pickup_code: timer.pickup_code,
+        is_active: timer.is_active,
+        is_expired: timer.is_expired,
+        time_left: timeLeft,
+        timer_duration: timer.timer_duration,
+        started_at: timer.timer_started_at,
+        expires_at: timer.timer_expires_at,
+        stopped_at: timer.stopped_at,
+        shop_info: {
+          shop_name: timer.shop_name,
+          shopkeeper_name: timer.shopkeeper_name,
+          shopkeeper_phone: timer.shopkeeper_phone
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error("Get customer timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get order status for customer
+userrouter.get("/orders/:orderId/status", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    const [orderInfo] = await pool.query(`
+      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
+             o.total_amount, o.created_at, o.credits_earned,
+             s.shop_name, s.name as shopkeeper_name
+      FROM orders o
+      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+      WHERE o.id = ? AND o.user_id = ?
+    `, [orderIdNum, user_id]);
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found" 
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      order: orderInfo[0]
+    });
+
+  } catch (err) {
+    console.error("Get order status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get detailed order info for customer
+userrouter.get("/orders/:orderId", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Get order details with items
+    const [orderInfo] = await pool.query(`
+      SELECT 
+        o.id AS order_id,
+        o.status,
+        o.total_amount,
+        o.created_at,
+        o.credits_earned,
+        o.has_timer,
+        o.pickup_code,
+        o.timer_started_at,
+        o.timer_expires_at,
+        o.delivery_address,
+        s.shop_name,
+        s.name AS shopkeeper_name,
+        s.phone AS shopkeeper_phone,
+        s.address AS shop_address,
+        JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'product_id', oi.product_id,
+            'product_name', p.name,
+            'product_image', p.image,
+            'quantity', oi.quantity,
+            'price', oi.price
+          )
+        ) AS items
+       FROM orders o
+       JOIN shopkeepers s ON o.shopkeeper_id = s.id
+       JOIN order_items oi ON o.id = oi.order_id
+       JOIN products p ON oi.product_id = p.id
+       WHERE o.id = ? AND o.user_id = ?
+       GROUP BY o.id
+    `, [orderIdNum, user_id]);
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found" 
+      });
+    }
+
+    const order = orderInfo[0];
+
+    // Get timer info if available
+    let timerInfo = null;
+    if (order.has_timer) {
+      const [timerData] = await pool.query(`
+        SELECT timer_duration, is_active, is_expired, stopped_at
+        FROM order_timers
+        WHERE order_id = ?
+      `, [orderIdNum]);
+
+      if (timerData.length > 0) {
+        const timer = timerData[0];
+        let timeLeft = 0;
+
+        if (timer.is_active && order.timer_expires_at) {
+          const now = new Date();
+          const expiresAt = new Date(order.timer_expires_at);
+          timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+        }
+
+        timerInfo = {
+          is_active: timer.is_active,
+          is_expired: timer.is_expired,
+          time_left: timeLeft,
+          timer_duration: timer.timer_duration,
+          started_at: order.timer_started_at,
+          expires_at: order.timer_expires_at,
+          stopped_at: timer.stopped_at
+        };
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      order: {
+        ...order,
+        timer: timerInfo
+      }
+    });
+
+  } catch (err) {
+    console.error("Get order details error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default userrouter;

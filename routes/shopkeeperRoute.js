@@ -1025,4 +1025,331 @@ shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
   }
 });
 
+// ==================== ORDER TIMER SYSTEM ====================
+
+// Start timer for an order (when order is ready for pickup)
+shopkeeperRouter.post("/orders/:orderId/start-timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { orderId } = req.params;
+    const { timer_duration = 420 } = req.body; // Default 7 minutes
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Check if order belongs to this shopkeeper and is in correct status
+    const [orderCheck] = await pool.query(
+      "SELECT id, status FROM orders WHERE id = ? AND shopkeeper_id = ?",
+      [orderIdNum, shopkeeper_id]
+    );
+
+    if (orderCheck.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found or not assigned to you" 
+      });
+    }
+
+    if (orderCheck[0].status !== 'Pending') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Timer can only be started for pending orders" 
+      });
+    }
+
+    // Generate 6-digit pickup code
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Calculate timer expiry
+    const timerStarted = new Date();
+    const timerExpires = new Date(timerStarted.getTime() + (timer_duration * 1000));
+
+    // Create or update timer record
+    await pool.query(`
+      INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
+      VALUES (?, ?, ?, ?, ?, TRUE)
+      ON DUPLICATE KEY UPDATE
+        pickup_code = VALUES(pickup_code),
+        timer_duration = VALUES(timer_duration),
+        timer_started_at = VALUES(timer_started_at),
+        timer_expires_at = VALUES(timer_expires_at),
+        is_active = TRUE,
+        is_expired = FALSE,
+        stopped_at = NULL
+    `, [orderIdNum, pickupCode, timer_duration, timerStarted, timerExpires]);
+
+    // Update orders table
+    await pool.query(`
+      UPDATE orders 
+      SET has_timer = TRUE, pickup_code = ?, timer_started_at = ?, timer_expires_at = ?
+      WHERE id = ?
+    `, [pickupCode, timerStarted, timerExpires, orderIdNum]);
+
+    // Broadcast timer started event
+    if (req.io) {
+      req.io.to(`shop_${shopkeeper_id}`).emit("timerStarted", { 
+        orderId: orderIdNum, 
+        pickupCode, 
+        timerDuration: timer_duration,
+        expiresAt: timerExpires
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Timer started successfully",
+      pickup_code: pickupCode,
+      timer_duration: timer_duration,
+      expires_at: timerExpires
+    });
+
+  } catch (err) {
+    console.error("Start timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Stop timer with pickup code verification
+shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { orderId } = req.params;
+    const { pickup_code } = req.body;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    if (!pickup_code) {
+      return res.status(400).json({ success: false, message: "Pickup code is required" });
+    }
+
+    // Get order and timer info
+    const [orderInfo] = await pool.query(`
+      SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at,
+             ot.is_active, ot.is_expired, ot.timer_expires_at
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      WHERE o.id = ? AND o.shopkeeper_id = ?
+    `, [orderIdNum, shopkeeper_id]);
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found or not assigned to you" 
+      });
+    }
+
+    const order = orderInfo[0];
+
+    // Verify pickup code
+    if (order.pickup_code !== pickup_code) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid pickup code" 
+      });
+    }
+
+    // Check if timer is still active
+    if (!order.is_active) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Timer is not active for this order" 
+      });
+    }
+
+    const now = new Date();
+    const wasOnTime = order.timer_expires_at && now <= new Date(order.timer_expires_at);
+
+    // Stop timer and mark order as delivered
+    await pool.query(`
+      UPDATE order_timers 
+      SET is_active = FALSE, stopped_at = ?, is_expired = ?
+      WHERE order_id = ?
+    `, [now, !wasOnTime, orderIdNum]);
+
+    await pool.query(`
+      UPDATE orders 
+      SET status = 'Delivered', has_timer = FALSE
+      WHERE id = ?
+    `, [orderIdNum]);
+
+    // Award wellness points if order is delivered
+    try {
+      const pointsData = await awardWellnessPoints(
+        pool, 
+        order.user_id, 
+        now, // delivery time
+        order.created_at // order creation time
+      );
+      
+      console.log(`Awarded ${pointsData.points} wellness points to user ${order.user_id} for order ${orderIdNum}`);
+    } catch (pointsError) {
+      console.error("Error awarding wellness points:", pointsError);
+    }
+
+    // Broadcast events
+    if (req.io) {
+      req.io.to(`shop_${shopkeeper_id}`).emit("timerStopped", { 
+        orderId: orderIdNum, 
+        wasOnTime 
+      });
+      req.io.to(`customer_${order.user_id}`).emit("orderStatusUpdate", { 
+        orderId: orderIdNum, 
+        status: 'Delivered' 
+      });
+    }
+
+    // Send push notification to customer
+    try {
+      const [[customer]] = await pool.query(
+        `SELECT expo_push_token FROM users WHERE id = ?`,
+        [order.user_id]
+      );
+      
+      if (customer?.expo_push_token) {
+        const message = wasOnTime 
+          ? "🎉 Order completed on time! You've earned full rewards."
+          : "📦 Order completed! You've earned partial rewards due to late pickup.";
+          
+        await sendExpoPush(
+          customer.expo_push_token, 
+          "Order Delivered", 
+          message,
+          { orderId: orderIdNum, status: 'Delivered', wasOnTime }
+        );
+      }
+    } catch (pushError) {
+      console.error("Push notification error:", pushError);
+    }
+
+    res.json({ 
+      success: true, 
+      message: wasOnTime 
+        ? "Order completed on time! Customer receives full rewards."
+        : "Order completed! Customer receives reduced rewards due to late pickup.",
+      was_on_time: wasOnTime
+    });
+
+  } catch (err) {
+    console.error("Stop timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get timer status for an order
+shopkeeperRouter.get("/orders/:orderId/timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Get timer info
+    const [timerInfo] = await pool.query(`
+      SELECT o.id, o.pickup_code, o.has_timer, o.timer_started_at, o.timer_expires_at,
+             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      WHERE o.id = ? AND o.shopkeeper_id = ?
+    `, [orderIdNum, shopkeeper_id]);
+
+    if (timerInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found or not assigned to you" 
+      });
+    }
+
+    const timer = timerInfo[0];
+    let timeLeft = 0;
+
+    if (timer.is_active && timer.timer_expires_at) {
+      const now = new Date();
+      const expiresAt = new Date(timer.timer_expires_at);
+      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+      
+      // Auto-expire if time is up
+      if (timeLeft === 0 && timer.is_active) {
+        await pool.query(`
+          UPDATE order_timers 
+          SET is_active = FALSE, is_expired = TRUE
+          WHERE order_id = ?
+        `, [orderIdNum]);
+        
+        timer.is_active = false;
+        timer.is_expired = true;
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      timer: {
+        has_timer: timer.has_timer,
+        pickup_code: timer.pickup_code,
+        is_active: timer.is_active,
+        is_expired: timer.is_expired,
+        time_left: timeLeft,
+        timer_duration: timer.timer_duration,
+        started_at: timer.timer_started_at,
+        expires_at: timer.timer_expires_at,
+        stopped_at: timer.stopped_at
+      }
+    });
+
+  } catch (err) {
+    console.error("Get timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Cleanup expired timers (can be called periodically)
+shopkeeperRouter.post("/cleanup-expired-timers", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const now = new Date();
+    
+    // Find and expire active timers that have passed their expiry time
+    const [expiredTimers] = await pool.query(`
+      SELECT ot.order_id 
+      FROM order_timers ot
+      WHERE ot.is_active = TRUE AND ot.timer_expires_at < ?
+    `, [now]);
+
+    if (expiredTimers.length > 0) {
+      const orderIds = expiredTimers.map(t => t.order_id);
+      
+      // Mark timers as expired
+      await pool.query(`
+        UPDATE order_timers 
+        SET is_active = FALSE, is_expired = TRUE
+        WHERE order_id IN (${orderIds.map(() => '?').join(',')})
+      `, orderIds);
+
+      // Update orders table
+      await pool.query(`
+        UPDATE orders 
+        SET has_timer = FALSE
+        WHERE id IN (${orderIds.map(() => '?').join(',')})
+      `, orderIds);
+
+      console.log(`Expired ${expiredTimers.length} timers`);
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Cleaned up ${expiredTimers.length} expired timers`
+    });
+
+  } catch (err) {
+    console.error("Cleanup timers error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default shopkeeperRouter;
