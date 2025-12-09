@@ -1495,4 +1495,40 @@ shopkeeperRouter.get("/location-history", verifyToken, verifyShopkeeperStatus, a
   }
 });
 
+// GET /api/shopkeeper/payment-info - Get admin payment credentials for payment requests
+shopkeeperRouter.get("/payment-info", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    // Get admin payment information for shopkeepers to see where to send payments
+    const [rows] = await pool.query(
+      "SELECT upi_id, bank_account, ifsc_code, account_holder, qr_code FROM payment_info WHERE type = 'admin' LIMIT 1"
+    ).catch(() => [[]]);
+    
+    if (rows.length === 0) {
+      // Return default structure if no payment info is set
+      return res.json({
+        success: true,
+        data: {
+          upi_id: '',
+          bank_account: '',
+          ifsc_code: '',
+          account_holder: 'NexKirana Admin',
+          qr_code: null
+        }
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      data: rows[0] 
+    });
+  } catch (err) {
+    console.error('Shopkeeper payment info fetch error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+});
+
 export default shopkeeperRouter;
