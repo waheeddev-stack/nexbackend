@@ -15,10 +15,10 @@ const adminRouter = express.Router();
 adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
     const { status } = req.query; // Get status filter from query params
-    
+
     let whereClause = "WHERE id IS NOT NULL";
     let queryParams = [];
-    
+
     // Add status filtering based on query parameter
     if (status && status !== 'all') {
       if (status === 'pending') {
@@ -31,21 +31,21 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
         queryParams.push(0);
       }
     }
-    
+
     const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
-    
+
     const [rows] = await pool.query(query, queryParams);
-    
+
     // Map is_verified to verification_status for frontend compatibility and ensure valid IDs
     const mappedRows = rows
       .filter(row => row.id != null && row.id !== 0) // Filter out any invalid IDs
       .map(row => ({
         ...row,
         id: parseInt(row.id), // Ensure ID is a number
-        verification_status: row.is_verified === 1 ? 'approved' : 
-                           row.is_verified === 0 ? 'rejected' : 'pending'
+        verification_status: row.is_verified === 1 ? 'approved' :
+          row.is_verified === 0 ? 'rejected' : 'pending'
       }));
-    
+
     // Add summary statistics for the admin panel
     const [stats] = await pool.query(`
       SELECT 
@@ -56,9 +56,9 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
       FROM shopkeepers 
       WHERE id IS NOT NULL
     `);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       data: mappedRows,
       stats: stats[0],
       filter: status || 'all'
@@ -81,7 +81,7 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
       FROM shopkeepers 
       WHERE id IS NOT NULL
     `);
-    
+
     const [recentActivity] = await pool.query(`
       SELECT 
         COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as new_this_week,
@@ -89,9 +89,9 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
       FROM shopkeepers 
       WHERE id IS NOT NULL
     `);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       data: {
         ...stats[0],
         ...recentActivity[0]
@@ -120,24 +120,24 @@ adminRouter.get("/test-verify/:id", verifyAdminToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
     console.log(`Testing verification for shopkeeper ${shopkeeperId}`);
-    
+
     // Check if shopkeeper exists
     const [shopkeeper] = await pool.query(
       "SELECT id, name, email, is_verified FROM shopkeepers WHERE id = ?",
       [shopkeeperId]
     );
-    
+
     if (shopkeeper.length === 0) {
-      return res.json({ 
-        success: false, 
+      return res.json({
+        success: false,
         message: "Shopkeeper not found",
         shopkeeperId,
         found: false
       });
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: "Shopkeeper found",
       shopkeeper: shopkeeper[0],
       found: true
@@ -156,9 +156,9 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
 
     // Validate shopkeeper ID
     if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid shopkeeper ID. Please refresh the page and try again." 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shopkeeper ID. Please refresh the page and try again."
       });
     }
 
@@ -185,11 +185,11 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
       "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
       [is_verified, parseInt(shopkeeperId)]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
     }
-    
+
     console.log(`✅ Updated shopkeeper ${shopkeeperId} verification status to: ${is_verified}`);
 
     // Get updated shopkeeper details for response
@@ -200,8 +200,8 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
 
     console.log(`Verification successful: ${JSON.stringify(shopkeeper[0])}`);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: `Shopkeeper ${action}d successfully`,
       shopkeeper: shopkeeper[0]
     });
@@ -216,17 +216,17 @@ adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) =
   try {
     const shopkeeperId = req.params.id;
     const { status } = req.body; // "approved", "rejected", or "pending"
-    
+
     // Validate shopkeeper ID
     if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid shopkeeper ID. Please refresh the page and try again." 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shopkeeper ID. Please refresh the page and try again."
       });
     }
-    
+
     console.log(`Simple verification: shopkeeper ${shopkeeperId}, status: ${status}`);
-    
+
     // Map status to is_verified value
     let is_verified;
     if (status === "approved" || status === "verified" || status === "1" || status === 1) {
@@ -236,33 +236,33 @@ adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) =
     } else {
       is_verified = null; // pending
     }
-    
+
     // Check if shopkeeper exists first
     const [existingShopkeeper] = await pool.query(
       "SELECT id, name FROM shopkeepers WHERE id = ?",
       [parseInt(shopkeeperId)]
     );
-    
+
     if (existingShopkeeper.length === 0) {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
-    
+
     // Update verification status
     await pool.query(
       "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
       [is_verified, parseInt(shopkeeperId)]
     );
-    
+
     const statusText = is_verified === 1 ? 'approved' : is_verified === 0 ? 'rejected' : 'pending';
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `Shopkeeper ${statusText} successfully`,
       shopkeeperId: parseInt(shopkeeperId),
       is_verified,
       verification_status: statusText
     });
-    
+
   } catch (err) {
     console.error("Shopkeeper verification error:", err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
@@ -275,33 +275,33 @@ adminRouter.post("/register", async (req, res) => {
     // Check if any admin already exists
     const [existingAdmins] = await pool.query("SELECT COUNT(*) as count FROM admins");
     if (existingAdmins[0].count > 0) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Admin registration is disabled. Admin already exists." 
+      return res.status(403).json({
+        success: false,
+        message: "Admin registration is disabled. Admin already exists."
       });
     }
 
     // Use environment variables for admin credentials
     const email = process.env.ADMIN_EMAIL;
     const password = process.env.ADMIN_PASSWORD;
-    
+
     if (!email || !password) {
-      return res.status(500).json({ 
-        success: false, 
-        message: "Admin credentials not configured" 
+      return res.status(500).json({
+        success: false,
+        message: "Admin credentials not configured"
       });
     }
-    
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
       "INSERT INTO admins (email, password) VALUES (?, ?)",
       [email, hashedPassword]
     );
-    
-    res.status(201).json({ 
-      success: true, 
+
+    res.status(201).json({
+      success: true,
       data: { id: result.insertId, email },
-      message: "Initial admin created successfully" 
+      message: "Initial admin created successfully"
     });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error", error: err.message });
@@ -480,7 +480,7 @@ adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
     const [rows] = await pool.query(
       "SELECT id, name, price, category, description, image, brand, barcode, shop_scales, created_at FROM global_products ORDER BY created_at DESC"
     );
-    
+
     // Parse shop_scales JSON for each product
     const products = rows.map(product => {
       let shopScales = ['all'];
@@ -497,7 +497,7 @@ adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
         shopScales: shopScales
       };
     });
-    
+
     res.json({ success: true, data: products });
   } catch (err) {
     console.error("Get global products error:", err);
@@ -511,23 +511,23 @@ adminRouter.post(
   verifyAdminToken,
   upload.single("image"),
   async (req, res) => {
-    const { 
-      name, 
-      price, 
-      category, 
-      description, 
-      brand, 
+    const {
+      name,
+      price,
+      category,
+      description,
+      brand,
       barcode,
       shopScales
     } = req.body;
-    
+
     if (!name || !price) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Name and price are required" 
+      return res.status(400).json({
+        success: false,
+        message: "Name and price are required"
       });
     }
-    
+
     let imageUrl = null;
     try {
       if (req.file) {
@@ -555,29 +555,29 @@ adminRouter.post(
 
       // Use database transaction for thread-safe ID generation
       await pool.query('START TRANSACTION');
-      
+
       try {
         // Lock the table and get next ID
         const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE");
         const nextId = maxIdResult[0].next_id;
-        
+
         const [dbResult] = await pool.query(
           "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             nextId,
-            name, 
-            parseFloat(price), 
-            category || null, 
-            description || "", 
+            name,
+            parseFloat(price),
+            category || null,
+            description || "",
             imageUrl,
             brand || null,
             barcode || null,
             JSON.stringify(parsedShopScales)
           ]
         );
-        
+
         await pool.query('COMMIT');
-        
+
         // Use nextId for response since insertId might be 0
         const actualId = dbResult.insertId || nextId;
 
@@ -613,26 +613,26 @@ adminRouter.put(
   upload.single("image"),
   async (req, res) => {
     const productId = req.params.id;
-    
+
     // Validate product ID
     if (!productId || productId === 'null' || productId === 'undefined') {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid product ID. Product ID is required for update." 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product ID. Product ID is required for update."
       });
     }
 
-    const { 
-      name, 
-      price, 
-      category, 
-      description, 
-      brand, 
+    const {
+      name,
+      price,
+      category,
+      description,
+      brand,
       barcode,
       shopScales
     } = req.body;
     let imageUrl = req.body.image || null;
-    
+
     try {
       if (req.file) {
         const streamUpload = () =>
@@ -660,13 +660,13 @@ adminRouter.put(
       const [dbResult] = await pool.query(
         "UPDATE global_products SET name=?, price=?, category=?, description=?, image=?, brand=?, barcode=?, shop_scales=? WHERE id=?",
         [
-          name, 
-          parseFloat(price), 
-          category || null, 
-          description || "", 
-          imageUrl, 
-          brand || null, 
-          barcode || null, 
+          name,
+          parseFloat(price),
+          category || null,
+          description || "",
+          imageUrl,
+          brand || null,
+          barcode || null,
           JSON.stringify(parsedShopScales),
           parseInt(productId)
         ]
@@ -687,12 +687,12 @@ adminRouter.put(
 // Delete a global product (admin)
 adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) => {
   const productId = req.params.id;
-  
+
   // Validate product ID
   if (!productId || productId === 'null' || productId === 'undefined') {
-    return res.status(400).json({ 
-      success: false, 
-      message: "Invalid product ID. Product ID is required for deletion." 
+    return res.status(400).json({
+      success: false,
+      message: "Invalid product ID. Product ID is required for deletion."
     });
   }
 
@@ -730,11 +730,11 @@ adminRouter.get("/products", verifyAdminToken, async (req, res) => {
 adminRouter.get("/global-products/scale/:shopScale", verifyAdminToken, async (req, res) => {
   try {
     const { shopScale } = req.params;
-    
+
     if (!['small', 'medium', 'large'].includes(shopScale)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid shop scale. Must be small, medium, or large" 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shop scale. Must be small, medium, or large"
       });
     }
 
@@ -755,13 +755,13 @@ adminRouter.get("/global-products/scale/:shopScale", verifyAdminToken, async (re
          OR JSON_CONTAINS(shop_scales, ?)
       ORDER BY created_at DESC
     `, [JSON.stringify(shopScale)]);
-    
+
     // Parse shop_scales for response
     const products = rows.map(product => ({
       ...product,
       shopScales: product.shop_scales ? JSON.parse(product.shop_scales) : ['all']
     }));
-    
+
     res.json({ success: true, data: products, shopScale });
   } catch (err) {
     console.error("Get scale-specific products error:", err);
@@ -774,25 +774,25 @@ adminRouter.put("/shopkeepers/:id/scale", verifyAdminToken, async (req, res) => 
   try {
     const shopkeeperId = req.params.id;
     const { shop_scale } = req.body;
-    
+
     if (!['small', 'medium', 'large'].includes(shop_scale)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid shop scale. Must be small, medium, or large" 
+      return res.status(400).json({
+        success: false,
+        message: "Invalid shop scale. Must be small, medium, or large"
       });
     }
-    
+
     const [result] = await pool.query(
       "UPDATE shopkeepers SET shop_scale = ? WHERE id = ?",
       [shop_scale, shopkeeperId]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `Shopkeeper scale updated to ${shop_scale}`,
       shopkeeperId,
       shop_scale
@@ -911,6 +911,139 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
 //   }
 // });
 
+// GET /api/admin/payment-requests - Get all payment requests
+adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
+  try {
+    const [pendingRequests] = await pool.query(`
+      SELECT bp.id, bp.shopkeeper_id, bp.amount, bp.payment_method, 
+             bp.transaction_id, bp.payment_date as created_at, bp.status, bp.notes as admin_notes,
+             s.name as shopkeeper_name, s.email as shopkeeper_email, 
+             s.shop_name, s.shop_scale
+      FROM billing_payments bp
+      LEFT JOIN shopkeepers s ON bp.shopkeeper_id = s.id
+      WHERE bp.status = 'pending'
+      ORDER BY bp.payment_date DESC
+    `);
+
+    res.json({ success: true, data: pendingRequests });
+  } catch (err) {
+    console.error('Get payment requests error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// PATCH /api/admin/payment-requests/:id - Process payment request
+adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const { action, admin_notes } = req.body;
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid action. Use 'approve' or 'reject'"
+      });
+    }
+
+    const status = action === 'approve' ? 'approved' : 'rejected';
+
+    // Update billing_payments instead of payment_requests
+    const [result] = await pool.query(
+      `UPDATE billing_payments 
+       SET status = ?, notes = ?, approved_by = ?, approved_at = NOW()
+       WHERE id = ?`,
+      [status, admin_notes || '', req.admin.id, requestId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment request not found"
+      });
+    }
+
+    // Logic for Updating Shopkeeper Subscription if Approved
+    if (status === 'approved') {
+      const [payment] = await pool.query("SELECT shopkeeper_id FROM billing_payments WHERE id = ?", [requestId]);
+      if (payment.length > 0) {
+        const shopkeeperId = payment[0].shopkeeper_id;
+
+        await pool.query(`
+            UPDATE shopkeepers 
+            SET subscription_status = 'active', 
+                last_payment_date = NOW(),
+                next_payment_due = DATE_ADD(NOW(), INTERVAL 30 DAY)
+            WHERE id = ?
+         `, [shopkeeperId]);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Payment request ${action}d successfully`
+    });
+  } catch (err) {
+    console.error('Process payment request error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/earnings - Get earnings summary
+adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
+  try {
+    // Get earnings summary
+    const [earningsData] = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_payments,
+        COALESCE(SUM(CASE WHEN status = 'pending' THEN amount END), 0) as pending_amount,
+        COALESCE(SUM(CASE WHEN status = 'approved' THEN amount END), 0) as total_revenue
+      FROM billing_payments
+    `);
+
+    // Get subscription stats (mock data for now)
+    const subscriptionStats = {
+      trial_users: 0,
+      active_users: 0,
+      overdue_users: 0,
+      suspended_users: 0
+    };
+
+    res.json({
+      success: true,
+      data: {
+        payments: earningsData[0],
+        subscriptions: subscriptionStats
+      }
+    });
+  } catch (err) {
+    console.error('Get earnings error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/earnings/summary - Get earnings summary (alias)
+adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
+  try {
+    // Redirect to earnings endpoint
+    const earningsResponse = await new Promise((resolve, reject) => {
+      adminRouter.handle({
+        method: 'GET',
+        url: '/earnings',
+        admin: req.admin
+      }, {
+        json: resolve,
+        status: () => ({ json: reject })
+      });
+    });
+
+    res.json(earningsResponse);
+  } catch (err) {
+    console.error('Get earnings summary error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 // Get admin by ID (protected) - keep this at the end
 adminRouter.get("/:id", verifyAdminToken, async (req, res) => {
   try {
@@ -977,36 +1110,36 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
 // Admin Login - Environment-based fallback for unusual admin table
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
-  
+
   if (!email || !password) {
     return res.status(400).json({ success: false, message: "Email and password are required" });
   }
 
   try {
     console.log('🔍 Admin login attempt for:', email);
-    
+
     // Since your admin table has unusual structure, use environment variables as fallback
     const envAdminEmail = process.env.ADMIN_EMAIL || 'nexkirana@kirana.com';
     const envAdminPassword = process.env.ADMIN_PASSWORD || 'qwI41L5U47RwaI47DasA';
-    
+
     console.log('🔧 Using environment admin credentials');
     console.log('📧 Expected email:', envAdminEmail);
-    
+
     // Check email match (flexible)
     const emailMatches = (
       email.toLowerCase() === envAdminEmail.toLowerCase() ||
       (email.toLowerCase().includes('nexkirana') && envAdminEmail.toLowerCase().includes('nexkirana')) ||
       (email.toLowerCase().includes('admin') && envAdminEmail.toLowerCase().includes('admin'))
     );
-    
+
     if (!emailMatches) {
       console.log('📧 Email mismatch');
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-    
+
     // Check password match
     const passwordMatches = (password === envAdminPassword);
-    
+
     if (!passwordMatches) {
       console.log('🔐 Password mismatch');
       return res.status(401).json({ success: false, message: "Invalid credentials" });
@@ -1014,8 +1147,8 @@ adminRouter.post("/login", async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { 
-        id: 1, 
+      {
+        id: 1,
         email: envAdminEmail,
         role: 'admin'
       },
@@ -1024,20 +1157,20 @@ adminRouter.post("/login", async (req, res) => {
     );
 
     console.log('✅ Environment-based admin login successful');
-    res.json({ 
-      success: true, 
-      token, 
-      admin: { 
-        id: 1, 
-        email: envAdminEmail 
+    res.json({
+      success: true,
+      token,
+      admin: {
+        id: 1,
+        email: envAdminEmail
       },
       message: "Admin login successful"
     });
-    
+
   } catch (err) {
     console.error("❌ Admin login error:", err);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: "Server error",
       error: err.message
     });
@@ -1054,7 +1187,7 @@ adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
       role: req.admin.role,
       created_at: new Date().toISOString() // Placeholder since we don't have DB record
     };
-    
+
     res.json({ success: true, data: adminInfo });
   } catch (err) {
     console.error("Admin profile error:", err);
@@ -1107,7 +1240,7 @@ adminRouter.get("/pending-payments", verifyAdminToken, async (req, res) => {
       WHERE bp.status = 'pending'
       ORDER BY bp.payment_date DESC
     `);
-    
+
     res.json({ success: true, data: payments });
   } catch (err) {
     console.error("Get pending payments error:", err);
@@ -1120,45 +1253,45 @@ adminRouter.patch("/payments/:id/status", verifyAdminToken, async (req, res) => 
   try {
     const paymentId = req.params.id;
     const { status, notes } = req.body; // 'approved' or 'rejected'
-    
+
     if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Status must be 'approved' or 'rejected'" 
+      return res.status(400).json({
+        success: false,
+        message: "Status must be 'approved' or 'rejected'"
       });
     }
-    
+
     // Update payment status
     const [result] = await pool.query(
       "UPDATE billing_payments SET status = ?, approved_by = ?, approved_at = NOW(), notes = ? WHERE id = ?",
       [status, req.admin.id, notes || '', paymentId]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Payment not found" });
     }
-    
+
     // If approved, update shopkeeper subscription
     if (status === 'approved') {
       const [payment] = await pool.query(
         "SELECT shopkeeper_id FROM billing_payments WHERE id = ?",
         [paymentId]
       );
-      
+
       if (payment.length > 0) {
         const shopkeeperId = payment[0].shopkeeper_id;
         const nextPaymentDue = new Date();
         nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // Next 15 days
-        
+
         await pool.query(
           "UPDATE shopkeepers SET subscription_status = 'active', last_payment_date = NOW(), next_payment_due = ? WHERE id = ?",
           [nextPaymentDue, shopkeeperId]
         );
       }
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `Payment ${status} successfully`
     });
   } catch (err) {
@@ -1179,7 +1312,7 @@ adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
         SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) as pending_amount
       FROM billing_payments
     `);
-    
+
     const [subscriptionStats] = await pool.query(`
       SELECT 
         COUNT(CASE WHEN subscription_status = 'trial' THEN 1 END) as trial_users,
@@ -1188,9 +1321,9 @@ adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
         COUNT(CASE WHEN subscription_status = 'suspended' THEN 1 END) as suspended_users
       FROM shopkeepers
     `);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       data: {
         payments: stats[0],
         subscriptions: subscriptionStats[0]
@@ -1208,7 +1341,7 @@ adminRouter.get("/payment-info", verifyAdminToken, async (req, res) => {
   try {
     // Check if payment_info table exists, if not create a default response
     const [rows] = await pool.query("SELECT * FROM payment_info LIMIT 1").catch(() => [[]]);
-    
+
     if (rows.length === 0) {
       // Return default payment info structure
       return res.json({
@@ -1222,7 +1355,7 @@ adminRouter.get("/payment-info", verifyAdminToken, async (req, res) => {
         }
       });
     }
-    
+
     res.json({ success: true, data: rows[0] });
   } catch (err) {
     console.error('Payment info fetch error:', err);
@@ -1235,7 +1368,7 @@ adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
   try {
     // Return admin-specific payment info
     const [rows] = await pool.query("SELECT * FROM payment_info WHERE type = 'admin' LIMIT 1").catch(() => [[]]);
-    
+
     if (rows.length === 0) {
       return res.json({
         success: true,
@@ -1249,7 +1382,7 @@ adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
         }
       });
     }
-    
+
     res.json({ success: true, data: rows[0] });
   } catch (err) {
     console.error('Admin payment info fetch error:', err);
@@ -1282,16 +1415,16 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
               else resolve(result);
             }
           );
-          
+
           streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
         });
-        
+
         qr_code_url = result.secure_url;
       } catch (uploadError) {
         console.error('QR code upload error:', uploadError);
-        return res.status(500).json({ 
-          success: false, 
-          message: "Failed to upload QR code image" 
+        return res.status(500).json({
+          success: false,
+          message: "Failed to upload QR code image"
         });
       }
     }
@@ -1313,12 +1446,12 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
 
     // Check if record exists
     const [existing] = await pool.query("SELECT id FROM payment_info WHERE type = 'admin' LIMIT 1");
-    
+
     if (existing.length > 0) {
       // Update existing record
       const updateFields = [];
       const updateValues = [];
-      
+
       if (upi_id !== undefined) {
         updateFields.push('upi_id = ?');
         updateValues.push(upi_id);
@@ -1339,9 +1472,9 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
         updateFields.push('qr_code = ?');
         updateValues.push(qr_code_url);
       }
-      
+
       updateValues.push(existing[0].id);
-      
+
       await pool.query(
         `UPDATE payment_info SET ${updateFields.join(', ')} WHERE id = ?`,
         updateValues
@@ -1355,8 +1488,8 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
       );
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: "Payment information updated successfully",
       qr_code_url: qr_code_url
     });
@@ -1366,135 +1499,6 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
   }
 });
 
-// GET /api/admin/payment-requests - Get all payment requests
-adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
-  try {
-    // Create payment_requests table if it doesn't exist
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS payment_requests (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        shopkeeper_id INT NOT NULL,
-        amount DECIMAL(10,2) NOT NULL,
-        payment_method VARCHAR(100),
-        transaction_id VARCHAR(255),
-        payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
-        admin_notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (shopkeeper_id) REFERENCES shopkeepers(id)
-      )
-    `);
 
-    const [requests] = await pool.query(`
-      SELECT pr.*, s.name as shopkeeper_name, s.email as shopkeeper_email, 
-             s.shop_name, s.shop_scale
-      FROM payment_requests pr
-      LEFT JOIN shopkeepers s ON pr.shopkeeper_id = s.id
-      WHERE pr.status = 'pending'
-      ORDER BY pr.created_at DESC
-    `);
-
-    res.json({ success: true, data: requests });
-  } catch (err) {
-    console.error('Get payment requests error:', err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
-// PATCH /api/admin/payment-requests/:id - Process payment request
-adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) => {
-  try {
-    const requestId = req.params.id;
-    const { action, admin_notes } = req.body;
-
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid action. Use 'approve' or 'reject'" 
-      });
-    }
-
-    const status = action === 'approve' ? 'approved' : 'rejected';
-
-    const [result] = await pool.query(
-      `UPDATE payment_requests 
-       SET status = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP 
-       WHERE id = ?`,
-      [status, admin_notes || '', requestId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Payment request not found" 
-      });
-    }
-
-    res.json({ 
-      success: true, 
-      message: `Payment request ${action}d successfully` 
-    });
-  } catch (err) {
-    console.error('Process payment request error:', err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
-// GET /api/admin/earnings - Get earnings summary
-adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
-  try {
-    // Get earnings summary
-    const [earningsData] = await pool.query(`
-      SELECT 
-        COUNT(CASE WHEN pr.status = 'pending' THEN 1 END) as pending_payments,
-        COUNT(CASE WHEN pr.status = 'approved' THEN 1 END) as approved_payments,
-        COALESCE(SUM(CASE WHEN pr.status = 'pending' THEN pr.amount END), 0) as pending_amount,
-        COALESCE(SUM(CASE WHEN pr.status = 'approved' THEN pr.amount END), 0) as total_revenue
-      FROM payment_requests pr
-    `);
-
-    // Get subscription stats (mock data for now)
-    const subscriptionStats = {
-      trial_users: 0,
-      active_users: 0,
-      overdue_users: 0,
-      suspended_users: 0
-    };
-
-    res.json({ 
-      success: true, 
-      data: {
-        payments: earningsData[0],
-        subscriptions: subscriptionStats
-      }
-    });
-  } catch (err) {
-    console.error('Get earnings error:', err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
-// GET /api/admin/earnings/summary - Get earnings summary (alias)
-adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
-  try {
-    // Redirect to earnings endpoint
-    const earningsResponse = await new Promise((resolve, reject) => {
-      adminRouter.handle({ 
-        method: 'GET', 
-        url: '/earnings',
-        admin: req.admin 
-      }, {
-        json: resolve,
-        status: () => ({ json: reject })
-      });
-    });
-    
-    res.json(earningsResponse);
-  } catch (err) {
-    console.error('Get earnings summary error:', err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
 
 export default adminRouter;
