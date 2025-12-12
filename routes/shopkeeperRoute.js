@@ -994,10 +994,32 @@ shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
   try {
     const { amount, payment_method, transaction_id, notes } = req.body;
     
-    if (!amount || !payment_method || !transaction_id) {
+    // Validate required fields
+    if (amount === undefined || amount === null) {
       return res.status(400).json({ 
         success: false, 
-        message: "Amount, payment method, and transaction ID are required" 
+        message: "Amount is required" 
+      });
+    }
+    
+    if (amount <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Amount must be greater than 0" 
+      });
+    }
+    
+    if (!payment_method) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Payment method is required" 
+      });
+    }
+    
+    if (!transaction_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Transaction ID is required" 
       });
     }
     

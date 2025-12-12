@@ -16,24 +16,34 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
-    const { latitude, longitude, radiusKm = 2 } = req.query;
+    const { latitude, longitude, radiusKm = 1 } = req.query;
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
     // Find nearby shops using Haversine formula
+    // Only include verified/approved shopkeepers with valid coordinates
     const [shops] = await pool.query(
       `SELECT id, name, shop_name, latitude, longitude,
               (6371 * acos(
-                 cos(radians(?)) * cos(radians(latitude)) *
-                 cos(radians(longitude) - radians(?)) +
-                 sin(radians(?)) * sin(radians(latitude))
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
               )) AS distance
        FROM shopkeepers
+       WHERE latitude IS NOT NULL 
+         AND longitude IS NOT NULL
+         AND latitude != 0 
+         AND longitude != 0
+         AND (verification_status = 'approved' OR verification_status IS NULL)
        HAVING distance <= ?
        ORDER BY distance ASC`,
       [latitude, longitude, latitude, radiusKm]
     );
+    
+    console.log(`Nearby shops query: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km, found=${shops.length} shops`);
 
     if (shops.length === 0) {
       return res.json({ success: true, shops: [] });
