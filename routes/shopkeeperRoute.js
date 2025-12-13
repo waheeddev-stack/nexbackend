@@ -862,23 +862,37 @@ shopkeeperRouter.post("/push-token", verifyToken, verifyShopkeeperStatus, async 
   }
 });
 
-// EARNINGS ENDPOINTS - DISABLED (Tables not available in current schema)
-// Uncomment and modify these endpoints when earnings tables are added to the database
+// BILLING/SUBSCRIPTION ENDPOINTS - Shopkeeper pays admin for order access
 
-/*
-// Calculate earnings based on order amount
-const calculateOrderEarning = (orderAmount) => {
-  if (orderAmount <= 100) return { amount: 5, rate: "5 (≤100)" };
-  if (orderAmount <= 300) return { amount: 8, rate: "8 (100-300)" };
-  return { amount: 15, rate: "15 (>300)" };
-};
-
-// Placeholder earnings endpoint - returns basic order statistics
+// Get billing summary (amount due to admin)
 shopkeeperRouter.get("/earnings", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
 
-    // Get basic order statistics instead of earnings
+    // Get shopkeeper subscription info
+    const [shopkeeper] = await pool.query(
+      `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due 
+       FROM shopkeepers WHERE id = ?`,
+      [shopkeeper_id]
+    );
+
+    // Get total payments made by this shopkeeper
+    const [payments] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total_paid 
+       FROM billing_payments 
+       WHERE shopkeeper_id = ? AND status = 'approved'`,
+      [shopkeeper_id]
+    ).catch(() => [[{ total_paid: 0 }]]);
+
+    // Get pending payments
+    const [pendingPayments] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as pending_amount 
+       FROM billing_payments 
+       WHERE shopkeeper_id = ? AND status = 'pending'`,
+      [shopkeeper_id]
+    ).catch(() => [[{ pending_amount: 0 }]]);
+
+    // Get order stats
     const [orderStats] = await pool.query(
       `SELECT 
         COUNT(*) as total_orders,
@@ -889,19 +903,120 @@ shopkeeperRouter.get("/earnings", verifyToken, verifyShopkeeperStatus, async (re
       [shopkeeper_id]
     );
 
+    const shopData = shopkeeper[0] || {};
+    
     res.json({
       success: true,
-      message: "Earnings system not yet implemented",
-      orderStats: orderStats[0],
-      note: "This is placeholder data. Earnings system will be implemented when earnings tables are added."
+      data: {
+        total_paid: payments[0]?.total_paid || 0,
+        pending_amount: pendingPayments[0]?.pending_amount || 0,
+        subscription_status: shopData.subscription_status || 'trial',
+        shop_scale: shopData.shop_scale || 'small',
+        trial_ends_at: shopData.trial_ends_at,
+        next_payment_due: shopData.next_payment_due,
+        total_orders: orderStats[0].total_orders,
+        delivered_orders: orderStats[0].delivered_orders,
+        total_sales: orderStats[0].total_sales
+      }
     });
 
   } catch (err) {
-    console.error("Get earnings placeholder error:", err);
+    console.error("Get billing summary error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-*/
+
+// Get payment history (payments made to admin)
+shopkeeperRouter.get("/earnings/history", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    // Get payment history from billing_payments table
+    const [payments] = await pool.query(
+      `SELECT 
+        id,
+        amount,
+        payment_method,
+        transaction_id,
+        status,
+        notes,
+        payment_date as created_at
+       FROM billing_payments 
+       WHERE shopkeeper_id = ?
+       ORDER BY payment_date DESC
+       LIMIT 50`,
+      [shopkeeper_id]
+    ).catch(() => [[]]);
+
+    res.json({
+      success: true,
+      data: payments
+    });
+
+  } catch (err) {
+    console.error("Get payment history error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get billing/subscription status
+shopkeeperRouter.get("/earnings/status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    // Get shopkeeper subscription details
+    const [shopkeeper] = await pool.query(
+      `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due, last_payment_date
+       FROM shopkeepers WHERE id = ?`,
+      [shopkeeper_id]
+    );
+
+    if (shopkeeper.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    const data = shopkeeper[0];
+    const now = new Date();
+    
+    // Calculate days remaining in trial
+    let daysRemaining = 0;
+    if (data.trial_ends_at) {
+      const trialEnds = new Date(data.trial_ends_at);
+      if (trialEnds > now) {
+        daysRemaining = Math.ceil((trialEnds - now) / (1000 * 60 * 60 * 24));
+      }
+    }
+
+    // Get this month's payment total
+    const [monthPayments] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as paid_this_month
+       FROM billing_payments 
+       WHERE shopkeeper_id = ? 
+       AND status = 'approved'
+       AND MONTH(payment_date) = MONTH(CURRENT_DATE())
+       AND YEAR(payment_date) = YEAR(CURRENT_DATE())`,
+      [shopkeeper_id]
+    ).catch(() => [[{ paid_this_month: 0 }]]);
+
+    res.json({
+      success: true,
+      data: {
+        subscription_status: data.subscription_status || 'trial',
+        shop_scale: data.shop_scale || 'small',
+        trial_ends_at: data.trial_ends_at,
+        days_remaining: daysRemaining,
+        is_trial_active: data.subscription_status === 'trial' && daysRemaining > 0,
+        next_payment_due: data.next_payment_due,
+        last_payment_date: data.last_payment_date,
+        paid_this_month: monthPayments[0]?.paid_this_month || 0
+      }
+    });
+
+  } catch (err) {
+    console.error("Get billing status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // Update shop scale
 shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {

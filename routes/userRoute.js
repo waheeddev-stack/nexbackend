@@ -22,7 +22,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Find nearby shops using Haversine formula
-    // Only include verified/approved shopkeepers with valid coordinates
+    // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates
     const [shops] = await pool.query(
       `SELECT id, name, shop_name, latitude, longitude,
               (6371 * acos(
@@ -37,7 +37,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND longitude IS NOT NULL
          AND latitude != 0 
          AND longitude != 0
-         AND (verification_status = 'approved' OR verification_status IS NULL)
+         AND is_verified = 1
        HAVING distance <= ?
        ORDER BY distance ASC`,
       [latitude, longitude, latitude, radiusKm]
@@ -72,10 +72,20 @@ userrouter.get("/nearby-shops", async (req, res) => {
   }
 });
 
-import { validate, validateUserRegistration, createRateLimiter } from "../middleware/validation.js";
+import { validateUserRegistration, createRateLimiter } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
 const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
+
+// Validation middleware
+const validate = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({ success: false, message: error.details[0].message });
+  }
+  req.validatedData = value;
+  next();
+};
 
 // REGISTER
 userrouter.post("/signup", authRateLimit, validate(validateUserRegistration), async (req, res) => {
@@ -96,7 +106,7 @@ userrouter.post("/signup", authRateLimit, validate(validateUserRegistration), as
     const nextId = (maxIdResult[0].maxId || 0) + 1;
 
     // Insert new user into database with explicit ID
-    const [result] = await pool.query(
+    await pool.query(
       "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
       [nextId, validatedData.name, validatedData.email, hashedPassword]
     );
