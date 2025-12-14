@@ -24,7 +24,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Find nearby shops using Haversine formula
     // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates
     const [shops] = await pool.query(
-      `SELECT id, name, shop_name, latitude, longitude,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
