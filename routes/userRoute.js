@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
+import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
@@ -59,9 +60,11 @@ userrouter.get("/nearby-shops", async (req, res) => {
       [shopIds]
     );
 
-    // Group products under their shop
+    // Group products under their shop, ensure address is never null/undefined
     const shopsWithProducts = shops.map(shop => ({
       ...shop,
+      // Provide fallback address if not set
+      address: shop.address || `Near coordinates (${parseFloat(shop.latitude).toFixed(4)}, ${parseFloat(shop.longitude).toFixed(4)})`,
       products: products.filter(p => p.shop_id === shop.id),
     }));
 
@@ -318,18 +321,23 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       const shopDiscount = pointsDiscount * shopDiscountRatio;
       const shopTotal = shopSubtotal - shopDiscount;
       
-      // Insert order for this shopkeeper
-      const [orderResult] = await pool.query(
-        "INSERT INTO orders (user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used) VALUES (?, ?, ?, ?, ?, ?)",
-        [user_id, shopId, shopTotal, address, "Pending", pointsToRedeem]
+      // Get next order ID (TiDB doesn't support auto-increment reliably)
+      const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
+      const orderId = maxOrderId[0].nextId;
+      
+      // Insert order for this shopkeeper with explicit ID
+      await pool.query(
+        "INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+        [orderId, user_id, shopId, shopTotal, address, "Pending", pointsToRedeem]
       );
-      const orderId = orderResult.insertId;
 
-      // Insert order items for this order
+      // Insert order items for this order (TiDB doesn't support auto-increment reliably)
       for (const item of shopItems) {
+        const [maxItemId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
+        const itemId = maxItemId[0].nextId;
         await pool.query(
-          "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
-          [orderId, item.product_id, item.quantity, item.price]
+          "INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)",
+          [itemId, orderId, item.product_id, item.quantity, item.price]
         );
       }
 
@@ -379,17 +387,28 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
           console.warn("Socket emit failed for shop", shopId, emitErr);
         }
 
-        // Send push notification to shopkeeper
+        // Send push notification to shopkeeper (supports both FCM and Expo tokens)
         try {
           const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
           const token = shop?.expo_push_token;
           if (token) {
-            const result = await sendExpoPush(
-              token,
-              "📦 New Order Received!",
-              `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
-              { orderId, shopId }
-            );
+            let result;
+            // Check if it's an FCM token or Expo token
+            if (isFCMToken(token)) {
+              result = await sendFCMPush(
+                token,
+                "📦 New Order Received!",
+                `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
+                { orderId: String(orderId), shopId: String(shopId) }
+              );
+            } else {
+              result = await sendExpoPush(
+                token,
+                "📦 New Order Received!",
+                `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
+                { orderId, shopId }
+              );
+            }
 
             if (result?.invalidTokens?.length) {
               await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);

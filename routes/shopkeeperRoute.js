@@ -6,6 +6,7 @@ import fetch from "node-fetch";
 import cloudinary from "../config/cloudinary.js";
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
+import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
 // import checkPaymentStatus from "../middleware/checkPaymentStatus.js"; // Disabled - earnings system not implemented
@@ -118,7 +119,7 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, 
 // SHOPKEEPER SIGNUP - Simplified version
 shopkeeperRouter.post("/signup", async (req, res) => {
   try {
-    const { name, email, password, phone, shop_name } = req.body;
+    const { name, email, password, phone, shop_name, address, latitude, longitude } = req.body;
 
     // Validation
     if (!name || !email || !password || !phone || !shop_name) {
@@ -155,10 +156,15 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     const [maxIdResult] = await pool.query("SELECT MAX(id) as maxId FROM shopkeepers");
     const nextId = (maxIdResult[0].maxId || 0) + 1;
 
-    // Insert new shopkeeper with explicit ID
+    // Parse latitude and longitude if provided
+    const lat = latitude ? parseFloat(latitude) : null;
+    const lng = longitude ? parseFloat(longitude) : null;
+    const addr = address && address.trim() ? address.trim() : null;
+
+    // Insert new shopkeeper with explicit ID, including address and coordinates
     const [result] = await pool.query(
-      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name) VALUES (?, ?, ?, ?, ?, ?)`,
-      [nextId, name, email, hashedPassword, phone, shop_name]
+      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nextId, name, email, hashedPassword, phone, shop_name, addr, lat, lng]
     );
 
     console.log('Insert result:', result);
