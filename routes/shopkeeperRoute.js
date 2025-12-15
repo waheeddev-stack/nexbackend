@@ -188,6 +188,8 @@ shopkeeperRouter.post("/signup", async (req, res) => {
 
     return res.json({ 
       success: true, 
+      token,
+      user,
       shopkeeper: user,
       message: "Shopkeeper registered successfully. Please wait for admin verification."
     });
@@ -1024,7 +1026,7 @@ shopkeeperRouter.get("/earnings/status", verifyToken, verifyShopkeeperStatus, as
   }
 });
 
-// Update shop scale
+// Update shop scale and auto-add matching global products
 shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
@@ -1050,10 +1052,47 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
     
+    // Auto-add global products matching this scale to shopkeeper's products
+    let productsAdded = 0;
+    try {
+      // Get global products available for this scale (matching scale or "all")
+      const [globalProducts] = await pool.query(`
+        SELECT id, name, description, category, price, image
+        FROM global_products 
+        WHERE JSON_CONTAINS(shop_scales, '"all"') 
+           OR JSON_CONTAINS(shop_scales, ?)
+      `, [JSON.stringify(shop_scale)]);
+      
+      // Get existing products for this shopkeeper to avoid duplicates
+      const [existingProducts] = await pool.query(
+        "SELECT global_product_id FROM products WHERE shop_id = ? AND global_product_id IS NOT NULL",
+        [shopkeeperId]
+      );
+      const existingGlobalIds = new Set(existingProducts.map(p => p.global_product_id));
+      
+      // Add products that don't already exist
+      for (const gp of globalProducts) {
+        if (!existingGlobalIds.has(gp.id)) {
+          await pool.query(
+            `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [shopkeeperId, gp.id, gp.name, gp.description || null, gp.category || null, gp.price || 0, 0, gp.image || null]
+          );
+          productsAdded++;
+        }
+      }
+      
+      console.log(`Auto-added ${productsAdded} products for shopkeeper ${shopkeeperId} with scale ${shop_scale}`);
+    } catch (productErr) {
+      console.error("Error auto-adding products:", productErr);
+      // Don't fail the whole request if product addition fails
+    }
+    
     res.json({ 
       success: true, 
       message: `Shop scale updated to ${shop_scale}`,
-      trial_ends_at: trialEndDate
+      trial_ends_at: trialEndDate,
+      products_added: productsAdded
     });
   } catch (err) {
     console.error("Update shop scale error:", err);

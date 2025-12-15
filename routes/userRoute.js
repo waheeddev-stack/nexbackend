@@ -75,20 +75,10 @@ userrouter.get("/nearby-shops", async (req, res) => {
   }
 });
 
-import { validateUserRegistration, createRateLimiter } from "../middleware/validation.js";
+import { validateUserRegistration, createRateLimiter, validate } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
 const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
-
-// Validation middleware
-const validate = (schema) => (req, res, next) => {
-  const { error, value } = schema.validate(req.body);
-  if (error) {
-    return res.status(400).json({ success: false, message: error.details[0].message });
-  }
-  req.validatedData = value;
-  next();
-};
 
 // REGISTER
 userrouter.post("/signup", authRateLimit, validate(validateUserRegistration), async (req, res) => {
