@@ -116,8 +116,8 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, 
   }
 });
 
-// SHOPKEEPER SIGNUP - Simplified version
-shopkeeperRouter.post("/signup", async (req, res) => {
+// SHOPKEEPER SIGNUP - Handles both JSON and FormData
+shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
   try {
     const { name, email, password, phone, shop_name, address, latitude, longitude } = req.body;
 
@@ -161,10 +161,29 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     const lng = longitude ? parseFloat(longitude) : null;
     const addr = address && address.trim() ? address.trim() : null;
 
-    // Insert new shopkeeper with explicit ID, including address and coordinates
+    // Handle optional image upload
+    let imgUrl = null;
+    if (req.file) {
+      try {
+        const streamifier = await import('streamifier');
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: "shopkeepers" }, (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          });
+          streamifier.default.createReadStream(req.file.buffer).pipe(stream);
+        });
+        imgUrl = result.secure_url;
+      } catch (uploadErr) {
+        console.error("Image upload error during signup:", uploadErr);
+        // Continue without image - don't fail signup
+      }
+    }
+
+    // Insert new shopkeeper with explicit ID, including address, coordinates, and image
     const [result] = await pool.query(
-      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nextId, name, email, hashedPassword, phone, shop_name, addr, lat, lng]
+      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nextId, name, email, hashedPassword, phone, shop_name, addr, lat, lng, imgUrl]
     );
 
     console.log('Insert result:', result);
@@ -197,7 +216,8 @@ shopkeeperRouter.post("/signup", async (req, res) => {
     console.error("Shopkeeper signup error:", err);
     return res.status(500).json({ 
       success: false, 
-      message: "Server error" 
+      message: process.env.NODE_ENV === 'development' ? err.message : "Server error",
+      error: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
@@ -405,7 +425,8 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
       params.push(status);
     }
 
-    const [orders] = await pool.query(
+    // Fetch orders first (without JSON aggregation for TiDB compatibility)
+    const [orderRows] = await pool.query(
       `SELECT 
         o.id AS order_id,
         o.user_id,
@@ -418,27 +439,56 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
         o.delivery_address,
         u.name AS customer_name,
         u.phone AS customer_phone,
-        u.email AS customer_email,
-        JSON_ARRAYAGG(
-          JSON_OBJECT(
-            'product_id', oi.product_id,
-            'product_name', p.name,
-            'product_image', p.image,
-            'quantity', oi.quantity,
-            'price', oi.price
-          )
-        ) AS items
+        u.email AS customer_email
        FROM orders o
-       JOIN users u ON o.user_id = u.id
-       JOIN order_items oi ON o.id = oi.order_id
-       JOIN products p ON oi.product_id = p.id
+       LEFT JOIN users u ON o.user_id = u.id
        ${whereClause}
-       GROUP BY o.id
        ORDER BY o.created_at DESC`,
       params
     );
 
-    res.json({ success: true, orders });
+    // Fetch order items for all orders
+    if (orderRows.length > 0) {
+      const orderIds = orderRows.map(o => o.order_id);
+      const [itemRows] = await pool.query(
+        `SELECT 
+          oi.order_id,
+          oi.product_id,
+          COALESCE(p.name, 'Product Unavailable') AS product_name,
+          p.image AS product_image,
+          oi.quantity,
+          oi.price
+         FROM order_items oi
+         LEFT JOIN products p ON oi.product_id = p.id
+         WHERE oi.order_id IN (?)`,
+        [orderIds]
+      );
+
+      // Group items by order_id
+      const itemsByOrder = {};
+      for (const item of itemRows) {
+        if (!itemsByOrder[item.order_id]) {
+          itemsByOrder[item.order_id] = [];
+        }
+        itemsByOrder[item.order_id].push({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          product_image: item.product_image,
+          quantity: item.quantity,
+          price: item.price
+        });
+      }
+
+      // Attach items to orders
+      const orders = orderRows.map(order => ({
+        ...order,
+        items: itemsByOrder[order.order_id] || []
+      }));
+
+      return res.json({ success: true, orders });
+    }
+
+    res.json({ success: true, orders: [] });
   } catch (err) {
     console.error("Get shopkeeper orders error:", err);
     res.status(500).json({ success: false, message: "Server error" });
