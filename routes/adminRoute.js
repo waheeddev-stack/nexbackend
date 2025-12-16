@@ -840,7 +840,7 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
       `SELECT 
          o.id, o.user_id, o.shopkeeper_id, o.status, o.total_amount, o.credits_earned,
          o.latitude, o.longitude, o.delivery_address, o.created_at,
-         u.name AS customer_name, u.email AS customer_email,
+         u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
          s.shop_name, s.name AS shopkeeper_name
        FROM orders o
        JOIN users u ON o.user_id = u.id
@@ -853,7 +853,9 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
 
     if (orderIds.length) {
       const [items] = await pool.query(
-        `SELECT oi.order_id, oi.product_id, oi.quantity, oi.price, p.name AS product_name
+        `SELECT oi.order_id, oi.product_id, oi.quantity, oi.price, 
+                COALESCE(p.name, 'Product Unavailable') AS product_name,
+                p.image AS product_image
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.id
          WHERE oi.order_id IN (?)`,

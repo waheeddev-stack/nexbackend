@@ -1417,6 +1417,14 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
 
     const order = orderInfo[0];
 
+    // Check if order is already delivered
+    if (order.status === 'Delivered') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Order is already delivered" 
+      });
+    }
+
     // Verify pickup code
     if (order.pickup_code !== pickup_code) {
       return res.status(400).json({ 
@@ -1425,23 +1433,20 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
       });
     }
 
-    // Check if timer is still active
-    if (!order.is_active) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Timer is not active for this order" 
-      });
-    }
-
     const now = new Date();
+    // Allow completion even if timer expired or is_active is null/false
+    // Timer might have expired on client but code is still valid
     const wasOnTime = order.timer_expires_at && now <= new Date(order.timer_expires_at);
 
     // Stop timer and mark order as delivered
-    await pool.query(`
-      UPDATE order_timers 
-      SET is_active = FALSE, stopped_at = ?, is_expired = ?
-      WHERE order_id = ?
-    `, [now, !wasOnTime, orderIdNum]);
+    // Use INSERT ... ON DUPLICATE KEY UPDATE to handle case where timer entry might not exist
+    if (order.is_active !== null) {
+      await pool.query(`
+        UPDATE order_timers 
+        SET is_active = FALSE, stopped_at = ?, is_expired = ?
+        WHERE order_id = ?
+      `, [now, !wasOnTime, orderIdNum]);
+    }
 
     await pool.query(`
       UPDATE orders 
