@@ -79,25 +79,32 @@ io.on("connection", (socket) => {
   // Join as shopkeeper
   socket.on("joinShop", (shopkeeper_id) => {
     if (!shopkeeper_id) return;
-    const room = `shop_${shopkeeper_id}`;
+    // Convert to number for consistent room naming
+    const numericShopkeeperId = Number(shopkeeper_id);
+    const room = `shop_${numericShopkeeperId}`;
     socket.join(room);
-    socket.shopkeeper_id = shopkeeper_id;
+    socket.shopkeeper_id = numericShopkeeperId;
     console.log(`Socket ${socket.id} joined ${room}`);
     
     // Notify admin of shopkeeper connection
-    socket.to("admin").emit("shopkeeperOnline", { shopkeeper_id, socket_id: socket.id });
+    socket.to("admin").emit("shopkeeperOnline", { shopkeeper_id: numericShopkeeperId, socket_id: socket.id });
   });
 
   // Join as customer
   socket.on("joinCustomer", (user_id) => {
-    if (!user_id) return;
-    const room = `customer_${user_id}`;
+    if (!user_id) {
+      console.log(`Socket ${socket.id}: joinCustomer called with empty user_id`);
+      return;
+    }
+    // Convert to number for consistent room naming
+    const numericUserId = Number(user_id);
+    const room = `customer_${numericUserId}`;
     socket.join(room);
-    socket.user_id = user_id;
+    socket.user_id = numericUserId;
     console.log(`Socket ${socket.id} joined ${room}`);
     
     // Notify admin of customer connection
-    socket.to("admin").emit("customerOnline", { user_id, socket_id: socket.id });
+    socket.to("admin").emit("customerOnline", { user_id: numericUserId, socket_id: socket.id });
   });
 
   // Join as admin

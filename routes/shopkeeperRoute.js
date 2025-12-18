@@ -1475,17 +1475,26 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
 
     // Broadcast events via socket
     if (req.io) {
-      req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { 
+      // Convert to numbers to ensure consistent room names
+      const shopRoom = `shop_${Number(shopkeeper_id)}`;
+      const customerRoom = `customer_${Number(order.user_id)}`;
+      
+      console.log(`Socket: Emitting orderStatusUpdate to ${shopRoom} and ${customerRoom}`);
+      console.log(`Socket: orderId=${orderIdNum}, user_id=${order.user_id}`);
+      
+      req.io.to(shopRoom).emit("orderStatusUpdate", { 
         orderId: orderIdNum, 
         status: 'Completed',
         wasOnTime 
       });
-      req.io.to(`customer_${order.user_id}`).emit("orderStatusUpdate", { 
+      req.io.to(customerRoom).emit("orderStatusUpdate", { 
         orderId: orderIdNum, 
         status: 'Completed',
         wasOnTime,
         pointsAwarded
       });
+    } else {
+      console.warn("Socket: req.io is not available!");
     }
 
     // Send push notification to customer
