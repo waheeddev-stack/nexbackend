@@ -3,17 +3,24 @@
 // Points: 20, 15, 10, 5 | Coin Value: ₹0.05
 
 // Calculate wellness points based on delivery time performance
+// timeRemaining: positive = arrived early, negative = arrived late
 const calculateWellnessPoints = (timeRemaining, totalDuration = 7 * 60 * 1000) => {
-  const minutesRemaining = Math.floor(timeRemaining / (60 * 1000));
+  // Convert to minutes (can be negative)
+  const minutesRemaining = timeRemaining / (60 * 1000);
   
+  // Award points based on how much time is LEFT when customer arrives
   if (minutesRemaining >= 5) {
-    return { points: 20, tier: "Super Fast", description: "5+ min left" };
+    // Arrived with 5+ minutes remaining = Super Fast
+    return { points: 20, tier: "Super Fast", description: "Arrived with 5+ min left" };
   } else if (minutesRemaining >= 2) {
-    return { points: 15, tier: "Good Pace", description: "2+ min left" };
+    // Arrived with 2-5 minutes remaining = Good Pace
+    return { points: 15, tier: "Good Pace", description: "Arrived with 2-5 min left" };
   } else if (minutesRemaining >= 0) {
-    return { points: 10, tier: "On Time", description: "0-2 min left" };
+    // Arrived with 0-2 minutes remaining = On Time
+    return { points: 10, tier: "On Time", description: "Arrived with 0-2 min left" };
   } else {
-    return { points: 5, tier: "Late but Active", description: "Completed late" };
+    // Arrived after timer expired = Late but Active
+    return { points: 5, tier: "Late but Active", description: "Arrived after timer expired" };
   }
 };
 
@@ -68,14 +75,26 @@ const calculateDiscount = (points) => {
 };
 
 // Award wellness points for order completion
-const awardWellnessPoints = async (pool, userId, deliveryTime, orderCreatedAt) => {
+const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt) => {
   try {
-    const orderTime = new Date(orderCreatedAt);
+    // Calculate time remaining based on timer
+    const timerStart = new Date(timerStartedAt);
     const deliveredTime = new Date(deliveryTime);
-    const timeTaken = deliveredTime - orderTime;
-    const timeRemaining = (7 * 60 * 1000) - timeTaken; // 7 minutes target - actual time
+    const timerDuration = 7 * 60 * 1000; // 7 minutes in milliseconds
+    const timerExpires = new Date(timerStart.getTime() + timerDuration);
     
-    const pointsData = calculateWellnessPoints(timeRemaining);
+    // Time remaining = timer expiry - actual delivery time
+    // Positive = on time, Negative = late
+    const timeRemaining = timerExpires - deliveredTime;
+    
+    const pointsData = calculateWellnessPoints(timeRemaining, timerDuration);
+    
+    console.log(`Wellness Points Calculation:
+      - Timer Started: ${timerStart.toISOString()}
+      - Timer Expires: ${timerExpires.toISOString()}
+      - Delivered At: ${deliveredTime.toISOString()}
+      - Time Remaining: ${Math.floor(timeRemaining / 1000)}s (${Math.floor(timeRemaining / 60000)} min)
+      - Points Awarded: ${pointsData.points} (${pointsData.tier})`);
     
     // Update user's store credits
     await pool.query(

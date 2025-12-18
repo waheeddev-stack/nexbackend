@@ -324,6 +324,7 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     const timerExpiresAt = new Date(timerStartedAt.getTime() + (timerDuration * 1000));
 
     // Insert single order for the selected shop with timer info
+    console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
     await pool.query(
       `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
@@ -378,8 +379,13 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       // Emit socket events
       try {
         if (req.io) {
-          req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
-          req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
+          const shopRoom = `shop_${Number(shopId)}`;
+          const customerRoom = `customer_${Number(user_id)}`;
+          console.log(`Emitting newOrder to ${shopRoom} and ${customerRoom} for order ${orderId}`);
+          req.io.to(shopRoom).emit("newOrder", orderPayload);
+          req.io.to(customerRoom).emit("newOrder", orderPayload);
+        } else {
+          console.warn("req.io not available for socket emission");
         }
       } catch (emitErr) {
         console.warn("Socket emit failed for shop", shopId, emitErr);
