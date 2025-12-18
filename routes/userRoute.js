@@ -318,10 +318,13 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     // Generate 6-digit pickup code for timer verification
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Calculate timer (7 minutes = 420 seconds)
-    const timerDuration = 420;
+    // ⏱️ TIMER STARTS NOW - Customer must reach shop within 7 minutes
+    // Timer starts automatically when order is placed (FIT INDIA challenge)
+    const timerDuration = 420; // 7 minutes in seconds
     const timerStartedAt = new Date();
     const timerExpiresAt = new Date(timerStartedAt.getTime() + (timerDuration * 1000));
+    
+    console.log(`⏱️ Timer started for order ${orderId}: ${timerStartedAt.toISOString()} -> expires: ${timerExpiresAt.toISOString()}`);
 
     // Insert single order for the selected shop with timer info
     console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
@@ -439,13 +442,114 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
         shop_latitude: shop.latitude,
         shop_longitude: shop.longitude
       },
-      message: "Order placed successfully. Timer started!",
+      message: "Order placed successfully! 7-minute timer is already running - head to the shop now!",
       pointsRedeemed: pointsToRedeem,
       pointsDiscount: pointsDiscount,
       finalTotal: finalTotal
     });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Cancel order (customer cancellation)
+userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { orderId } = req.params;
+    
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+    
+    console.log(`🚫 Customer ${user_id} cancelling order ${orderIdNum}`);
+    
+    // Check if order belongs to this user and is cancellable
+    const [[order]] = await pool.query(
+      "SELECT id, user_id, shopkeeper_id, status FROM orders WHERE id = ? AND user_id = ?",
+      [orderIdNum, user_id]
+    );
+    
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+    
+    // Only allow cancellation of Pending orders
+    if (order.status !== 'Pending') {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot cancel order with status: ${order.status}. Only pending orders can be cancelled.` 
+      });
+    }
+    
+    // Update order status to Cancelled
+    await pool.query(
+      "UPDATE orders SET status = 'Cancelled' WHERE id = ?",
+      [orderIdNum]
+    );
+    
+    console.log(`✅ Order ${orderIdNum} cancelled successfully`);
+    
+    // Broadcast cancellation via sockets to shopkeeper
+    try {
+      if (req.io) {
+        // Convert IDs to numbers for consistent room naming
+        const shopRoom = `shop_${Number(order.shopkeeper_id)}`;
+        const customerRoom = `customer_${Number(user_id)}`;
+        
+        console.log(`📡 Socket: Emitting order cancellation`);
+        console.log(`📡 Socket: Shop room: ${shopRoom} (shopkeeper_id: ${order.shopkeeper_id})`);
+        console.log(`📡 Socket: Customer room: ${customerRoom} (user_id: ${user_id})`);
+        console.log(`📡 Socket: Payload: { orderId: ${orderIdNum}, status: 'Cancelled' }`);
+        
+        // Emit to shopkeeper room
+        req.io.to(shopRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status: 'Cancelled' });
+        console.log(`📡 Socket: ✅ Emitted to ${shopRoom}`);
+        
+        // Emit to customer room
+        req.io.to(customerRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status: 'Cancelled' });
+        console.log(`📡 Socket: ✅ Emitted to ${customerRoom}`);
+        
+        // Also emit orderStatusChanged for backward compatibility
+        req.io.to(shopRoom).emit("orderStatusChanged", { orderId: orderIdNum, status: 'Cancelled' });
+        req.io.to(customerRoom).emit("orderStatusChanged", { orderId: orderIdNum, status: 'Cancelled' });
+        console.log(`📡 Socket: ✅ Also emitted orderStatusChanged events`);
+      } else {
+        console.error(`📡 Socket: ❌ req.io is not available! Cannot emit socket events.`);
+      }
+      
+      // Send push notification to shopkeeper
+      const [[shopkeeper]] = await pool.query(
+        "SELECT expo_push_token FROM shopkeepers WHERE id = ?",
+        [order.shopkeeper_id]
+      );
+      
+      if (shopkeeper?.expo_push_token) {
+        const token = shopkeeper.expo_push_token;
+        console.log(`📱 Push: Sending cancellation notification to shopkeeper ${order.shopkeeper_id}`);
+        if (isFCMToken(token)) {
+          await sendFCMPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.`, { orderId: String(orderIdNum), status: 'Cancelled' });
+        } else {
+          await sendExpoPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.`, { orderId: orderIdNum, status: 'Cancelled' });
+        }
+        console.log(`📱 Push: ✅ Notification sent successfully`);
+      } else {
+        console.log(`📱 Push: No push token found for shopkeeper ${order.shopkeeper_id}`);
+      }
+    } catch (notifyErr) {
+      console.error("❌ Notification error:", notifyErr);
+      // Don't fail the cancellation if notification fails
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Order cancelled successfully",
+      orderId: orderIdNum
+    });
+  } catch (err) {
+    console.error("Cancel order error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

@@ -577,9 +577,25 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       // fetch user_id for this order
       const [[orderRow]] = await pool.query("SELECT user_id FROM orders WHERE id = ?", [orderIdNum]);
       const customerId = orderRow?.user_id;
+      
+      console.log(`📡 Socket: Broadcasting order status update - orderId: ${orderIdNum}, status: ${status}`);
+      console.log(`📡 Socket: customerId: ${customerId}, shopkeeper_id: ${shopkeeper_id}`);
+      
       if (req.io) {
-        req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
-        if (customerId) req.io.to(`customer_${customerId}`).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        const shopRoom = `shop_${shopkeeper_id}`;
+        const customerRoom = `customer_${customerId}`;
+        
+        console.log(`📡 Socket: Emitting to ${shopRoom}`);
+        req.io.to(shopRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        
+        if (customerId) {
+          console.log(`📡 Socket: Emitting to ${customerRoom}`);
+          req.io.to(customerRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        }
+        
+        console.log(`📡 Socket: Emissions completed successfully`);
+      } else {
+        console.error(`📡 Socket: req.io is not available!`);
       }
 
       // send push notification to customer
