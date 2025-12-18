@@ -81,11 +81,11 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, 
 
     // Get stats for this specific shopkeeper only
     const [[totalSales]] = await pool.query(
-      "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Delivered' AND shopkeeper_id = ?",
+      "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Completed' AND shopkeeper_id = ?",
       [shopkeeper_id]
     );
     const [[totalDelivered]] = await pool.query(
-      "SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Delivered' AND shopkeeper_id = ?",
+      "SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Completed' AND shopkeeper_id = ?",
       [shopkeeper_id]
     );
     const [[totalPending]] = await pool.query(
@@ -97,7 +97,7 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, 
       [shopkeeper_id]
     );
     const [[totalCompleted]] = await pool.query(
-      "SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Delivered','Cancelled') AND shopkeeper_id = ?",
+      "SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Completed','Cancelled') AND shopkeeper_id = ?",
       [shopkeeper_id]
     );
 
@@ -507,8 +507,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       return res.status(400).json({ success: false, message: "Invalid order ID" });
     }
 
-    // Validate status
-    const validStatuses = ["Pending", "Processing", "Delivered", "Cancelled"];
+    // Validate status - use Completed instead of Delivered
+    const validStatuses = ["Pending", "Processing", "Completed", "Cancelled"];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ 
         success: false, 
@@ -542,11 +542,12 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
-    // Award wellness points if order is delivered
-    if (status === "Delivered") {
+    // Award wellness points if order is completed
+    // Note: For proper timer-based rewards, use verify-pickup endpoint instead
+    if (status === "Completed") {
       try {
         const [[orderDetails]] = await pool.query(
-          "SELECT user_id, created_at FROM orders WHERE id = ?",
+          "SELECT user_id, created_at, timer_started_at FROM orders WHERE id = ?",
           [orderIdNum]
         );
         
@@ -554,8 +555,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
           const pointsData = await awardWellnessPoints(
             pool, 
             orderDetails.user_id, 
-            new Date(), // delivery time (now)
-            orderDetails.created_at // order creation time
+            new Date(), // completion time (now)
+            orderDetails.timer_started_at || orderDetails.created_at // timer start or order creation time
           );
           
           console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for order ${orderIdNum}`);
@@ -1383,8 +1384,9 @@ shopkeeperRouter.post("/orders/:orderId/start-timer", verifyToken, verifyShopkee
   }
 });
 
-// Stop timer with pickup code verification
-shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+// Verify pickup code - stops timer and marks order as Completed
+// This is called when customer arrives at shop and gives the code to shopkeeper
+shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
@@ -1401,8 +1403,8 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
 
     // Get order and timer info
     const [orderInfo] = await pool.query(`
-      SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at,
-             ot.is_active, ot.is_expired, ot.timer_expires_at
+      SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at,
+             ot.is_active, ot.is_expired, ot.timer_expires_at as ot_expires
       FROM orders o
       LEFT JOIN order_timers ot ON o.id = ot.order_id
       WHERE o.id = ? AND o.shopkeeper_id = ?
@@ -1417,11 +1419,11 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
 
     const order = orderInfo[0];
 
-    // Check if order is already delivered
-    if (order.status === 'Delivered') {
+    // Check if order is already completed
+    if (order.status === 'Completed') {
       return res.status(400).json({ 
         success: false, 
-        message: "Order is already delivered" 
+        message: "Order is already completed" 
       });
     }
 
@@ -1429,54 +1431,60 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
     if (order.pickup_code !== pickup_code) {
       return res.status(400).json({ 
         success: false, 
-        message: "Invalid pickup code" 
+        message: "Invalid pickup code. Please check and try again." 
       });
     }
 
     const now = new Date();
-    // Allow completion even if timer expired or is_active is null/false
-    // Timer might have expired on client but code is still valid
-    const wasOnTime = order.timer_expires_at && now <= new Date(order.timer_expires_at);
+    const timerExpiresAt = order.timer_expires_at || order.ot_expires;
+    // Check if customer arrived on time
+    const wasOnTime = timerExpiresAt && now <= new Date(timerExpiresAt);
 
-    // Stop timer and mark order as delivered
-    // Use INSERT ... ON DUPLICATE KEY UPDATE to handle case where timer entry might not exist
-    if (order.is_active !== null) {
+    // Stop timer in order_timers table
+    try {
       await pool.query(`
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
         WHERE order_id = ?
       `, [now, !wasOnTime, orderIdNum]);
+    } catch (timerError) {
+      console.warn("Timer update failed:", timerError.message);
     }
 
+    // Mark order as Completed
     await pool.query(`
       UPDATE orders 
-      SET status = 'Delivered', has_timer = FALSE
+      SET status = 'Completed', has_timer = FALSE
       WHERE id = ?
     `, [orderIdNum]);
 
-    // Award wellness points if order is delivered
+    // Award wellness points based on timing
+    let pointsAwarded = 0;
     try {
       const pointsData = await awardWellnessPoints(
         pool, 
         order.user_id, 
-        now, // delivery time
-        order.created_at // order creation time
+        now, // completion time
+        order.timer_started_at || order.created_at // timer start time
       );
-      
-      console.log(`Awarded ${pointsData.points} wellness points to user ${order.user_id} for order ${orderIdNum}`);
+      pointsAwarded = pointsData.points;
+      console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for order ${orderIdNum}`);
     } catch (pointsError) {
       console.error("Error awarding wellness points:", pointsError);
     }
 
-    // Broadcast events
+    // Broadcast events via socket
     if (req.io) {
-      req.io.to(`shop_${shopkeeper_id}`).emit("timerStopped", { 
+      req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { 
         orderId: orderIdNum, 
+        status: 'Completed',
         wasOnTime 
       });
       req.io.to(`customer_${order.user_id}`).emit("orderStatusUpdate", { 
         orderId: orderIdNum, 
-        status: 'Delivered' 
+        status: 'Completed',
+        wasOnTime,
+        pointsAwarded
       });
     }
 
@@ -1489,15 +1497,15 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
       
       if (customer?.expo_push_token) {
         const message = wasOnTime 
-          ? "🎉 Order completed on time! You've earned full rewards."
-          : "📦 Order completed! You've earned partial rewards due to late pickup.";
+          ? `🎉 Order completed on time! You earned ${pointsAwarded} wellness points.`
+          : `📦 Order completed! You earned ${pointsAwarded} wellness points (reduced due to late arrival).`;
           
-        await sendExpoPush(
-          customer.expo_push_token, 
-          "Order Delivered", 
-          message,
-          { orderId: orderIdNum, status: 'Delivered', wasOnTime }
-        );
+        const token = customer.expo_push_token;
+        if (isFCMToken(token)) {
+          await sendFCMPush(token, "Order Completed!", message, { orderId: String(orderIdNum), status: 'Completed', wasOnTime: String(wasOnTime) });
+        } else {
+          await sendExpoPush(token, "Order Completed!", message, { orderId: orderIdNum, status: 'Completed', wasOnTime });
+        }
       }
     } catch (pushError) {
       console.error("Push notification error:", pushError);
@@ -1506,15 +1514,23 @@ shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeep
     res.json({ 
       success: true, 
       message: wasOnTime 
-        ? "Order completed on time! Customer receives full rewards."
-        : "Order completed! Customer receives reduced rewards due to late pickup.",
-      was_on_time: wasOnTime
+        ? `Order completed on time! Customer earned ${pointsAwarded} wellness points.`
+        : `Order completed! Customer earned ${pointsAwarded} wellness points (late arrival).`,
+      was_on_time: wasOnTime,
+      points_awarded: pointsAwarded
     });
 
   } catch (err) {
-    console.error("Stop timer error:", err);
+    console.error("Verify pickup error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
+});
+
+// Legacy endpoint - redirects to verify-pickup
+shopkeeperRouter.post("/orders/:orderId/stop-timer", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  // Forward to verify-pickup endpoint
+  req.url = req.url.replace('stop-timer', 'verify-pickup');
+  return shopkeeperRouter.handle(req, res);
 });
 
 // Get timer status for an order

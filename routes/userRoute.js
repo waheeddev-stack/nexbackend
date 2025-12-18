@@ -251,9 +251,36 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     if (!user_id) {
       return res.status(401).json({ success: false, message: "User ID not found in token" });
     }
-    const { products, total, address, pointsToRedeem = 0 } = req.body;
+    const { products, total, address, pointsToRedeem = 0, shopId, latitude, longitude } = req.body;
     if (!Array.isArray(products) || products.length === 0 || !total || !address) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Validate that shopId is provided - orders must go to a single shop
+    if (!shopId) {
+      return res.status(400).json({ success: false, message: "Shop ID is required. Orders must be placed with a single shop." });
+    }
+
+    // Verify the shop exists and is verified
+    const [[shop]] = await pool.query(
+      "SELECT id, name, shop_name, expo_push_token, latitude, longitude FROM shopkeepers WHERE id = ? AND is_verified = 1",
+      [shopId]
+    );
+    if (!shop) {
+      return res.status(400).json({ success: false, message: "Shop not found or not verified" });
+    }
+
+    // Verify all products belong to this shop
+    const productIds = products.map(p => p.product_id);
+    const [prodRows] = await pool.query("SELECT id, shop_id FROM products WHERE id IN (?)", [productIds]);
+    
+    for (const prod of prodRows) {
+      if (prod.shop_id !== shopId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "All products must belong to the same shop. Please order from one shop at a time." 
+        });
+      }
     }
 
     // Handle wellness points redemption if requested
@@ -281,145 +308,135 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       }
     }
 
-    // Get shopkeeper IDs from products and create separate orders per shopkeeper
-    const productIds = products.map(p => p.product_id);
-    const [prodRows] = await pool.query("SELECT id, shop_id FROM products WHERE id IN (?)", [productIds]);
-    const productToShop = new Map(prodRows.map((p) => [p.id, p.shop_id]));
+    // Calculate final total after discount
+    const finalTotal = total - pointsDiscount;
 
-    // Group products by shopkeeper
-    const ordersByShop = new Map();
-    for (const item of products) {
-      const shopId = productToShop.get(item.product_id);
-      if (!shopId) {
-        return res.status(400).json({ success: false, message: `Product ${item.product_id} not found or has no shopkeeper` });
-      }
-      
-      if (!ordersByShop.has(shopId)) {
-        ordersByShop.set(shopId, []);
-      }
-      ordersByShop.get(shopId).push(item);
-    }
+    // Get next order ID (TiDB doesn't support auto-increment reliably)
+    const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
+    const orderId = maxOrderId[0].nextId;
+    
+    // Generate 6-digit pickup code for timer verification
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Calculate timer (7 minutes = 420 seconds)
+    const timerDuration = 420;
+    const timerStartedAt = new Date();
+    const timerExpiresAt = new Date(timerStartedAt.getTime() + (timerDuration * 1000));
 
-    const createdOrders = [];
+    // Insert single order for the selected shop with timer info
+    await pool.query(
+      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [orderId, user_id, shopId, finalTotal, address, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
+    );
 
-    // Create separate order for each shopkeeper
-    for (const [shopId, shopItems] of ordersByShop) {
-      const shopSubtotal = shopItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      
-      // Apply proportional discount from wellness points
-      const shopDiscountRatio = shopSubtotal / total;
-      const shopDiscount = pointsDiscount * shopDiscountRatio;
-      const shopTotal = shopSubtotal - shopDiscount;
-      
-      // Get next order ID (TiDB doesn't support auto-increment reliably)
-      const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
-      const orderId = maxOrderId[0].nextId;
-      
-      // Insert order for this shopkeeper with explicit ID
-      await pool.query(
-        "INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
-        [orderId, user_id, shopId, shopTotal, address, "Pending", pointsToRedeem]
-      );
-
-      // Insert order items for this order (TiDB doesn't support auto-increment reliably)
-      for (const item of shopItems) {
-        const [maxItemId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
-        const itemId = maxItemId[0].nextId;
-        await pool.query(
-          "INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)",
-          [itemId, orderId, item.product_id, item.quantity, item.price]
-        );
-      }
-
-      createdOrders.push({
-        orderId,
-        shopId,
-        shopTotal,
-        items: shopItems
-      });
-    }
-
-    // Notify shopkeepers and send real-time updates
+    // Create timer record in order_timers table
     try {
-      for (const order of createdOrders) {
-        const { orderId, shopId, shopTotal, items } = order;
-        
-        // Get product details for notification
-        const itemIds = items.map(i => i.product_id);
-        const [productDetails] = await pool.query("SELECT id, name, image FROM products WHERE id IN (?)", [itemIds]);
-        const productMap = new Map(productDetails.map(p => [p.id, p]));
-        
-        const enrichedItems = items.map(item => ({
-          ...item,
-          name: productMap.get(item.product_id)?.name || 'Unknown Product',
-          image: productMap.get(item.product_id)?.image || null
-        }));
+      await pool.query(`
+        INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
+        VALUES (?, ?, ?, ?, ?, TRUE)
+      `, [orderId, pickupCode, timerDuration, timerStartedAt, timerExpiresAt]);
+    } catch (timerError) {
+      console.warn("Timer record creation failed (table may not exist):", timerError.message);
+    }
 
-        // Build payload for real-time updates
-        const orderPayload = {
-          orderId,
-          total: shopTotal,
-          status: "Pending",
-          address,
-          items: enrichedItems,
-          user_id,
-          shop_id: shopId,
-          created_at: new Date().toISOString(),
-        };
+    // Insert order items
+    for (const item of products) {
+      const [maxItemId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
+      const itemId = maxItemId[0].nextId;
+      await pool.query(
+        "INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)",
+        [itemId, orderId, item.product_id, item.quantity, item.price]
+      );
+    }
 
-        // Emit socket events
-        try {
-          if (req.io) {
-            req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
-            req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
-          }
-        } catch (emitErr) {
-          console.warn("Socket emit failed for shop", shopId, emitErr);
+    // Notify shopkeeper and send real-time updates
+    try {
+      // Get product details for notification
+      const itemIds = products.map(i => i.product_id);
+      const [productDetails] = await pool.query("SELECT id, name, image FROM products WHERE id IN (?)", [itemIds]);
+      const productMap = new Map(productDetails.map(p => [p.id, p]));
+      
+      const enrichedItems = products.map(item => ({
+        ...item,
+        name: productMap.get(item.product_id)?.name || 'Unknown Product',
+        image: productMap.get(item.product_id)?.image || null
+      }));
+
+      // Build payload for real-time updates
+      const orderPayload = {
+        orderId,
+        total: finalTotal,
+        status: "Pending",
+        address,
+        items: enrichedItems,
+        user_id,
+        shop_id: shopId,
+        created_at: new Date().toISOString(),
+      };
+
+      // Emit socket events
+      try {
+        if (req.io) {
+          req.io.to(`shop_${shopId}`).emit("newOrder", orderPayload);
+          req.io.to(`customer_${user_id}`).emit("newOrder", orderPayload);
         }
+      } catch (emitErr) {
+        console.warn("Socket emit failed for shop", shopId, emitErr);
+      }
 
-        // Send push notification to shopkeeper (supports both FCM and Expo tokens)
-        try {
-          const [[shop]] = await pool.query("SELECT id, name, expo_push_token FROM shopkeepers WHERE id = ?", [shopId]);
-          const token = shop?.expo_push_token;
-          if (token) {
-            let result;
-            // Check if it's an FCM token or Expo token
-            if (isFCMToken(token)) {
-              result = await sendFCMPush(
-                token,
-                "📦 New Order Received!",
-                `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
-                { orderId: String(orderId), shopId: String(shopId) }
-              );
-            } else {
-              result = await sendExpoPush(
-                token,
-                "📦 New Order Received!",
-                `You have a new order (#${orderId}) worth ₹${shopTotal}.`,
-                { orderId, shopId }
-              );
-            }
-
-            if (result?.invalidTokens?.length) {
-              await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
-              console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
-            }
+      // Send push notification to shopkeeper (supports both FCM and Expo tokens)
+      try {
+        const token = shop?.expo_push_token;
+        if (token) {
+          let result;
+          // Check if it's an FCM token or Expo token
+          if (isFCMToken(token)) {
+            result = await sendFCMPush(
+              token,
+              "📦 New Order Received!",
+              `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
+              { orderId: String(orderId), shopId: String(shopId) }
+            );
+          } else {
+            result = await sendExpoPush(
+              token,
+              "📦 New Order Received!",
+              `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
+              { orderId, shopId }
+            );
           }
-        } catch (pushErr) {
-          console.error("Error sending push to shopkeeper", shopId, pushErr);
+
+          if (result?.invalidTokens?.length) {
+            await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
+            console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
+          }
         }
+      } catch (pushErr) {
+        console.error("Error sending push to shopkeeper", shopId, pushErr);
       }
     } catch (notifyErr) {
-      console.error("Error notifying shopkeepers:", notifyErr);
+      console.error("Error notifying shopkeeper:", notifyErr);
     }
 
     res.json({ 
       success: true, 
-      orders: createdOrders.map(o => ({ order_id: o.orderId, shopkeeper_id: o.shopId, total: o.shopTotal })),
-      message: `${createdOrders.length} order(s) placed successfully`,
+      order: { 
+        order_id: orderId, 
+        shopkeeper_id: shopId, 
+        total: finalTotal,
+        pickup_code: pickupCode,
+        timer_duration: timerDuration,
+        timer_started_at: timerStartedAt,
+        timer_expires_at: timerExpiresAt,
+        shop_name: shop.shop_name,
+        shop_latitude: shop.latitude,
+        shop_longitude: shop.longitude
+      },
+      message: "Order placed successfully. Timer started!",
       pointsRedeemed: pointsToRedeem,
       pointsDiscount: pointsDiscount,
-      finalTotal: total - pointsDiscount
+      finalTotal: finalTotal
     });
   } catch (err) {
     console.error(err);
