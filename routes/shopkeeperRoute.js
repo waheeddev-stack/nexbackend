@@ -1530,8 +1530,9 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     });
 
   } catch (err) {
-    console.error("Verify pickup error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Verify pickup error:", err.message);
+    console.error("Verify pickup stack:", err.stack);
+    res.status(500).json({ success: false, message: `Server error: ${err.message}` });
   }
 });
 
