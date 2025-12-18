@@ -417,6 +417,8 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
     const shopkeeper_id = req.user.id;
     const { status } = req.query; // Optional filter by status
 
+    console.log(`Fetching orders for shopkeeper ${shopkeeper_id} (type: ${typeof shopkeeper_id})`);
+
     let whereClause = "WHERE o.shopkeeper_id = ?";
     const params = [shopkeeper_id];
 
@@ -430,6 +432,7 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
       `SELECT 
         o.id AS order_id,
         o.user_id,
+        o.shopkeeper_id,
         o.status,
         o.total_amount,
         o.created_at,
@@ -446,6 +449,8 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
        ORDER BY o.created_at DESC`,
       params
     );
+
+    console.log(`Found ${orderRows.length} orders for shopkeeper ${shopkeeper_id}`);
 
     // Fetch order items for all orders
     if (orderRows.length > 0) {
@@ -1392,25 +1397,34 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     const { orderId } = req.params;
     const { pickup_code } = req.body;
 
+    console.log(`Verify pickup: shopkeeper=${shopkeeper_id}, order=${orderId}, code=${pickup_code}`);
+
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
+      console.error("Invalid order ID:", orderId);
       return res.status(400).json({ success: false, message: "Invalid order ID" });
     }
 
     if (!pickup_code) {
+      console.error("Pickup code missing");
       return res.status(400).json({ success: false, message: "Pickup code is required" });
     }
 
-    // Get order and timer info
-    const [orderInfo] = await pool.query(`
-      SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at,
-             ot.is_active, ot.is_expired, ot.timer_expires_at as ot_expires
-      FROM orders o
-      LEFT JOIN order_timers ot ON o.id = ot.order_id
-      WHERE o.id = ? AND o.shopkeeper_id = ?
-    `, [orderIdNum, shopkeeper_id]);
+    // Get order info (without timer table join to avoid errors if table doesn't exist)
+    let orderInfo;
+    try {
+      [orderInfo] = await pool.query(`
+        SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at
+        FROM orders o
+        WHERE o.id = ? AND o.shopkeeper_id = ?
+      `, [orderIdNum, shopkeeper_id]);
+    } catch (queryError) {
+      console.error("Order query error:", queryError);
+      return res.status(500).json({ success: false, message: "Database error: " + queryError.message });
+    }
 
     if (orderInfo.length === 0) {
+      console.error(`Order ${orderIdNum} not found for shopkeeper ${shopkeeper_id}`);
       return res.status(404).json({ 
         success: false, 
         message: "Order not found or not assigned to you" 
@@ -1418,9 +1432,11 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     }
 
     const order = orderInfo[0];
+    console.log(`Order found: status=${order.status}, pickup_code=${order.pickup_code}`);
 
     // Check if order is already completed
     if (order.status === 'Completed') {
+      console.warn(`Order ${orderIdNum} already completed`);
       return res.status(400).json({ 
         success: false, 
         message: "Order is already completed" 
@@ -1429,6 +1445,7 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
 
     // Verify pickup code
     if (order.pickup_code !== pickup_code) {
+      console.error(`Invalid pickup code: expected=${order.pickup_code}, got=${pickup_code}`);
       return res.status(400).json({ 
         success: false, 
         message: "Invalid pickup code. Please check and try again." 
@@ -1436,27 +1453,36 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     }
 
     const now = new Date();
-    const timerExpiresAt = order.timer_expires_at || order.ot_expires;
+    const timerExpiresAt = order.timer_expires_at;
     // Check if customer arrived on time
     const wasOnTime = timerExpiresAt && now <= new Date(timerExpiresAt);
+    console.log(`Timer check: expires=${timerExpiresAt}, now=${now}, wasOnTime=${wasOnTime}`);
 
-    // Stop timer in order_timers table
+    // Stop timer in order_timers table (if it exists)
     try {
       await pool.query(`
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
         WHERE order_id = ?
       `, [now, !wasOnTime, orderIdNum]);
+      console.log("Timer record updated successfully");
     } catch (timerError) {
-      console.warn("Timer update failed:", timerError.message);
+      console.warn("Timer update failed (table may not exist):", timerError.message);
+      // Continue - this is not critical
     }
 
     // Mark order as Completed
-    await pool.query(`
-      UPDATE orders 
-      SET status = 'Completed', has_timer = FALSE
-      WHERE id = ?
-    `, [orderIdNum]);
+    try {
+      await pool.query(`
+        UPDATE orders 
+        SET status = 'Completed', has_timer = FALSE
+        WHERE id = ?
+      `, [orderIdNum]);
+      console.log(`Order ${orderIdNum} marked as Completed`);
+    } catch (updateError) {
+      console.error("Order update error:", updateError);
+      return res.status(500).json({ success: false, message: "Failed to update order: " + updateError.message });
+    }
 
     // Award wellness points based on timing
     let pointsAwarded = 0;
@@ -1471,6 +1497,7 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for order ${orderIdNum}`);
     } catch (pointsError) {
       console.error("Error awarding wellness points:", pointsError);
+      // Continue - points are not critical
     }
 
     // Broadcast events via socket
@@ -1480,7 +1507,7 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       const customerRoom = `customer_${Number(order.user_id)}`;
       
       console.log(`Socket: Emitting orderStatusUpdate to ${shopRoom} and ${customerRoom}`);
-      console.log(`Socket: orderId=${orderIdNum}, user_id=${order.user_id}`);
+      console.log(`Socket: Order data - orderId=${orderIdNum}, status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
       
       req.io.to(shopRoom).emit("orderStatusUpdate", { 
         orderId: orderIdNum, 
@@ -1493,6 +1520,8 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
         wasOnTime,
         pointsAwarded
       });
+      
+      console.log(`Socket: Events emitted successfully to ${shopRoom} and ${customerRoom}`);
     } else {
       console.warn("Socket: req.io is not available!");
     }
@@ -1518,8 +1547,10 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       }
     } catch (pushError) {
       console.error("Push notification error:", pushError);
+      // Continue - push is not critical
     }
 
+    console.log(`Verify pickup successful for order ${orderIdNum}`);
     res.json({ 
       success: true, 
       message: wasOnTime 
@@ -1530,8 +1561,12 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     });
 
   } catch (err) {
-    console.error("Verify pickup error:", err.message);
-    console.error("Verify pickup stack:", err.stack);
+    console.error("=== VERIFY PICKUP ERROR ===");
+    console.error("Error message:", err.message);
+    console.error("Error stack:", err.stack);
+    console.error("Error name:", err.name);
+    console.error("Full error:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
+    console.error("=========================");
     res.status(500).json({ success: false, message: `Server error: ${err.message}` });
   }
 });
