@@ -97,10 +97,17 @@ const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt) =
       - Points Awarded: ${pointsData.points} (${pointsData.tier})`);
     
     // Update user's store credits
-    await pool.query(
-      'UPDATE users SET store_credits = store_credits + ? WHERE id = ?',
+    // ✅ FIX: Use COALESCE to handle NULL values (NULL + X = NULL in SQL)
+    console.log(`Updating credits: userId=${userId}, points=${pointsData.points}`);
+    const [result] = await pool.query(
+      'UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?',
       [pointsData.points, userId]
     );
+    console.log(`Update result: affectedRows=${result.affectedRows}, changedRows=${result.changedRows}`);
+    
+    // Verify the update
+    const [[user]] = await pool.query('SELECT store_credits FROM users WHERE id = ?', [userId]);
+    console.log(`Verified credits after update: ${user?.store_credits || 'NOT FOUND'}`);
     
     return pointsData;
   } catch (error) {
