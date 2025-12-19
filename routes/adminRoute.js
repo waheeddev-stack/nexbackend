@@ -1157,53 +1157,6 @@ adminRouter.get("/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
-// Update admin email or password (protected)
-adminRouter.put("/:id", verifyAdminToken, async (req, res) => {
-  const { email, password } = req.body;
-  if (!email && !password) {
-    return res.status(400).json({ success: false, message: "Nothing to update" });
-  }
-  try {
-    let updateFields = [];
-    let params = [];
-    if (email) {
-      updateFields.push("email = ?");
-      params.push(email);
-    }
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      updateFields.push("password = ?");
-      params.push(hashedPassword);
-    }
-    params.push(req.params.id);
-    const [result] = await pool.query(
-      `UPDATE admins SET ${updateFields.join(", ")} WHERE id = ?`,
-      params
-    );
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Admin not found" });
-    }
-    res.json({ success: true, message: "Admin updated" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
-// Delete admin (protected)
-adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
-  try {
-    const [result] = await pool.query("DELETE FROM admins WHERE id = ?", [
-      req.params.id,
-    ]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: "Admin not found" });
-    }
-    res.json({ success: true, message: "Admin deleted" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
 // Admin Login - Environment-based fallback for unusual admin table
 adminRouter.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -1645,6 +1598,56 @@ adminRouter.get("/payment-info/test", verifyAdminToken, async (req, res) => {
       success: false,
       error: err.message
     });
+  }
+});
+
+// ⚠️ CATCH-ALL ROUTES - MUST BE LAST! ⚠️
+// These routes use /:id which matches any path, so they must be defined after all specific routes
+
+// Update admin email or password (protected)
+adminRouter.put("/:id", verifyAdminToken, async (req, res) => {
+  const { email, password } = req.body;
+  if (!email && !password) {
+    return res.status(400).json({ success: false, message: "Nothing to update" });
+  }
+  try {
+    let updateFields = [];
+    let params = [];
+    if (email) {
+      updateFields.push("email = ?");
+      params.push(email);
+    }
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updateFields.push("password = ?");
+      params.push(hashedPassword);
+    }
+    params.push(req.params.id);
+    const [result] = await pool.query(
+      `UPDATE admins SET ${updateFields.join(", ")} WHERE id = ?`,
+      params
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Admin not found" });
+    }
+    res.json({ success: true, message: "Admin updated" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Delete admin (protected)
+adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const [result] = await pool.query("DELETE FROM admins WHERE id = ?", [
+      req.params.id,
+    ]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Admin not found" });
+    }
+    res.json({ success: true, message: "Admin deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
 
