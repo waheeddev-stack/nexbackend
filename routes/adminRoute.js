@@ -1644,6 +1644,40 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
   }
 });
 
+// Test endpoint to verify payment-info setup
+adminRouter.get("/payment-info/test", verifyAdminToken, async (req, res) => {
+  try {
+    // Check table exists
+    const [tables] = await pool.query(`
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'payment_info'
+    `);
+    
+    // Check columns
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'payment_info'
+    `);
+    
+    res.json({
+      success: true,
+      tableExists: tables.length > 0,
+      columns: columns.map(c => c.COLUMN_NAME),
+      cloudinaryConfigured: !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY),
+      uploadMiddleware: typeof upload === 'function' ? 'configured' : 'missing'
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 
 
 export default adminRouter;
