@@ -502,19 +502,27 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
         console.log(`📡 Socket: Emitting order cancellation`);
         console.log(`📡 Socket: Shop room: ${shopRoom} (shopkeeper_id: ${order.shopkeeper_id})`);
         console.log(`📡 Socket: Customer room: ${customerRoom} (user_id: ${user_id})`);
-        console.log(`📡 Socket: Payload: { orderId: ${orderIdNum}, status: 'Cancelled' }`);
+        
+        // ✅ FIX: Include cancellation details in socket event
+        const cancellationData = {
+          orderId: orderIdNum,
+          status: 'Cancelled',
+          cancelled_by: 'user',
+          cancellation_reason: 'Cancelled by customer'
+        };
+        console.log(`📡 Socket: Payload:`, cancellationData);
         
         // Emit to shopkeeper room
-        req.io.to(shopRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status: 'Cancelled' });
+        req.io.to(shopRoom).emit("orderStatusUpdate", cancellationData);
         console.log(`📡 Socket: ✅ Emitted to ${shopRoom}`);
         
         // Emit to customer room
-        req.io.to(customerRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status: 'Cancelled' });
+        req.io.to(customerRoom).emit("orderStatusUpdate", cancellationData);
         console.log(`📡 Socket: ✅ Emitted to ${customerRoom}`);
         
         // Also emit orderStatusChanged for backward compatibility
-        req.io.to(shopRoom).emit("orderStatusChanged", { orderId: orderIdNum, status: 'Cancelled' });
-        req.io.to(customerRoom).emit("orderStatusChanged", { orderId: orderIdNum, status: 'Cancelled' });
+        req.io.to(shopRoom).emit("orderStatusChanged", cancellationData);
+        req.io.to(customerRoom).emit("orderStatusChanged", cancellationData);
         console.log(`📡 Socket: ✅ Also emitted orderStatusChanged events`);
       } else {
         console.error(`📡 Socket: ❌ req.io is not available! Cannot emit socket events.`);
