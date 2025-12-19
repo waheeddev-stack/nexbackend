@@ -8,6 +8,7 @@ import pool from "../config/db.js";
 import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import streamifier from "streamifier";
+import { processPaymentApproval } from "../utils/subscription.js";
 
 const adminRouter = express.Router();
 
@@ -1367,7 +1368,7 @@ adminRouter.patch("/payments/:id/status", verifyAdminToken, async (req, res) => 
       return res.status(404).json({ success: false, message: "Payment not found" });
     }
 
-    // If approved, update shopkeeper subscription
+    // If approved, update shopkeeper subscription using subscription utility
     if (status === 'approved') {
       const [payment] = await pool.query(
         "SELECT shopkeeper_id FROM billing_payments WHERE id = ?",
@@ -1376,13 +1377,9 @@ adminRouter.patch("/payments/:id/status", verifyAdminToken, async (req, res) => 
 
       if (payment.length > 0) {
         const shopkeeperId = payment[0].shopkeeper_id;
-        const nextPaymentDue = new Date();
-        nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // Next 15 days
-
-        await pool.query(
-          "UPDATE shopkeepers SET subscription_status = 'active', last_payment_date = NOW(), next_payment_due = ? WHERE id = ?",
-          [nextPaymentDue, shopkeeperId]
-        );
+        
+        // Use subscription utility to properly reset billing cycle
+        await processPaymentApproval(shopkeeperId);
       }
     }
 

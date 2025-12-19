@@ -11,6 +11,12 @@ import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
 // import checkPaymentStatus from "../middleware/checkPaymentStatus.js"; // Disabled - earnings system not implemented
 import { awardWellnessPoints } from "../utils/wellnessPoints.js";
+import { 
+  calculateSubscriptionStatus, 
+  updateSubscriptionStatus, 
+  processPaymentApproval,
+  canAccessApp 
+} from "../utils/subscription.js";
 
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -1840,6 +1846,48 @@ shopkeeperRouter.get("/payment-info", verifyToken, verifyShopkeeperStatus, async
     res.status(500).json({ 
       success: false, 
       message: "Server error", 
+      error: err.message 
+    });
+  }
+});
+
+// GET /api/shopkeeper/subscription - Get detailed subscription status
+shopkeeperRouter.get("/subscription", verifyToken, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const statusInfo = await calculateSubscriptionStatus(shopkeeper_id);
+    
+    res.json({ 
+      success: true, 
+      subscription: statusInfo
+    });
+  } catch (err) {
+    console.error('Subscription status error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to get subscription status", 
+      error: err.message 
+    });
+  }
+});
+
+// POST /api/shopkeeper/subscription/check-access - Check if shopkeeper can access app
+shopkeeperRouter.post("/subscription/check-access", verifyToken, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const canAccess = await canAccessApp(shopkeeper_id);
+    const statusInfo = await calculateSubscriptionStatus(shopkeeper_id);
+    
+    res.json({ 
+      success: true, 
+      canAccess,
+      subscription: statusInfo
+    });
+  } catch (err) {
+    console.error('Subscription access check error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to check access", 
       error: err.message 
     });
   }

@@ -1,6 +1,6 @@
 // Centralized Wellness Points Logic for Backend
 // Updated: December 2024
-// Points: 20, 15, 10, 5 | Coin Value: ₹0.05
+// Points: 40, 30, 10, 5 | Coin Value: ₹0.04
 
 // Calculate wellness points based on delivery time performance
 // timeRemaining: positive = arrived early, negative = arrived late
@@ -11,10 +11,10 @@ const calculateWellnessPoints = (timeRemaining, totalDuration = 7 * 60 * 1000) =
   // Award points based on how much time is LEFT when customer arrives
   if (minutesRemaining >= 5) {
     // Arrived with 5+ minutes remaining = Super Fast
-    return { points: 20, tier: "Super Fast", description: "Arrived with 5+ min left" };
+    return { points: 40, tier: "Super Fast", description: "Arrived with 5+ min left" };
   } else if (minutesRemaining >= 2) {
     // Arrived with 2-5 minutes remaining = Good Pace
-    return { points: 15, tier: "Good Pace", description: "Arrived with 2-5 min left" };
+    return { points: 30, tier: "Good Pace", description: "Arrived with 2-5 min left" };
   } else if (minutesRemaining >= 0) {
     // Arrived with 0-2 minutes remaining = On Time
     return { points: 10, tier: "On Time", description: "Arrived with 0-2 min left" };
@@ -25,7 +25,7 @@ const calculateWellnessPoints = (timeRemaining, totalDuration = 7 * 60 * 1000) =
 };
 
 // Get point value in rupees
-const getPointValue = () => 0.05; // ₹0.05 per point
+const getPointValue = () => 0.04; // ₹0.04 per point
 
 // Calculate maximum points that can be used (10% of order value)
 const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
