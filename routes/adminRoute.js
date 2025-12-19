@@ -1486,7 +1486,9 @@ adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
 // PUT /api/admin/payment-info - Update payment information
 adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), async (req, res) => {
   try {
-    const { upi_id, bank_account, ifsc_code, account_holder } = req.body;
+    const { upi_id, bank_account, bank_name, ifsc_code, account_holder, account_holder_name } = req.body;
+    // Support both account_holder and account_holder_name for compatibility
+    const holderName = account_holder_name || account_holder;
     let qr_code_url = null;
 
     // Handle QR code upload if provided
@@ -1523,19 +1525,35 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
     }
 
     // Check if payment_info table exists, create if not
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS payment_info (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        upi_id VARCHAR(255),
-        bank_account VARCHAR(255),
-        ifsc_code VARCHAR(255),
-        account_holder VARCHAR(255),
-        qr_code TEXT,
-        type VARCHAR(50) DEFAULT 'admin',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS payment_info (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          upi_id VARCHAR(255),
+          bank_account VARCHAR(255),
+          bank_name VARCHAR(255),
+          ifsc_code VARCHAR(255),
+          account_holder VARCHAR(255),
+          qr_code TEXT,
+          type VARCHAR(50) DEFAULT 'admin',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+      
+      // Try to add bank_name column if table already exists without it
+      try {
+        await pool.query(`
+          ALTER TABLE payment_info ADD COLUMN IF NOT EXISTS bank_name VARCHAR(255) AFTER bank_account
+        `);
+      } catch (alterError) {
+        // Column might already exist or ALTER not supported
+        console.log('Note: Could not add bank_name column (may already exist)');
+      }
+    } catch (tableError) {
+      console.error('Table creation error (may already exist):', tableError.message);
+      // Continue anyway - table might already exist
+    }
 
     // Check if record exists
     const [existing] = await pool.query("SELECT id FROM payment_info WHERE type = 'admin' LIMIT 1");
@@ -1553,17 +1571,29 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
         updateFields.push('bank_account = ?');
         updateValues.push(bank_account);
       }
+      if (bank_name !== undefined) {
+        updateFields.push('bank_name = ?');
+        updateValues.push(bank_name);
+      }
       if (ifsc_code !== undefined) {
         updateFields.push('ifsc_code = ?');
         updateValues.push(ifsc_code);
       }
-      if (account_holder !== undefined) {
+      if (holderName !== undefined) {
         updateFields.push('account_holder = ?');
-        updateValues.push(account_holder);
+        updateValues.push(holderName);
       }
       if (qr_code_url) {
         updateFields.push('qr_code = ?');
         updateValues.push(qr_code_url);
+      }
+
+      // Ensure at least one field is being updated
+      if (updateFields.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "No fields to update"
+        });
       }
 
       updateValues.push(existing[0].id);
@@ -1575,9 +1605,9 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
     } else {
       // Insert new record
       await pool.query(
-        `INSERT INTO payment_info (upi_id, bank_account, ifsc_code, account_holder, qr_code, type) 
-         VALUES (?, ?, ?, ?, ?, 'admin')`,
-        [upi_id || '', bank_account || '', ifsc_code || '', account_holder || 'NexKirana Admin', qr_code_url]
+        `INSERT INTO payment_info (upi_id, bank_account, bank_name, ifsc_code, account_holder, qr_code, type) 
+         VALUES (?, ?, ?, ?, ?, ?, 'admin')`,
+        [upi_id || '', bank_account || '', bank_name || '', ifsc_code || '', holderName || 'NexKirana Admin', qr_code_url]
       );
     }
 
@@ -1588,7 +1618,13 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
     });
   } catch (err) {
     console.error('Payment info update error:', err);
-    res.status(500).json({ success: false, message: "Server error", error: err.message });
+    console.error('Error stack:', err.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: err.message,
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 
