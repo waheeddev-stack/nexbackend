@@ -1489,6 +1489,16 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
     console.log('📝 Payment info update request received');
     console.log('Body:', req.body);
     console.log('File:', req.file ? 'Present' : 'None');
+    console.log('Content-Type:', req.headers['content-type']);
+    
+    // Check if req.body exists
+    if (!req.body) {
+      console.error('❌ req.body is undefined!');
+      return res.status(400).json({
+        success: false,
+        message: "Request body is missing. Ensure Content-Type is multipart/form-data"
+      });
+    }
     
     const { upi_id, bank_account, bank_name, ifsc_code, account_holder, account_holder_name } = req.body;
     // Support both account_holder and account_holder_name for compatibility
