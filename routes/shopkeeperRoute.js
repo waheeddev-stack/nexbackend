@@ -1820,7 +1820,7 @@ shopkeeperRouter.get("/payment-info", verifyToken, verifyShopkeeperStatus, async
   try {
     // Get admin payment information for shopkeepers to see where to send payments
     const [rows] = await pool.query(
-      "SELECT upi_id, bank_account, ifsc_code, account_holder, qr_code FROM payment_info WHERE type = 'admin' LIMIT 1"
+      "SELECT upi_id, bank_account, bank_name, ifsc_code, account_holder, qr_code FROM payment_info WHERE type = 'admin' LIMIT 1"
     ).catch(() => [[]]);
     
     if (rows.length === 0) {
@@ -1830,6 +1830,7 @@ shopkeeperRouter.get("/payment-info", verifyToken, verifyShopkeeperStatus, async
         data: {
           upi_id: '',
           bank_account: '',
+          bank_name: '',
           ifsc_code: '',
           account_holder: 'NexKirana Admin',
           qr_code: null
