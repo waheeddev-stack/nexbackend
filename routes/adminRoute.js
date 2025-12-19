@@ -1486,6 +1486,10 @@ adminRouter.get("/payment-info/admin", verifyAdminToken, async (req, res) => {
 // PUT /api/admin/payment-info - Update payment information
 adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), async (req, res) => {
   try {
+    console.log('📝 Payment info update request received');
+    console.log('Body:', req.body);
+    console.log('File:', req.file ? 'Present' : 'None');
+    
     const { upi_id, bank_account, bank_name, ifsc_code, account_holder, account_holder_name } = req.body;
     // Support both account_holder and account_holder_name for compatibility
     const holderName = account_holder_name || account_holder;
@@ -1542,13 +1546,25 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
       `);
       
       // Try to add bank_name column if table already exists without it
+      // Note: TiDB doesn't support "IF NOT EXISTS" in ALTER TABLE
       try {
-        await pool.query(`
-          ALTER TABLE payment_info ADD COLUMN IF NOT EXISTS bank_name VARCHAR(255) AFTER bank_account
+        const [columns] = await pool.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'payment_info' 
+          AND COLUMN_NAME = 'bank_name'
         `);
+        
+        if (columns.length === 0) {
+          await pool.query(`
+            ALTER TABLE payment_info ADD COLUMN bank_name VARCHAR(255) AFTER bank_account
+          `);
+          console.log('✅ bank_name column added');
+        }
       } catch (alterError) {
-        // Column might already exist or ALTER not supported
-        console.log('Note: Could not add bank_name column (may already exist)');
+        // Column might already exist or ALTER failed
+        console.log('Note: Could not add bank_name column:', alterError.message);
       }
     } catch (tableError) {
       console.error('Table creation error (may already exist):', tableError.message);
