@@ -1528,48 +1528,8 @@ adminRouter.put("/payment-info", verifyAdminToken, upload.single('qr_code'), asy
       }
     }
 
-    // Check if payment_info table exists, create if not
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS payment_info (
-          id INT PRIMARY KEY AUTO_INCREMENT,
-          upi_id VARCHAR(255),
-          bank_account VARCHAR(255),
-          bank_name VARCHAR(255),
-          ifsc_code VARCHAR(255),
-          account_holder VARCHAR(255),
-          qr_code TEXT,
-          type VARCHAR(50) DEFAULT 'admin',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        )
-      `);
-      
-      // Try to add bank_name column if table already exists without it
-      // Note: TiDB doesn't support "IF NOT EXISTS" in ALTER TABLE
-      try {
-        const [columns] = await pool.query(`
-          SELECT COLUMN_NAME 
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_SCHEMA = DATABASE() 
-          AND TABLE_NAME = 'payment_info' 
-          AND COLUMN_NAME = 'bank_name'
-        `);
-        
-        if (columns.length === 0) {
-          await pool.query(`
-            ALTER TABLE payment_info ADD COLUMN bank_name VARCHAR(255) AFTER bank_account
-          `);
-          console.log('✅ bank_name column added');
-        }
-      } catch (alterError) {
-        // Column might already exist or ALTER failed
-        console.log('Note: Could not add bank_name column:', alterError.message);
-      }
-    } catch (tableError) {
-      console.error('Table creation error (may already exist):', tableError.message);
-      // Continue anyway - table might already exist
-    }
+    // Note: Table should already exist from migration script
+    // If it doesn't exist, the query below will fail with a clear error
 
     // Check if record exists
     const [existing] = await pool.query("SELECT id FROM payment_info WHERE type = 'admin' LIMIT 1");
