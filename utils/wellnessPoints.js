@@ -1,6 +1,6 @@
 // Centralized Wellness Points Logic for Backend
 // Updated: December 2024
-// Points: 40, 30, 10, 5 | Coin Value: ₹0.04
+// Points: 40, 30, 10, 5 | Coin Value: ₹0.05
 
 // Calculate wellness points based on delivery time performance
 // timeRemaining: positive = arrived early, negative = arrived late
@@ -25,14 +25,16 @@ const calculateWellnessPoints = (timeRemaining, totalDuration = 7 * 60 * 1000) =
 };
 
 // Get point value in rupees
-const getPointValue = () => 0.04; // ₹0.04 per point
+const getPointValue = () => 0.05; // ₹0.05 per point
 
 // Calculate maximum points that can be used (10% of order value)
 const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
-  return Math.min(
-    availablePoints,
-    Math.floor(totalAmount * 0.1 / getPointValue()) // 10% of order value divided by point value
-  );
+  // Use integer arithmetic to avoid floating-point precision issues
+  // 10% of order value = totalAmount * 0.1
+  // Points = (totalAmount * 0.1) / 0.05 = totalAmount * 0.1 / 0.05 = totalAmount * 2
+  // To avoid decimals: (totalAmount * 10) / 5 = totalAmount * 2
+  const maxFromOrderValue = Math.floor(totalAmount * 2);
+  return Math.min(availablePoints, maxFromOrderValue);
 };
 
 // Convert points to rupees

@@ -519,9 +519,9 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
       });
     }
     
-    // Update order status to Cancelled
+    // Update order status to Cancelled with cancellation details
     await pool.query(
-      "UPDATE orders SET status = 'Cancelled' WHERE id = ?",
+      "UPDATE orders SET status = 'Cancelled', cancelled_by = 'user', cancellation_reason = 'Cancelled by customer' WHERE id = ?",
       [orderIdNum]
     );
     
