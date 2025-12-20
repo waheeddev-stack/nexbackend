@@ -446,8 +446,6 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
         o.latitude,
         o.longitude,
         o.delivery_address,
-        o.cancelled_by,
-        o.cancellation_reason,
         u.name AS customer_name,
         u.phone AS customer_phone,
         u.email AS customer_email
@@ -553,8 +551,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     // Update order status with cancellation details if applicable
     let updateQuery, updateParams;
     if (status === "Cancelled") {
-      updateQuery = "UPDATE orders SET status = ?, cancelled_by = 'shopkeeper', cancellation_reason = ? WHERE id = ? AND shopkeeper_id = ?";
-      updateParams = [status, cancellation_reason, orderIdNum, shopkeeper_id];
+      updateQuery = "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?";
+      updateParams = [status, orderIdNum, shopkeeper_id];
     } else {
       updateQuery = "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?";
       updateParams = [status, orderIdNum, shopkeeper_id];
@@ -609,9 +607,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         
         const socketPayload = { 
           orderId: orderIdNum, 
-          status,
-          cancelled_by: status === 'Cancelled' ? 'shopkeeper' : undefined,
-          cancellation_reason: status === 'Cancelled' ? cancellation_reason : undefined
+          status
         };
         
         console.log(`📡 Socket: Emitting to ${shopRoom}`);

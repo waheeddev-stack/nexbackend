@@ -221,8 +221,6 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
         o.total_amount,
         o.created_at,
         o.delivery_address,
-        o.cancelled_by,
-        o.cancellation_reason,
         JSON_ARRAYAGG(
           JSON_OBJECT(
             'product_id', oi.product_id,
@@ -236,7 +234,7 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
        JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN products p ON oi.product_id = p.id
        WHERE o.user_id = ?
-       GROUP BY o.id, o.status, o.total_amount, o.created_at, o.delivery_address, o.cancelled_by, o.cancellation_reason
+       GROUP BY o.id, o.status, o.total_amount, o.created_at, o.delivery_address
        ORDER BY o.created_at DESC`,
       [user_id]
     );
@@ -577,9 +575,9 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
       });
     }
     
-    // Update order status to Cancelled with cancellation details
+    // Update order status to Cancelled
     await pool.query(
-      "UPDATE orders SET status = 'Cancelled', cancelled_by = 'user', cancellation_reason = 'Cancelled by customer' WHERE id = ?",
+      "UPDATE orders SET status = 'Cancelled' WHERE id = ?",
       [orderIdNum]
     );
     
@@ -596,12 +594,9 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
         console.log(`📡 Socket: Shop room: ${shopRoom} (shopkeeper_id: ${order.shopkeeper_id})`);
         console.log(`📡 Socket: Customer room: ${customerRoom} (user_id: ${user_id})`);
         
-        // ✅ FIX: Include cancellation details in socket event
         const cancellationData = {
           orderId: orderIdNum,
-          status: 'Cancelled',
-          cancelled_by: 'user',
-          cancellation_reason: 'Cancelled by customer'
+          status: 'Cancelled'
         };
         console.log(`📡 Socket: Payload:`, cancellationData);
         
