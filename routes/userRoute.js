@@ -240,7 +240,38 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
        ORDER BY o.created_at DESC`,
       [user_id]
     );
-    res.json({ success: true, orders: rows });
+    
+    // Parse items if they come as JSON string
+    const processedOrders = rows.map(order => {
+      let items = order.items;
+      
+      // If items is a string, parse it
+      if (typeof items === 'string') {
+        try {
+          items = JSON.parse(items);
+        } catch (e) {
+          console.error('Error parsing items for order', order.order_id, e);
+          items = [];
+        }
+      }
+      
+      // Ensure items is an array
+      if (!Array.isArray(items)) {
+        items = [];
+      }
+      
+      return {
+        ...order,
+        items
+      };
+    });
+    
+    console.log(`Fetched ${processedOrders.length} orders for user ${user_id}`);
+    if (processedOrders.length > 0) {
+      console.log('Sample order items:', processedOrders[0].items);
+    }
+    
+    res.json({ success: true, orders: processedOrders });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
