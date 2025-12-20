@@ -245,6 +245,41 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
   }
 });
 
+// Clear all orders for a user (customer)
+userrouter.delete("/orders/clear-user-orders", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    if (!user_id) {
+      return res.status(401).json({ success: false, message: "User ID not found in token" });
+    }
+
+    // First, delete all order items for this user's orders
+    await pool.query(
+      `DELETE oi FROM order_items oi
+       INNER JOIN orders o ON oi.order_id = o.id
+       WHERE o.user_id = ?`,
+      [user_id]
+    );
+
+    // Then delete all orders for this user
+    const [result] = await pool.query(
+      `DELETE FROM orders WHERE user_id = ?`,
+      [user_id]
+    );
+
+    console.log(`Cleared ${result.affectedRows} orders for user ${user_id}`);
+
+    res.json({ 
+      success: true, 
+      message: "All orders cleared successfully",
+      cleared_count: result.affectedRows
+    });
+  } catch (err) {
+    console.error("Error clearing orders:", err);
+    res.status(500).json({ success: false, message: "Server error while clearing orders" });
+  }
+});
+
 userrouter.post("/orders", verifyToken, async (req, res) => {
   try {
     const user_id = req.user.id;
