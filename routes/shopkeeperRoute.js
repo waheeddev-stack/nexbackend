@@ -446,6 +446,8 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
         o.latitude,
         o.longitude,
         o.delivery_address,
+        o.cancelled_by,
+        o.cancellation_reason,
         u.name AS customer_name,
         u.phone AS customer_phone,
         u.email AS customer_email

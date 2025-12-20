@@ -49,6 +49,7 @@ function initializeFirebase() {
  */
 export async function sendFCMPush(tokens, title, body, data = {}) {
   if (!tokens) {
+    console.warn('FCM: No tokens provided');
     return { success: false, message: 'No tokens provided' };
   }
 
@@ -56,6 +57,7 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
 
   if (!firebaseInitialized) {
     console.warn('Firebase not initialized, skipping FCM push');
+    console.warn('Make sure FIREBASE_SERVICE_ACCOUNT environment variable is set');
     return { success: false, message: 'Firebase not initialized' };
   }
 
@@ -63,8 +65,13 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
   const validTokens = tokenList.filter(t => t && typeof t === 'string' && t.length > 0);
 
   if (validTokens.length === 0) {
+    console.warn('FCM: No valid tokens after filtering');
     return { success: false, message: 'No valid tokens provided' };
   }
+
+  console.log(`📤 FCM: Sending notification to ${validTokens.length} token(s)`);
+  console.log(`📧 Title: "${title}"`);
+  console.log(`📝 Body: "${body}"`);
 
   const results = {
     success: true,
@@ -96,14 +103,30 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
             notification: {
               sound: 'default',
               channelId: 'orders',
+              priority: 'high',
+              defaultSound: true,
+              defaultVibrateTimings: true,
+            },
+          },
+          apns: {
+            payload: {
+              aps: {
+                sound: 'default',
+                badge: 1,
+              },
             },
           },
         };
 
-        await admin.messaging().send(message);
+        const response = await admin.messaging().send(message);
         results.successCount++;
+        console.log(`✅ FCM: Notification sent successfully to token: ${token.substring(0, 20)}...`);
+        console.log(`Response:`, response);
       } catch (error) {
         results.failureCount++;
+        console.error(`❌ FCM: Failed to send to token: ${token.substring(0, 20)}...`);
+        console.error(`Error code: ${error.code}`);
+        console.error(`Error message: ${error.message}`);
         
         // Check for invalid token errors
         if (
@@ -111,10 +134,11 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
           error.code === 'messaging/registration-token-not-registered'
         ) {
           results.invalidTokens.push(token);
+          console.warn(`⚠️ FCM: Invalid token detected, should be removed from database`);
         }
         
         results.errors.push({
-          token,
+          token: token.substring(0, 20) + '...',
           error: error.message,
           code: error.code,
         });
@@ -122,9 +146,15 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
     }
 
     results.success = results.successCount > 0;
+    
+    console.log(`📊 FCM Results: ${results.successCount} success, ${results.failureCount} failed`);
+    if (results.invalidTokens.length > 0) {
+      console.log(`⚠️ Invalid tokens: ${results.invalidTokens.length}`);
+    }
+    
     return results;
   } catch (error) {
-    console.error('FCM push error:', error);
+    console.error('❌ FCM push error:', error);
     return {
       success: false,
       message: error.message,

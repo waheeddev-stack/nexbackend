@@ -434,32 +434,57 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       // Send push notification to shopkeeper (supports both FCM and Expo tokens)
       try {
         const token = shop?.expo_push_token;
+        console.log(`\n📱 Push Notification Check for Order #${orderId}:`);
+        console.log(`Shop ID: ${shopId}`);
+        console.log(`Shop Name: ${shop.shop_name}`);
+        console.log(`Token exists: ${!!token}`);
+        
         if (token) {
+          console.log(`Token type: ${isFCMToken(token) ? 'FCM' : 'Expo'}`);
+          console.log(`Token preview: ${token.substring(0, 30)}...`);
+          
           let result;
           // Check if it's an FCM token or Expo token
           if (isFCMToken(token)) {
+            console.log(`📤 Sending FCM notification...`);
             result = await sendFCMPush(
               token,
               "📦 New Order Received!",
               `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
               { orderId: String(orderId), shopId: String(shopId) }
             );
+            console.log(`FCM Result:`, JSON.stringify(result, null, 2));
           } else {
+            console.log(`📤 Sending Expo notification...`);
             result = await sendExpoPush(
               token,
               "📦 New Order Received!",
               `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
               { orderId, shopId }
             );
+            console.log(`Expo Result:`, JSON.stringify(result, null, 2));
+          }
+
+          if (result?.success) {
+            console.log(`✅ Notification sent successfully!`);
+          } else {
+            console.error(`❌ Notification failed:`, result?.message || 'Unknown error');
           }
 
           if (result?.invalidTokens?.length) {
+            console.warn(`⚠️ Clearing ${result.invalidTokens.length} invalid token(s)`);
             await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
             console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
           }
+        } else {
+          console.warn(`⚠️ No push token found for shopkeeper ${shopId}`);
+          console.warn(`Shopkeeper will not receive push notification`);
+          console.warn(`Token should be saved when shopkeeper logs in`);
         }
       } catch (pushErr) {
-        console.error("Error sending push to shopkeeper", shopId, pushErr);
+        console.error("❌ Error sending push to shopkeeper", shopId, pushErr);
+        console.error("Push error details:", pushErr.message);
+        console.error("Push error stack:", pushErr.stack);
       }
     } catch (notifyErr) {
       console.error("Error notifying shopkeeper:", notifyErr);
