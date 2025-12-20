@@ -511,7 +511,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
-    const { status } = req.body;
+    const { status, cancellation_reason } = req.body;
 
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
@@ -524,6 +524,14 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       return res.status(400).json({ 
         success: false, 
         message: "Invalid status. Must be one of: " + validStatuses.join(", ") 
+      });
+    }
+
+    // Require cancellation reason if status is Cancelled
+    if (status === "Cancelled" && !cancellation_reason) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Cancellation reason is required when cancelling an order" 
       });
     }
 
@@ -540,11 +548,17 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
-    // Update order status
-    const [result] = await pool.query(
-      "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?",
-      [status, orderIdNum, shopkeeper_id]
-    );
+    // Update order status with cancellation details if applicable
+    let updateQuery, updateParams;
+    if (status === "Cancelled") {
+      updateQuery = "UPDATE orders SET status = ?, cancelled_by = 'shopkeeper', cancellation_reason = ? WHERE id = ? AND shopkeeper_id = ?";
+      updateParams = [status, cancellation_reason, orderIdNum, shopkeeper_id];
+    } else {
+      updateQuery = "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?";
+      updateParams = [status, orderIdNum, shopkeeper_id];
+    }
+    
+    const [result] = await pool.query(updateQuery, updateParams);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({ 
@@ -591,12 +605,19 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         const shopRoom = `shop_${shopkeeper_id}`;
         const customerRoom = `customer_${customerId}`;
         
+        const socketPayload = { 
+          orderId: orderIdNum, 
+          status,
+          cancelled_by: status === 'Cancelled' ? 'shopkeeper' : undefined,
+          cancellation_reason: status === 'Cancelled' ? cancellation_reason : undefined
+        };
+        
         console.log(`📡 Socket: Emitting to ${shopRoom}`);
-        req.io.to(shopRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+        req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
         
         if (customerId) {
           console.log(`📡 Socket: Emitting to ${customerRoom}`);
-          req.io.to(customerRoom).emit("orderStatusUpdate", { orderId: orderIdNum, status });
+          req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
         }
         
         console.log(`📡 Socket: Emissions completed successfully`);
@@ -613,7 +634,15 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         const token = cust?.expo_push_token;
         if (token) {
           try {
-            const pushResult = await sendExpoPush(token, "🛒 Order Update", `Your order #${orderIdNum} is now ${status}.`, { orderId: orderIdNum, status });
+            let pushTitle = "Order Update";
+            let pushBody = `Your order #${orderIdNum} is now ${status}.`;
+            
+            if (status === "Cancelled" && cancellation_reason) {
+              pushTitle = "Order Cancelled";
+              pushBody = `Order #${orderIdNum} was cancelled by shopkeeper. Reason: ${cancellation_reason}`;
+            }
+            
+            const pushResult = await sendExpoPush(token, pushTitle, pushBody, { orderId: orderIdNum, status, cancellation_reason });
             if (pushResult?.invalidTokens?.length) {
               await pool.query("UPDATE users SET expo_push_token = NULL WHERE expo_push_token IN (?)", [pushResult.invalidTokens]);
               console.warn("Cleared invalid user tokens:", pushResult.invalidTokens);
@@ -1557,8 +1586,8 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       
       if (customer?.expo_push_token) {
         const message = wasOnTime 
-          ? `🎉 Order completed on time! You earned ${pointsAwarded} wellness points.`
-          : `📦 Order completed! You earned ${pointsAwarded} wellness points (reduced due to late arrival).`;
+          ? `🎉 Order completed on time! You earned ${pointsAwarded} Store credits.`
+          : `📦 Order completed! You earned ${pointsAwarded} Store credits (reduced due to late arrival).`;
           
         const token = customer.expo_push_token;
         if (isFCMToken(token)) {
@@ -1576,8 +1605,8 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     res.json({ 
       success: true, 
       message: wasOnTime 
-        ? `Order completed on time! Customer earned ${pointsAwarded} wellness points.`
-        : `Order completed! Customer earned ${pointsAwarded} wellness points (late arrival).`,
+        ? `Order completed on time! Customer earned ${pointsAwarded} Store credits.`
+        : `Order completed! Customer earned ${pointsAwarded} Store credits (late arrival).`,
       was_on_time: wasOnTime,
       points_awarded: pointsAwarded
     });
