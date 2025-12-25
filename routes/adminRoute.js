@@ -562,12 +562,15 @@ adminRouter.post(
         const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE");
         const nextId = maxIdResult[0].next_id;
 
+        // ✅ FIX: Ensure price is stored with exactly 2 decimal places
+        const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
+
         const [dbResult] = await pool.query(
           "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             nextId,
             name,
-            parseFloat(price),
+            formattedPrice,
             category || null,
             description || "",
             imageUrl,
@@ -658,11 +661,14 @@ adminRouter.put(
         }
       }
 
+      // ✅ FIX: Ensure price is stored with exactly 2 decimal places
+      const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
+
       const [dbResult] = await pool.query(
         "UPDATE global_products SET name=?, price=?, category=?, description=?, image=?, brand=?, barcode=?, shop_scales=? WHERE id=?",
         [
           name,
-          parseFloat(price),
+          formattedPrice,
           category || null,
           description || "",
           imageUrl,

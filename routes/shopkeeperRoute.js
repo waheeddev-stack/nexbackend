@@ -441,6 +441,7 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
         o.shopkeeper_id,
         o.status,
         o.total_amount,
+        o.credits_used,
         o.created_at,
         o.credits_earned,
         o.latitude,
@@ -703,6 +704,9 @@ shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.s
     if (Number.isNaN(parsedPrice) || parsedPrice < 0) return res.status(400).json({ success: false, message: "Invalid price" });
     if (Number.isNaN(parsedStock) || parsedStock < 0) return res.status(400).json({ success: false, message: "Invalid stock" });
 
+    // ✅ FIX: Ensure price is stored with exactly 2 decimal places
+    const formattedPrice = parseFloat(parsedPrice.toFixed(2));
+
     // Handle optional image upload
     let imageUrl = null;
     if (req.file) {
@@ -724,7 +728,7 @@ shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.s
 
     const [result] = await pool.query(
       `INSERT INTO products (shop_id, name, description, category, price, stock, image) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, name.trim(), description || null, category || null, parsedPrice, parsedStock, imageUrl]
+      [shop_id, name.trim(), description || null, category || null, formattedPrice, parsedStock, imageUrl]
     );
 
     const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
@@ -772,7 +776,14 @@ shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, uploa
     if (name) { fields.push("name = ?"); values.push(name.trim()); }
     if (description !== undefined) { fields.push("description = ?"); values.push(description || null); }
     if (category) { fields.push("category = ?"); values.push(category); }
-    if (price != null) { const p = Number(price); if (Number.isNaN(p) || p < 0) return res.status(400).json({ success: false, message: "Invalid price" }); fields.push("price = ?"); values.push(p); }
+    if (price != null) { 
+      const p = Number(price); 
+      if (Number.isNaN(p) || p < 0) return res.status(400).json({ success: false, message: "Invalid price" }); 
+      // ✅ FIX: Ensure price is stored with exactly 2 decimal places
+      const formattedPrice = parseFloat(p.toFixed(2));
+      fields.push("price = ?"); 
+      values.push(formattedPrice); 
+    }
     if (stock != null) { const s = Number(stock); if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); fields.push("stock = ?"); values.push(s); }
     if (imageUrl !== existing[0].image) { fields.push("image = ?"); values.push(imageUrl); }
 
