@@ -1041,45 +1041,77 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
       });
     }
 
-    const status = action === 'approve' ? 'approved' : 'rejected';
-
-    // Update billing_payments instead of payment_requests
-    const [result] = await pool.query(
-      `UPDATE billing_payments 
-       SET status = ?, notes = ?, approved_by = ?, approved_at = NOW()
-       WHERE id = ?`,
-      [status, admin_notes || '', req.admin.id, requestId]
+    // Get payment details to check shopkeeper trial status
+    const [[payment]] = await pool.query(
+      `SELECT bp.*, s.trial_start_date, s.created_at 
+       FROM billing_payments bp
+       JOIN shopkeepers s ON bp.shopkeeper_id = s.id
+       WHERE bp.id = ?`,
+      [requestId]
     );
 
-    if (result.affectedRows === 0) {
+    if (!payment) {
       return res.status(404).json({
         success: false,
         message: "Payment request not found"
       });
     }
 
-    // Platform is FREE - automatically reject any payment submissions
-    if (status === 'approved') {
-      // Reject instead of approve since platform is free
+    // Check if shopkeeper is still in 90-day trial period
+    if (action === 'approve') {
+      const trialStart = new Date(payment.trial_start_date || payment.created_at);
+      const trialEnd = new Date(trialStart);
+      trialEnd.setDate(trialEnd.getDate() + 90); // 90-day trial
+      const now = new Date();
+
+      if (now < trialEnd) {
+        const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
+        
+        // Auto-reject payment during trial
+        await pool.query(
+          `UPDATE billing_payments 
+           SET status = 'rejected', 
+               notes = ?,
+               approved_by = ?,
+               approved_at = NOW()
+           WHERE id = ?`,
+          [
+            `Payment rejected: Shopkeeper is still in 90-day trial period (${daysRemaining} days remaining). No fees required during trial. Any payments sent will be refunded.`,
+            req.admin.id,
+            requestId
+          ]
+        );
+
+        return res.json({
+          success: false,
+          message: `Payment rejected: Shopkeeper is in trial period (${daysRemaining} days remaining)`,
+          trial_active: true,
+          days_remaining: daysRemaining
+        });
+      }
+
+      // Trial ended - approve payment and reset billing cycle
       await pool.query(
         `UPDATE billing_payments 
-         SET status = 'rejected', 
-             notes = 'Payment rejected: NexKirana platform is completely FREE during the 90-day trial period. No fees are charged. Any payments sent will be refunded immediately.',
+         SET status = 'approved', 
+             notes = ?,
              approved_by = ?,
              approved_at = NOW()
          WHERE id = ?`,
-        [req.admin.id, requestId]
+        [admin_notes || 'Payment approved', req.admin.id, requestId]
       );
 
+      // Call processPaymentApproval to reset billing cycle
+      await processPaymentApproval(payment.shopkeeper_id);
+
       return res.json({
-        success: false,
-        message: "Payment rejected: Platform is FREE during trial - Any payments sent will be refunded",
-        platform_free: true
+        success: true,
+        message: "Payment approved successfully. Billing cycle reset to 15 days."
       });
     }
 
-    // Allow manual rejection with custom notes
-    if (status === 'rejected') {
+    // Handle rejection
+    if (action === 'reject') {
       await pool.query(
         `UPDATE billing_payments 
          SET status = 'rejected', 
@@ -1087,14 +1119,15 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
              approved_by = ?,
              approved_at = NOW()
          WHERE id = ?`,
-        [admin_notes || 'Payment rejected: Platform is FREE', req.admin.id, requestId]
+        [admin_notes || 'Payment rejected', req.admin.id, requestId]
       );
+
+      return res.json({
+        success: true,
+        message: "Payment rejected successfully"
+      });
     }
 
-    res.json({
-      success: true,
-      message: `Payment request ${action}d successfully`
-    });
   } catch (err) {
     console.error('Process payment request error:', err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });

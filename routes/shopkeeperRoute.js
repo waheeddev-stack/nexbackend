@@ -1282,15 +1282,54 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   }
 });
 
-// Submit payment - DISABLED: Platform is FREE
+// Submit payment - Check trial period first
 shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
   try {
-    // Platform is completely FREE - no payments accepted
-    return res.status(400).json({ 
-      success: false, 
-      message: "🎉 NexKirana is completely FREE! No payment is required. Enjoy unlimited access to all features at no cost. ⚠️ If you accidentally send any payment during the 90-day trial period, it will be refunded immediately.",
-      platform_free: true,
-      trial_active: false
+    const shopkeeper_id = req.user.id;
+    const { amount, payment_method, transaction_id } = req.body;
+
+    // Get shopkeeper details
+    const [[shopkeeper]] = await pool.query(
+      "SELECT trial_start_date, created_at FROM shopkeepers WHERE id = ?",
+      [shopkeeper_id]
+    );
+
+    if (!shopkeeper) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    // Check if still in 90-day trial period
+    const trialStart = new Date(shopkeeper.trial_start_date || shopkeeper.created_at);
+    const trialEnd = new Date(trialStart);
+    trialEnd.setDate(trialEnd.getDate() + 90); // 90-day trial
+    const now = new Date();
+
+    if (now < trialEnd) {
+      const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
+      return res.status(400).json({ 
+        success: false, 
+        message: `You are currently in your 90-day FREE trial period with ${daysRemaining} days remaining. No payment is required during trial. ⚠️ If you accidentally send any payment during trial, it will be refunded.`,
+        trial_active: true,
+        days_remaining: daysRemaining
+      });
+    }
+
+    // Trial ended - allow payment submission
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Valid amount is required" });
+    }
+
+    // Insert payment request
+    const [result] = await pool.query(
+      `INSERT INTO billing_payments (shopkeeper_id, amount, payment_method, transaction_id, status) 
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [shopkeeper_id, amount, payment_method || 'upi', transaction_id || null]
+    );
+
+    res.json({ 
+      success: true, 
+      message: "Payment submitted successfully. Waiting for admin approval.",
+      payment_id: result.insertId
     });
   } catch (err) {
     console.error("Submit payment error:", err);
