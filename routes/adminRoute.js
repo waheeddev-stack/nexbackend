@@ -1370,6 +1370,79 @@ adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
 // EARNINGS MANAGEMENT ENDPOINTS - DISABLED (Tables not available in current schema)
 // Uncomment and modify these endpoints when earnings tables are added to the database
 
+// GET /api/admin/shopkeeper-earnings - Get detailed shopkeeper earnings with stats
+adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
+  try {
+    // Get shopkeeper earnings from billing_payments
+    const [shopkeeperEarnings] = await pool.query(`
+      SELECT 
+        s.id as shopkeeper_id,
+        s.name as shopkeeper_name,
+        s.shop_name,
+        s.email,
+        s.phone,
+        s.subscription_status,
+        s.last_payment_date,
+        s.next_payment_due,
+        COUNT(CASE WHEN bp.status = 'pending' THEN 1 END) as pending_payments_count,
+        COUNT(CASE WHEN bp.status = 'approved' THEN 1 END) as approved_payments_count,
+        COUNT(CASE WHEN bp.status = 'rejected' THEN 1 END) as rejected_payments_count,
+        COALESCE(SUM(CASE WHEN bp.status = 'pending' THEN bp.amount END), 0) as pending_amount,
+        COALESCE(SUM(CASE WHEN bp.status = 'approved' THEN bp.amount END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN bp.status = 'rejected' THEN bp.amount END), 0) as rejected_amount,
+        MAX(CASE WHEN bp.status = 'approved' THEN bp.approved_at END) as last_payment_date_actual,
+        COUNT(bp.id) as total_transactions
+      FROM shopkeepers s
+      LEFT JOIN billing_payments bp ON s.id = bp.shopkeeper_id
+      WHERE s.is_deleted = 0
+      GROUP BY s.id, s.name, s.shop_name, s.email, s.phone, s.subscription_status, s.last_payment_date, s.next_payment_due
+      ORDER BY pending_amount DESC, s.name ASC
+    `);
+
+    // Calculate payment status for each shopkeeper
+    const enrichedEarnings = shopkeeperEarnings.map(earning => {
+      let payment_status = 'active';
+      
+      if (earning.subscription_status === 'suspended') {
+        payment_status = 'blocked';
+      } else if (earning.subscription_status === 'overdue') {
+        payment_status = 'overdue';
+      } else if (earning.next_payment_due) {
+        const daysUntilDue = Math.ceil((new Date(earning.next_payment_due) - new Date()) / (1000 * 60 * 60 * 24));
+        if (daysUntilDue <= 3 && daysUntilDue > 0) {
+          payment_status = 'due_soon';
+        }
+      }
+
+      return {
+        ...earning,
+        payment_status,
+        next_payment_date: earning.next_payment_due
+      };
+    });
+
+    // Calculate summary stats
+    const summary = {
+      total_shopkeepers: shopkeeperEarnings.length,
+      total_pending: shopkeeperEarnings.reduce((sum, e) => sum + Number(e.pending_amount), 0),
+      total_paid: shopkeeperEarnings.reduce((sum, e) => sum + Number(e.total_paid), 0),
+      overdue_count: enrichedEarnings.filter(e => e.payment_status === 'overdue' || e.payment_status === 'blocked').length,
+      due_soon_count: enrichedEarnings.filter(e => e.payment_status === 'due_soon').length,
+      active_count: enrichedEarnings.filter(e => e.payment_status === 'active').length
+    };
+
+    res.json({
+      success: true,
+      data: enrichedEarnings,
+      summary,
+      earnings: enrichedEarnings // For backward compatibility
+    });
+  } catch (err) {
+    console.error('Get shopkeeper earnings error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 /*
 // Placeholder for earnings management - returns basic statistics instead
 adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
