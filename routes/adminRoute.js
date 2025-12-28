@@ -17,7 +17,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
   try {
     const { status } = req.query; // Get status filter from query params
 
-    let whereClause = "WHERE id IS NOT NULL";
+    let whereClause = "WHERE is_deleted = 0"; // Exclude soft-deleted shopkeepers
     let queryParams = [];
 
     // Add status filtering based on query parameter
@@ -47,7 +47,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
           row.is_verified === 0 ? 'rejected' : 'pending'
       }));
 
-    // Add summary statistics for the admin panel
+    // Add summary statistics for the admin panel (excluding deleted)
     const [stats] = await pool.query(`
       SELECT 
         COUNT(*) as total,
@@ -55,7 +55,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
         COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
         COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
       FROM shopkeepers 
-      WHERE id IS NOT NULL
+      WHERE id IS NOT NULL AND is_deleted = 0
     `);
 
     res.json({
@@ -80,7 +80,7 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
         COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
         COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
       FROM shopkeepers 
-      WHERE id IS NOT NULL
+      WHERE id IS NOT NULL AND is_deleted = 0
     `);
 
     const [recentActivity] = await pool.query(`
@@ -88,7 +88,7 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
         COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as new_this_week,
         COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_this_month
       FROM shopkeepers 
-      WHERE id IS NOT NULL
+      WHERE id IS NOT NULL AND is_deleted = 0
     `);
 
     res.json({

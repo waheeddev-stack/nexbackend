@@ -246,6 +246,15 @@ shopkeeperRouter.post("/signin", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
+    // Check if account is soft deleted
+    if (user[0].is_deleted === 1) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account has been deactivated. Please contact support for more information.",
+        status: 'deleted'
+      });
+    }
+
     const validPass = await bcrypt.compare(password, user[0].password);
     if (!validPass) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
@@ -312,12 +321,20 @@ shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
     }
 
     const [user] = await pool.query(
-      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, is_deleted, created_at FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
     if (user.length === 0) {
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    // Check if account is deleted
+    if (user[0].is_deleted === 1) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Your account has been deactivated. Please contact support."
+      });
     }
 
     res.json({ success: true, user: user[0], isComplete: !!(user[0].phone && user[0].address) });
