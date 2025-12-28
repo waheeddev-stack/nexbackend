@@ -1282,53 +1282,15 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   }
 });
 
-// Submit payment
+// Submit payment - DISABLED: Platform is FREE
 shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
   try {
-    const { amount, payment_method, transaction_id, notes } = req.body;
-    
-    // Validate required fields
-    if (amount === undefined || amount === null) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Amount is required" 
-      });
-    }
-    
-    if (amount <= 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Amount must be greater than 0" 
-      });
-    }
-    
-    if (!payment_method) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Payment method is required" 
-      });
-    }
-    
-    if (!transaction_id) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Transaction ID is required" 
-      });
-    }
-    
-    // Generate payment ID
-    const [maxIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM billing_payments");
-    const paymentId = maxIdResult[0].next_id;
-    
-    await pool.query(
-      "INSERT INTO billing_payments (id, shopkeeper_id, amount, payment_method, transaction_id, notes) VALUES (?, ?, ?, ?, ?, ?)",
-      [paymentId, req.user.id, amount, payment_method, transaction_id, notes || '']
-    );
-    
-    res.json({ 
-      success: true, 
-      message: "Payment submitted successfully. It will be reviewed by admin.",
-      payment_id: paymentId
+    // Platform is completely FREE - no payments accepted
+    return res.status(400).json({ 
+      success: false, 
+      message: "🎉 NexKirana is completely FREE! No payment is required. Enjoy unlimited access to all features at no cost. ⚠️ If you accidentally send any payment during the 90-day trial period, it will be refunded immediately.",
+      platform_free: true,
+      trial_active: false
     });
   } catch (err) {
     console.error("Submit payment error:", err);

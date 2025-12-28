@@ -33,7 +33,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
       }
     }
 
-    const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
+    const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at, subscription_status, next_payment_due, last_payment_date, trial_start_date FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
 
     const [rows] = await pool.query(query, queryParams);
 
@@ -1058,20 +1058,37 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
       });
     }
 
-    // Logic for Updating Shopkeeper Subscription if Approved
+    // Platform is FREE - automatically reject any payment submissions
     if (status === 'approved') {
-      const [payment] = await pool.query("SELECT shopkeeper_id FROM billing_payments WHERE id = ?", [requestId]);
-      if (payment.length > 0) {
-        const shopkeeperId = payment[0].shopkeeper_id;
+      // Reject instead of approve since platform is free
+      await pool.query(
+        `UPDATE billing_payments 
+         SET status = 'rejected', 
+             notes = 'Payment rejected: NexKirana platform is completely FREE during the 90-day trial period. No fees are charged. Any payments sent will be refunded immediately.',
+             approved_by = ?,
+             approved_at = NOW()
+         WHERE id = ?`,
+        [req.admin.id, requestId]
+      );
 
-        await pool.query(`
-            UPDATE shopkeepers 
-            SET subscription_status = 'active', 
-                last_payment_date = NOW(),
-                next_payment_due = DATE_ADD(NOW(), INTERVAL 30 DAY)
-            WHERE id = ?
-         `, [shopkeeperId]);
-      }
+      return res.json({
+        success: false,
+        message: "Payment rejected: Platform is FREE during trial - Any payments sent will be refunded",
+        platform_free: true
+      });
+    }
+
+    // Allow manual rejection with custom notes
+    if (status === 'rejected') {
+      await pool.query(
+        `UPDATE billing_payments 
+         SET status = 'rejected', 
+             notes = ?,
+             approved_by = ?,
+             approved_at = NOW()
+         WHERE id = ?`,
+        [admin_notes || 'Payment rejected: Platform is FREE', req.admin.id, requestId]
+      );
     }
 
     res.json({
