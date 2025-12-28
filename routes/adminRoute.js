@@ -717,6 +717,80 @@ adminRouter.delete("/global-products/:id", verifyAdminToken, async (req, res) =>
   }
 });
 
+// Delete a shopkeeper (admin)
+adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
+  const shopkeeperId = req.params.id;
+
+  // Validate shopkeeper ID
+  if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid shopkeeper ID. Shopkeeper ID is required for deletion."
+    });
+  }
+
+  try {
+    // Check if shopkeeper exists
+    const [existingShopkeeper] = await pool.query(
+      "SELECT id, name, email, shop_name FROM shopkeepers WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (existingShopkeeper.length === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    const shopkeeper = existingShopkeeper[0];
+
+    // Check if shopkeeper has active orders
+    const [activeOrders] = await pool.query(
+      "SELECT COUNT(*) as count FROM orders WHERE shopkeeper_id = ? AND status IN ('Pending', 'Preparing', 'Ready')",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (activeOrders[0].count > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete shopkeeper. There are ${activeOrders[0].count} active order(s) associated with this shopkeeper. Please complete or cancel them first.`
+      });
+    }
+
+    // Delete shopkeeper (cascade will handle related records based on DB constraints)
+    const [result] = await pool.query("DELETE FROM shopkeepers WHERE id = ?", [
+      parseInt(shopkeeperId),
+    ]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Failed to delete shopkeeper" });
+    }
+
+    console.log(`✅ Deleted shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})`);
+
+    res.json({
+      success: true,
+      message: `Shopkeeper "${shopkeeper.name}" deleted successfully`,
+      deletedShopkeeper: {
+        id: shopkeeper.id,
+        name: shopkeeper.name,
+        email: shopkeeper.email,
+        shop_name: shopkeeper.shop_name
+      }
+    });
+  } catch (err) {
+    console.error("Delete shopkeeper error:", err);
+    
+    // Handle foreign key constraint errors
+    if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete shopkeeper. There are related records (orders, products, etc.) associated with this shopkeeper."
+      });
+    }
+
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 // GET /api/admin/products - Get all shop-specific products
 adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   try {
