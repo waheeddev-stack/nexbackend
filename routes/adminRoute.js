@@ -1084,6 +1084,48 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
   }
 });
 
+// GET /api/admin/payments/all - Get all payments (pending, approved, rejected)
+adminRouter.get("/payments/all", verifyAdminToken, async (req, res) => {
+  try {
+    // Check if billing_payments table exists
+    const [tables] = await pool.query("SHOW TABLES LIKE 'billing_payments'");
+    
+    if (tables.length === 0) {
+      return res.json({ 
+        success: true, 
+        data: [],
+        message: "Payment system not yet configured."
+      });
+    }
+
+    const [payments] = await pool.query(`
+      SELECT 
+        bp.id, 
+        bp.shopkeeper_id, 
+        bp.amount, 
+        bp.payment_method, 
+        bp.transaction_id, 
+        bp.payment_date, 
+        bp.status, 
+        bp.notes,
+        bp.approved_by,
+        bp.approved_at,
+        s.name as shopkeeper_name, 
+        s.email as shopkeeper_email, 
+        s.shop_name, 
+        s.shop_scale
+      FROM billing_payments bp
+      LEFT JOIN shopkeepers s ON bp.shopkeeper_id = s.id
+      ORDER BY bp.payment_date DESC
+    `);
+
+    res.json({ success: true, data: payments });
+  } catch (err) {
+    console.error('Get all payments error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 // GET /api/admin/earnings - Get earnings summary
 adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
   try {
