@@ -9,6 +9,7 @@ import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
+import { checkSubscriptionStatus } from "../middleware/checkSubscription.js";
 // import checkPaymentStatus from "../middleware/checkPaymentStatus.js"; // Disabled - earnings system not implemented
 import { awardWellnessPoints } from "../utils/wellnessPoints.js";
 import { 
@@ -69,7 +70,7 @@ dotenv.config();
 
 const shopkeeperRouter = express.Router();
 
-shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     
@@ -435,7 +436,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
-shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { status } = req.query; // Optional filter by status
@@ -525,7 +526,7 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
 });
 
 // Update order status (shopkeeper can update orders assigned to them)
-shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
@@ -690,7 +691,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
 /**
  * GET all products of the logged-in shopkeeper
  */
-shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
     const [products] = await pool.query(
@@ -707,7 +708,7 @@ shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, async (re
 /**
  * ADD new product
  */
-shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.single("image"), async (req, res) => {
+shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const { name, description, category, price, stock } = req.body;
@@ -760,7 +761,7 @@ shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, upload.s
 /**
  * UPDATE product
  */
-shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, upload.single("image"), async (req, res) => {
+shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
     const productId = req.params.id;

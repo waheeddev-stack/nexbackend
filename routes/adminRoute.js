@@ -182,10 +182,21 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
     }
 
     // Update verification status using is_verified column
-    const [result] = await pool.query(
-      "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
-      [is_verified, parseInt(shopkeeperId)]
-    );
+    // If approving, also set trial_start_date and subscription_status
+    let updateQuery, updateParams;
+    if (action === "approve") {
+      updateQuery = `UPDATE shopkeepers 
+                     SET is_verified = ?, 
+                         trial_start_date = COALESCE(trial_start_date, NOW()), 
+                         subscription_status = 'trial'
+                     WHERE id = ?`;
+      updateParams = [is_verified, parseInt(shopkeeperId)];
+    } else {
+      updateQuery = "UPDATE shopkeepers SET is_verified = ? WHERE id = ?";
+      updateParams = [is_verified, parseInt(shopkeeperId)];
+    }
+    
+    const [result] = await pool.query(updateQuery, updateParams);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Failed to update shopkeeper status" });
@@ -249,10 +260,21 @@ adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) =
     }
 
     // Update verification status
-    await pool.query(
-      "UPDATE shopkeepers SET is_verified = ? WHERE id = ?",
-      [is_verified, parseInt(shopkeeperId)]
-    );
+    // If approving, also set trial_start_date and subscription_status
+    let updateQuery, updateParams;
+    if (is_verified === 1) {
+      updateQuery = `UPDATE shopkeepers 
+                     SET is_verified = ?, 
+                         trial_start_date = COALESCE(trial_start_date, NOW()), 
+                         subscription_status = 'trial'
+                     WHERE id = ?`;
+      updateParams = [is_verified, parseInt(shopkeeperId)];
+    } else {
+      updateQuery = "UPDATE shopkeepers SET is_verified = ? WHERE id = ?";
+      updateParams = [is_verified, parseInt(shopkeeperId)];
+    }
+    
+    await pool.query(updateQuery, updateParams);
 
     const statusText = is_verified === 1 ? 'approved' : is_verified === 0 ? 'rejected' : 'pending';
 
@@ -1444,18 +1466,24 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         COUNT(bp.id) as total_transactions
       FROM shopkeepers s
       LEFT JOIN billing_payments bp ON s.id = bp.shopkeeper_id
-      WHERE s.is_deleted = 0
+      WHERE s.is_deleted = 0 AND s.id IS NOT NULL
       GROUP BY s.id, s.name, s.shop_name, s.email, s.phone, s.subscription_status, s.last_payment_date, s.next_payment_due
       ORDER BY pending_amount DESC, s.name ASC
     `);
 
-    // Calculate payment status for each shopkeeper
+    // Calculate payment status for each shopkeeper and normalize subscription_status
     const enrichedEarnings = shopkeeperEarnings.map(earning => {
+      // Normalize subscription_status (convert 'free' to 'trial', NULL to 'trial')
+      let subscription_status = earning.subscription_status;
+      if (!subscription_status || subscription_status === 'free') {
+        subscription_status = 'trial';
+      }
+      
       let payment_status = 'active';
       
-      if (earning.subscription_status === 'suspended') {
+      if (subscription_status === 'suspended') {
         payment_status = 'blocked';
-      } else if (earning.subscription_status === 'overdue') {
+      } else if (subscription_status === 'overdue') {
         payment_status = 'overdue';
       } else if (earning.next_payment_due) {
         const daysUntilDue = Math.ceil((new Date(earning.next_payment_due) - new Date()) / (1000 * 60 * 60 * 24));
@@ -1466,19 +1494,23 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
 
       return {
         ...earning,
+        subscription_status, // Use normalized status
         payment_status,
         next_payment_date: earning.next_payment_due
       };
     });
 
-    // Calculate summary stats
+    // Calculate summary stats with normalized statuses
     const summary = {
-      total_shopkeepers: shopkeeperEarnings.length,
-      total_pending: shopkeeperEarnings.reduce((sum, e) => sum + Number(e.pending_amount), 0),
-      total_paid: shopkeeperEarnings.reduce((sum, e) => sum + Number(e.total_paid), 0),
-      overdue_count: enrichedEarnings.filter(e => e.payment_status === 'overdue' || e.payment_status === 'blocked').length,
+      total_shopkeepers: enrichedEarnings.length,
+      total_pending: enrichedEarnings.reduce((sum, e) => sum + Number(e.pending_amount), 0),
+      total_paid: enrichedEarnings.reduce((sum, e) => sum + Number(e.total_paid), 0),
+      overdue_count: enrichedEarnings.filter(e => e.subscription_status === 'overdue').length,
       due_soon_count: enrichedEarnings.filter(e => e.payment_status === 'due_soon').length,
-      active_count: enrichedEarnings.filter(e => e.payment_status === 'active').length
+      active_count: enrichedEarnings.filter(e => e.subscription_status === 'active').length,
+      trial_count: enrichedEarnings.filter(e => e.subscription_status === 'trial').length,
+      grace_count: enrichedEarnings.filter(e => e.subscription_status === 'overdue').length,
+      suspended_count: enrichedEarnings.filter(e => e.subscription_status === 'suspended').length
     };
 
     res.json({
