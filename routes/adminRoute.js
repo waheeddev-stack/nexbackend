@@ -116,6 +116,53 @@ adminRouter.get("/customers", verifyAdminToken, async (req, res) => {
   }
 });
 
+// Delete customer (protected)
+adminRouter.delete("/customers/:customerId", verifyAdminToken, async (req, res) => {
+  try {
+    const customerId = parseInt(req.params.customerId);
+    
+    if (isNaN(customerId)) {
+      return res.status(400).json({ success: false, message: "Invalid customer ID" });
+    }
+
+    // Check if customer exists
+    const [customer] = await pool.query(
+      "SELECT id, name, email FROM users WHERE id = ?",
+      [customerId]
+    );
+
+    if (customer.length === 0) {
+      return res.status(404).json({ success: false, message: "Customer not found" });
+    }
+
+    // Delete customer (soft delete or hard delete based on your preference)
+    // Using hard delete here - change to soft delete if needed
+    const [result] = await pool.query(
+      "DELETE FROM users WHERE id = ?",
+      [customerId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(500).json({ success: false, message: "Failed to delete customer" });
+    }
+
+    console.log(`Customer ${customerId} (${customer[0].name}) deleted successfully`);
+
+    res.json({
+      success: true,
+      message: `Customer "${customer[0].name}" deleted successfully`,
+      deletedCustomer: {
+        id: customer[0].id,
+        name: customer[0].name,
+        email: customer[0].email
+      }
+    });
+  } catch (err) {
+    console.error("Delete customer error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 // Test endpoint to debug verification issues
 adminRouter.get("/test-verify/:id", verifyAdminToken, async (req, res) => {
   try {
