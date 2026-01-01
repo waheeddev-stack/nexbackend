@@ -77,8 +77,19 @@ const calculateDiscount = (points) => {
 };
 
 // Award wellness points for order completion
-const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt) => {
+const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, orderAmount = 0) => {
   try {
+    // ✅ NEW: Check if order amount is at least ₹40
+    const MINIMUM_ORDER_AMOUNT = 40;
+    if (orderAmount < MINIMUM_ORDER_AMOUNT) {
+      console.log(`Order amount ₹${orderAmount} is below minimum ₹${MINIMUM_ORDER_AMOUNT}. No credits awarded.`);
+      return { 
+        points: 0, 
+        tier: "Below Minimum", 
+        description: `Order amount must be at least ₹${MINIMUM_ORDER_AMOUNT} to earn credits` 
+      };
+    }
+
     // Calculate time remaining based on timer
     const timerStart = new Date(timerStartedAt);
     const deliveredTime = new Date(deliveryTime);
@@ -96,6 +107,7 @@ const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt) =
       - Timer Expires: ${timerExpires.toISOString()}
       - Delivered At: ${deliveredTime.toISOString()}
       - Time Remaining: ${Math.floor(timeRemaining / 1000)}s (${Math.floor(timeRemaining / 60000)} min)
+      - Order Amount: ₹${orderAmount}
       - Points Awarded: ${pointsData.points} (${pointsData.tier})`);
     
     // Update user's store credits

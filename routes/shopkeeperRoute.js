@@ -591,7 +591,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     if (status === "Completed") {
       try {
         const [[orderDetails]] = await pool.query(
-          "SELECT user_id, created_at, timer_started_at FROM orders WHERE id = ?",
+          "SELECT user_id, created_at, timer_started_at, total_amount FROM orders WHERE id = ?",
           [orderIdNum]
         );
         
@@ -600,7 +600,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
             pool, 
             orderDetails.user_id, 
             new Date(), // completion time (now)
-            orderDetails.timer_started_at || orderDetails.created_at // timer start or order creation time
+            orderDetails.timer_started_at || orderDetails.created_at, // timer start or order creation time
+            orderDetails.total_amount // ✅ NEW: Pass order amount for minimum check
           );
           
           console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for order ${orderIdNum}`);
@@ -1493,7 +1494,7 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     let orderInfo;
     try {
       [orderInfo] = await pool.query(`
-        SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at
+        SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at, o.total_amount
         FROM orders o
         WHERE o.id = ? AND o.shopkeeper_id = ?
       `, [orderIdNum, shopkeeper_id]);
@@ -1570,7 +1571,8 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
         pool, 
         order.user_id, 
         now, // completion time
-        order.timer_started_at || order.created_at // timer start time
+        order.timer_started_at || order.created_at, // timer start time
+        order.total_amount // ✅ NEW: Pass order amount for minimum check
       );
       pointsAwarded = pointsData.points;
       console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for order ${orderIdNum}`);
