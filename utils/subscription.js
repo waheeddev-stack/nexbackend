@@ -37,6 +37,7 @@ async function calculateSubscriptionStatus(shopkeeperId) {
       status: 'trial',
       isActive: true,
       trialDaysRemaining,
+      days_remaining: trialDaysRemaining,
       trialEndDate,
       message: `Trial period: ${trialDaysRemaining} days remaining`,
       needsPayment: false,
