@@ -22,10 +22,10 @@ userrouter.get("/nearby-shops", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
-    // Find nearby shops using Haversine formula
-    // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates
-    const [shops] = await pool.query(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude,
+    // Find nearby ONLINE shops using Haversine formula
+    // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates AND is_online = 1
+    const [onlineShops] = await pool.query(
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -39,19 +39,53 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 1
+         AND (is_online = 1 OR is_online IS NULL)
+       HAVING distance <= ?
+       ORDER BY distance ASC`,
+      [latitude, longitude, latitude, radiusKm]
+    );
+
+    // Find nearby OFFLINE shops (to show "Shop Offline" message)
+    const [offlineShops] = await pool.query(
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
+              (6371 * acos(
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
+              )) AS distance
+       FROM shopkeepers
+       WHERE latitude IS NOT NULL 
+         AND longitude IS NOT NULL
+         AND latitude != 0 
+         AND longitude != 0
+         AND is_verified = 1
+         AND is_online = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
       [latitude, longitude, latitude, radiusKm]
     );
     
-    console.log(`Nearby shops query: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km, found=${shops.length} shops`);
+    console.log(`Nearby shops query: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km, online=${onlineShops.length}, offline=${offlineShops.length}`);
 
-    if (shops.length === 0) {
-      return res.json({ success: true, shops: [] });
+    // If no online shops but there are offline shops nearby, return special response
+    if (onlineShops.length === 0 && offlineShops.length > 0) {
+      return res.json({ 
+        success: true, 
+        shops: [], 
+        hasOfflineShops: true,
+        offlineShopsCount: offlineShops.length,
+        message: "Nearby shops are currently offline"
+      });
     }
 
-    // Fetch products for each shop directly from products table (products.shop_id)
-    const shopIds = shops.map(s => s.id);
+    if (onlineShops.length === 0) {
+      return res.json({ success: true, shops: [], hasOfflineShops: false });
+    }
+
+    // Fetch products for each online shop directly from products table (products.shop_id)
+    const shopIds = onlineShops.map(s => s.id);
     const [products] = await pool.query(
       `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
        FROM products
@@ -61,14 +95,14 @@ userrouter.get("/nearby-shops", async (req, res) => {
     );
 
     // Group products under their shop, ensure address is never null/undefined
-    const shopsWithProducts = shops.map(shop => ({
+    const shopsWithProducts = onlineShops.map(shop => ({
       ...shop,
       // Provide fallback address if not set
       address: shop.address || `Near coordinates (${parseFloat(shop.latitude).toFixed(4)}, ${parseFloat(shop.longitude).toFixed(4)})`,
       products: products.filter(p => p.shop_id === shop.id),
     }));
 
-    res.json({ success: true, shops: shopsWithProducts });
+    res.json({ success: true, shops: shopsWithProducts, hasOfflineShops: offlineShops.length > 0 });
   } catch (err) {
     console.error("Nearby shops error:", err);
     res.status(500).json({ success: false, message: "Server error" });

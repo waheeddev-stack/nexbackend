@@ -433,6 +433,66 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
   }
 });
 
+// SHOP ONLINE/OFFLINE STATUS TOGGLE
+shopkeeperRouter.patch("/shop-status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { is_online } = req.body;
+
+    // Validate input
+    if (typeof is_online !== 'boolean' && is_online !== 0 && is_online !== 1) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "is_online must be a boolean (true/false) or 0/1" 
+      });
+    }
+
+    const onlineStatus = is_online ? 1 : 0;
+
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET is_online = ? WHERE id = ?",
+      [onlineStatus, shopkeeper_id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      is_online: onlineStatus === 1,
+      message: onlineStatus === 1 ? "Shop is now online and visible to customers" : "Shop is now offline and hidden from customers"
+    });
+  } catch (err) {
+    console.error("Shop status toggle error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET SHOP STATUS
+shopkeeperRouter.get("/shop-status", verifyToken, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    const [[shop]] = await pool.query(
+      "SELECT is_online FROM shopkeepers WHERE id = ?",
+      [shopkeeper_id]
+    );
+
+    if (!shop) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      is_online: shop.is_online === 1 || shop.is_online === null // Default to online if null
+    });
+  } catch (err) {
+    console.error("Get shop status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
