@@ -370,15 +370,44 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop not found or not verified" });
     }
 
-    // Verify all products belong to this shop
+    // Verify all products belong to this shop AND have sufficient stock
     const productIds = products.map(p => p.product_id);
-    const [prodRows] = await pool.query("SELECT id, shop_id FROM products WHERE id IN (?)", [productIds]);
+    const [prodRows] = await pool.query("SELECT id, shop_id, name, stock FROM products WHERE id IN (?)", [productIds]);
     
-    for (const prod of prodRows) {
-      if (prod.shop_id !== shopId) {
+    // Create a map for quick lookup
+    const productMap = new Map(prodRows.map(p => [p.id, p]));
+    
+    // Validate shop ownership and stock availability
+    for (const orderItem of products) {
+      const product = productMap.get(orderItem.product_id);
+      
+      if (!product) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Product with ID ${orderItem.product_id} not found.` 
+        });
+      }
+      
+      if (product.shop_id !== shopId) {
         return res.status(400).json({ 
           success: false, 
           message: "All products must belong to the same shop. Please order from one shop at a time." 
+        });
+      }
+      
+      // Check stock availability
+      if (product.stock < orderItem.quantity) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Insufficient stock for "${product.name}". Available: ${product.stock}, Requested: ${orderItem.quantity}` 
+        });
+      }
+      
+      // Check for zero stock
+      if (product.stock === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `"${product.name}" is out of stock. Please remove it from your cart.` 
         });
       }
     }
@@ -444,13 +473,19 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       console.warn("Timer record creation failed (table may not exist):", timerError.message);
     }
 
-    // Insert order items
+    // Insert order items and deduct stock
     for (const item of products) {
       const [maxItemId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
       const itemId = maxItemId[0].nextId;
       await pool.query(
         "INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)",
         [itemId, orderId, item.product_id, item.quantity, item.price]
+      );
+      
+      // Deduct stock from inventory
+      await pool.query(
+        "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+        [item.quantity, item.product_id, item.quantity]
       );
     }
 
