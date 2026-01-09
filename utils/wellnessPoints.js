@@ -27,13 +27,13 @@ const calculateWellnessPoints = (timeRemaining, totalDuration = 7 * 60 * 1000) =
 // Get point value in rupees
 const getPointValue = () => 0.05; // ₹0.05 per point
 
-// Calculate maximum points that can be used (10% of order value)
+// Calculate maximum points that can be used (30% of order value)
 const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
   // Use integer arithmetic to avoid floating-point precision issues
-  // 10% of order value = totalAmount * 0.1
-  // Points = (totalAmount * 0.1) / 0.05 = totalAmount * 0.1 / 0.05 = totalAmount * 2
-  // To avoid decimals: (totalAmount * 10) / 5 = totalAmount * 2
-  const maxFromOrderValue = Math.floor(totalAmount * 2);
+  // 30% of order value = totalAmount * 0.3
+  // Points = (totalAmount * 0.3) / 0.05 = totalAmount * 0.3 / 0.05 = totalAmount * 6
+  // To avoid decimals: (totalAmount * 30) / 5 = totalAmount * 6
+  const maxFromOrderValue = Math.floor(totalAmount * 6);
   return Math.min(availablePoints, maxFromOrderValue);
 };
 
@@ -65,7 +65,7 @@ const validatePointsUsage = (selectedPoints, availablePoints, totalAmount) => {
   }
   
   if (selectedPoints > maxAllowed) {
-    return { valid: false, message: `Maximum ${maxAllowed} points allowed (10% of order value)` };
+    return { valid: false, message: `Maximum ${maxAllowed} points allowed (30% of order value)` };
   }
   
   return { valid: true, message: "Valid points selection" };

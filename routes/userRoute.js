@@ -85,11 +85,12 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each online shop directly from products table (products.shop_id)
+    // Only include products with stock > 0 to prevent showing out-of-stock items
     const shopIds = onlineShops.map(s => s.id);
     const [products] = await pool.query(
       `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
        FROM products
-       WHERE shop_id IN (?)
+       WHERE shop_id IN (?) AND stock > 0
        ORDER BY created_at DESC`,
       [shopIds]
     );
@@ -235,7 +236,8 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 });
 userrouter.get("/products", async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM products ORDER BY created_at DESC");
+    // Only return products with stock > 0 to prevent showing out-of-stock items
+    const [rows] = await pool.query("SELECT * FROM products WHERE stock > 0 ORDER BY created_at DESC");
     res.json({ success: true, products: rows });
   } catch (err) {
     console.error(err);
