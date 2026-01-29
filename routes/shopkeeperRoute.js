@@ -18,6 +18,7 @@ import {
   processPaymentApproval,
   canAccessApp 
 } from "../utils/subscription.js";
+import { createJWEToken } from "../utils/jweToken.js";
 
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -209,8 +210,12 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
 
     const user = userRows[0];
     
-    // Generate JWT token
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    // Generate JWE token
+    const token = await createJWEToken({ 
+      id: user.id, 
+      role: 'shopkeeper',
+      email: user.email 
+    }, '7d');
 
     return res.json({ 
       success: true, 
@@ -292,7 +297,11 @@ shopkeeperRouter.post("/signin", async (req, res) => {
     
     // Only approved shopkeepers (is_verified = 1) can proceed
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET);
+    const token = await createJWEToken({ 
+      id: user[0].id, 
+      role: 'shopkeeper',
+      email: user[0].email 
+    }, '7d');
     
     res.json({
       success: true,

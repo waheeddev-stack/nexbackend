@@ -8,6 +8,7 @@ import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
+import authRouter from "./routes/authRoute.js";
 import db from "./config/db.js";
 
 // Import security and configuration
@@ -343,6 +344,7 @@ app.get("/api/debug-admin", async (req, res) => {
 });
 
 // Routes
+app.use("/api/auth", authRouter);
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);

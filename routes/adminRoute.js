@@ -9,6 +9,7 @@ import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import streamifier from "streamifier";
 import { processPaymentApproval } from "../utils/subscription.js";
+import { createJWEToken } from "../utils/jweToken.js";
 
 const adminRouter = express.Router();
 
@@ -1436,15 +1437,14 @@ adminRouter.post("/login", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
+    // Generate JWE token
+    const token = await createJWEToken(
       {
         id: 1,
         email: envAdminEmail,
         role: 'admin'
       },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      '24h'
     );
 
     console.log('✅ Environment-based admin login successful');

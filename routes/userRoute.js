@@ -9,6 +9,7 @@ import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import  verifyToken  from "../middleware/auth.js";
 import { deductWellnessPoints, validatePointsUsage } from "../utils/wellnessPoints.js";
+import { createJWEToken } from "../utils/jweToken.js";
 
 dotenv.config();
 
@@ -168,11 +169,26 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
     if (!validPass)
       return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user: { id: user[0].id, email: user[0].email, name: user[0].name } });
+    // Create JWE token with user info and role
+    const token = await createJWEToken({ 
+      id: user[0].id, 
+      role: 'user',
+      email: user[0].email 
+    }, "7d");
+    
+    res.json({ 
+      success: true, 
+      token, 
+      tokenType: 'JWE',
+      user: { 
+        id: user[0].id, 
+        email: user[0].email, 
+        name: user[0].name 
+      } 
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, message: "Server error during login" });
   }
 });
 
