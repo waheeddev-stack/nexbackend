@@ -14,6 +14,14 @@ import db from "./config/db.js";
 // Import stock manager for table initialization
 import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
+// Import timer table initialization
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // Import security and configuration
 import { getConfig, validateEnvironment } from "./config/environment.js";
 import securityMiddleware from "./middleware/security.js";
@@ -373,6 +381,37 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('✅ Stock restoration table initialized');
   } catch (error) {
     console.error('❌ Failed to initialize stock restoration table:', error);
+  }
+  
+  // Initialize timer tables
+  try {
+    console.log('🔧 Initializing timer tables...');
+    const schemaPath = join(__dirname, 'schema', 'order_timers.sql');
+    
+    if (fs.existsSync(schemaPath)) {
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      const statements = schema
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+
+      for (const statement of statements) {
+        try {
+          await db.query(statement);
+        } catch (error) {
+          if (!error.message.includes('already exists') && 
+              !error.message.includes('Duplicate column name') &&
+              !error.message.includes('Duplicate key name')) {
+            console.warn('Timer table setup warning:', error.message);
+          }
+        }
+      }
+      console.log('✅ Timer tables initialized');
+    } else {
+      console.warn('⚠️ Timer schema file not found, skipping timer table initialization');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize timer tables:', error);
   }
   
   console.log('📋 Available endpoints:');

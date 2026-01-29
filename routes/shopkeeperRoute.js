@@ -1692,14 +1692,28 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       console.log(`Socket: Emitting orderStatusUpdate to ${shopRoom} and ${customerRoom}`);
       console.log(`Socket: Order data - orderId=${orderIdNum}, status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
       
-      req.io.to(shopRoom).emit("orderStatusUpdate", { 
+      const socketPayload = { 
         orderId: orderIdNum, 
         status: 'Completed',
-        wasOnTime 
+        wasOnTime,
+        timerStopped: true,
+        stoppedAt: now.toISOString(),
+        pointsAwarded
+      };
+      
+      req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
+      req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
+      
+      // Also emit a specific timer stopped event
+      req.io.to(shopRoom).emit("timerStopped", { 
+        orderId: orderIdNum, 
+        stoppedAt: now.toISOString(),
+        wasOnTime,
+        pointsAwarded
       });
-      req.io.to(customerRoom).emit("orderStatusUpdate", { 
+      req.io.to(customerRoom).emit("timerStopped", { 
         orderId: orderIdNum, 
-        status: 'Completed',
+        stoppedAt: now.toISOString(),
         wasOnTime,
         pointsAwarded
       });
