@@ -22,7 +22,8 @@
     "create-test-orders": "node scripts/create-test-orders.js",
     "test-working": "node scripts/working-features-test.js",
     "debug-jwt": "node scripts/debug-jwt-shopkeeper.js",
-    "fix-id": "node scripts/fix-shopkeeper-id.js"
+    "fix-id": "node scripts/fix-shopkeeper-id.js",
+    "init-stock-table": "node scripts/init-stock-restoration-table.js"
   },
   "keywords": [],
   "author": "",

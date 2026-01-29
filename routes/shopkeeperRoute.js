@@ -19,6 +19,7 @@ import {
   canAccessApp 
 } from "../utils/subscription.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -636,23 +637,51 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
-    // Update order status with cancellation details if applicable
-    let updateQuery, updateParams;
+    // Handle stock restoration for cancelled orders
     if (status === "Cancelled") {
-      updateQuery = "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?";
-      updateParams = [status, orderIdNum, shopkeeper_id];
+      console.log(`📦 Shopkeeper cancelling order ${orderIdNum} - using stock manager for restoration`);
+      
+      // Start transaction to ensure data consistency
+      await pool.query("START TRANSACTION");
+      
+      try {
+        // Update order status to Cancelled
+        await pool.query(updateQuery, updateParams);
+        
+        // Restore stock using the stock manager utility
+        const stockRestoration = await restoreStockForCancelledOrder(
+          orderIdNum, 
+          'shopkeeper', 
+          cancellation_reason || 'Shopkeeper cancellation'
+        );
+        
+        // Commit transaction
+        await pool.query("COMMIT");
+        
+        if (stockRestoration.success) {
+          console.log(`✅ Order ${orderIdNum} cancelled by shopkeeper and stock restored successfully`);
+          console.log(`   - Items restored: ${stockRestoration.totalItemsRestored}`);
+          console.log(`   - Total quantity restored: ${stockRestoration.totalQuantityRestored}`);
+        } else {
+          console.log(`⚠️ Order ${orderIdNum} cancelled but stock restoration had issues:`, stockRestoration.message);
+        }
+        
+      } catch (transactionError) {
+        // Rollback transaction on error
+        await pool.query("ROLLBACK");
+        console.error(`❌ Transaction failed for shopkeeper cancellation of order ${orderIdNum}:`, transactionError);
+        throw transactionError;
+      }
     } else {
-      updateQuery = "UPDATE orders SET status = ? WHERE id = ? AND shopkeeper_id = ?";
-      updateParams = [status, orderIdNum, shopkeeper_id];
-    }
-    
-    const [result] = await pool.query(updateQuery, updateParams);
-
-    if (result.affectedRows === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Failed to update order status" 
-      });
+      // For non-cancellation status updates, just update the order
+      const [result] = await pool.query(updateQuery, updateParams);
+      
+      if (result.affectedRows === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Failed to update order status" 
+        });
+      }
     }
 
     // Award wellness points if order is completed
@@ -726,7 +755,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
             
             if (status === "Cancelled" && cancellation_reason) {
               pushTitle = "Order Cancelled";
-              pushBody = `Order #${orderIdNum} was cancelled by shopkeeper. Reason: ${cancellation_reason}`;
+              pushBody = `Order #${orderIdNum} was cancelled by shopkeeper. Reason: ${cancellation_reason}. Stock has been restored.`;
             }
             
             const pushResult = await sendExpoPush(token, pushTitle, pushBody, { orderId: orderIdNum, status, cancellation_reason });

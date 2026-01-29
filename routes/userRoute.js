@@ -10,6 +10,7 @@ import cloudinary from "../config/cloudinary.js";
 import  verifyToken  from "../middleware/auth.js";
 import { deductWellnessPoints, validatePointsUsage } from "../utils/wellnessPoints.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 
 dotenv.config();
 
@@ -661,14 +662,39 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
         message: `Cannot cancel order with status: ${order.status}. Only pending orders can be cancelled.` 
       });
     }
+
+    // Start transaction for order cancellation and stock restoration
+    await pool.query("START TRANSACTION");
     
-    // Update order status to Cancelled
-    await pool.query(
-      "UPDATE orders SET status = 'Cancelled' WHERE id = ?",
-      [orderIdNum]
-    );
-    
-    console.log(`✅ Order ${orderIdNum} cancelled successfully`);
+    try {
+      // Update order status to Cancelled
+      await pool.query(
+        "UPDATE orders SET status = 'Cancelled' WHERE id = ?",
+        [orderIdNum]
+      );
+      
+      // Restore stock using the stock manager utility
+      const stockRestoration = await restoreStockForCancelledOrder(
+        orderIdNum, 
+        'customer', 
+        'Customer cancellation'
+      );
+      
+      // Commit transaction
+      await pool.query("COMMIT");
+      
+      if (stockRestoration.success) {
+        console.log(`✅ Order ${orderIdNum} cancelled and stock restored successfully`);
+      } else {
+        console.log(`⚠️ Order ${orderIdNum} cancelled but stock restoration had issues:`, stockRestoration.message);
+      }
+      
+    } catch (transactionError) {
+      // Rollback transaction on error
+      await pool.query("ROLLBACK");
+      console.error(`❌ Transaction failed for order ${orderIdNum}:`, transactionError);
+      throw transactionError;
+    }
     
     // Broadcast cancellation via sockets to shopkeeper
     try {
@@ -683,7 +709,9 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
         
         const cancellationData = {
           orderId: orderIdNum,
-          status: 'Cancelled'
+          status: 'Cancelled',
+          stockRestored: true,
+          restoredItems: stockRestoration.success ? stockRestoration.totalItemsRestored : 0
         };
         console.log(`📡 Socket: Payload:`, cancellationData);
         
@@ -712,10 +740,11 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
       if (shopkeeper?.expo_push_token) {
         const token = shopkeeper.expo_push_token;
         console.log(`📱 Push: Sending cancellation notification to shopkeeper ${order.shopkeeper_id}`);
+        const stockMessage = stockRestoration.success ? " Stock has been restored." : "";
         if (isFCMToken(token)) {
-          await sendFCMPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.`, { orderId: String(orderIdNum), status: 'Cancelled' });
+          await sendFCMPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.${stockMessage}`, { orderId: String(orderIdNum), status: 'Cancelled' });
         } else {
-          await sendExpoPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.`, { orderId: orderIdNum, status: 'Cancelled' });
+          await sendExpoPush(token, "Order Cancelled", `Order #${orderIdNum} has been cancelled by the customer.${stockMessage}`, { orderId: orderIdNum, status: 'Cancelled' });
         }
         console.log(`📱 Push: ✅ Notification sent successfully`);
       } else {
@@ -728,12 +757,15 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
     
     res.json({ 
       success: true, 
-      message: "Order cancelled successfully",
-      orderId: orderIdNum
+      message: stockRestoration.success ? 
+        "Order cancelled successfully and stock restored" : 
+        "Order cancelled successfully but stock restoration had issues",
+      orderId: orderIdNum,
+      stockRestoration: stockRestoration
     });
   } catch (err) {
     console.error("Cancel order error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Server error during cancellation" });
   }
 });
 
