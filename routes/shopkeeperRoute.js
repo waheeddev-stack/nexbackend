@@ -637,6 +637,10 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
+    // Prepare update query and parameters
+    const updateQuery = "UPDATE orders SET status = ? WHERE id = ?";
+    const updateParams = [status, orderIdNum];
+
     // Handle stock restoration for cancelled orders
     if (status === "Cancelled") {
       console.log(`📦 Shopkeeper cancelling order ${orderIdNum} - using stock manager for restoration`);

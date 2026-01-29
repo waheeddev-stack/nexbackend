@@ -11,6 +11,9 @@ import notificationRouter from "./routes/notificationRoute.js";
 import authRouter from "./routes/authRoute.js";
 import db from "./config/db.js";
 
+// Import stock manager for table initialization
+import { createStockRestorationLogTable } from "./utils/stockManager.js";
+
 // Import security and configuration
 import { getConfig, validateEnvironment } from "./config/environment.js";
 import securityMiddleware from "./middleware/security.js";
@@ -360,9 +363,18 @@ app.use(securityMiddleware.errorHandler);
 // Server start
 const PORT = config.PORT;
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ Server successfully started on port ${PORT}`);
   console.log(`🌐 Server accessible at: http://0.0.0.0:${PORT}`);
+  
+  // Initialize stock restoration table
+  try {
+    await createStockRestorationLogTable();
+    console.log('✅ Stock restoration table initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize stock restoration table:', error);
+  }
+  
   console.log('📋 Available endpoints:');
   console.log('  - GET  / (Health check)');
   console.log('  - GET  /health (Database status)');

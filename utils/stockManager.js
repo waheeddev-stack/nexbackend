@@ -10,6 +10,7 @@ import pool from "../config/db.js";
 export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'system', reason = null) => {
   try {
     console.log(`📦 Starting stock restoration for order ${orderId} (cancelled by: ${cancelledBy})`);
+    console.log(`📦 Reason: ${reason || 'No reason provided'}`);
     
     // Get order items to restore stock quantities
     const [orderItems] = await pool.query(
@@ -21,7 +22,7 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
     );
 
     if (orderItems.length === 0) {
-      console.log(`No order items found for order ${orderId}`);
+      console.log(`❌ No order items found for order ${orderId}`);
       return {
         success: false,
         message: "No order items found to restore stock",
@@ -29,12 +30,29 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
       };
     }
 
-    console.log(`Found ${orderItems.length} items to restore stock for:`);
+    console.log(`📋 Found ${orderItems.length} items to restore stock for:`);
     orderItems.forEach(item => {
       console.log(`  - Product ${item.product_id} (${item.product_name}): restore ${item.quantity} units (current stock: ${item.current_stock})`);
     });
     
+    // Check if this order has already been restored
+    const [existingRestoration] = await pool.query(
+      "SELECT id FROM stock_restoration_log WHERE order_id = ?",
+      [orderId]
+    );
+    
+    if (existingRestoration.length > 0) {
+      console.log(`⚠️ Stock for order ${orderId} has already been restored previously`);
+      return {
+        success: false,
+        message: "Stock has already been restored for this order",
+        restoredItems: 0,
+        alreadyRestored: true
+      };
+    }
+    
     // Start transaction to ensure data consistency
+    console.log(`🔄 Starting transaction for order ${orderId}`);
     await pool.query("START TRANSACTION");
     
     const restoredItems = [];
@@ -45,6 +63,8 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
       for (const item of orderItems) {
         // Only restore stock if the product still exists
         if (item.current_stock !== null) {
+          console.log(`📈 Restoring ${item.quantity} units to product ${item.product_id} (current stock: ${item.current_stock})`);
+          
           const [updateResult] = await pool.query(
             "UPDATE products SET stock = stock + ? WHERE id = ?",
             [item.quantity, item.product_id]
@@ -59,9 +79,10 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
               new_stock: item.current_stock + item.quantity
             });
             totalRestoredQuantity += item.quantity;
-            console.log(`📈 Restored ${item.quantity} units to product ${item.product_id} (${item.product_name})`);
+            console.log(`✅ Successfully restored ${item.quantity} units to product ${item.product_id} (${item.product_name})`);
+            console.log(`   Stock: ${item.current_stock} → ${item.current_stock + item.quantity}`);
           } else {
-            console.log(`⚠️ Failed to restore stock for product ${item.product_id}`);
+            console.log(`❌ Failed to restore stock for product ${item.product_id} - no rows affected`);
           }
         } else {
           console.log(`⚠️ Product ${item.product_id} no longer exists, skipping stock restoration`);
@@ -69,6 +90,7 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
       }
       
       // Log the stock restoration event
+      console.log(`📝 Logging restoration event for order ${orderId}`);
       await pool.query(
         `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
          VALUES (?, ?, ?, ?, ?, NOW())`,
@@ -76,11 +98,13 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
       );
       
       // Commit transaction
+      console.log(`✅ Committing transaction for order ${orderId}`);
       await pool.query("COMMIT");
       
-      console.log(`✅ Stock restoration completed for order ${orderId}:`);
+      console.log(`🎉 Stock restoration completed successfully for order ${orderId}:`);
       console.log(`   - Items restored: ${restoredItems.length}`);
       console.log(`   - Total quantity restored: ${totalRestoredQuantity}`);
+      console.log(`   - Cancelled by: ${cancelledBy}`);
       
       return {
         success: true,
@@ -95,6 +119,7 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
       
     } catch (transactionError) {
       // Rollback transaction on error
+      console.log(`🔄 Rolling back transaction for order ${orderId} due to error`);
       await pool.query("ROLLBACK");
       console.error(`❌ Stock restoration transaction failed for order ${orderId}:`, transactionError);
       throw transactionError;
@@ -102,6 +127,8 @@ export const restoreStockForCancelledOrder = async (orderId, cancelledBy = 'syst
     
   } catch (error) {
     console.error(`❌ Stock restoration error for order ${orderId}:`, error);
+    console.error(`❌ Error details:`, error.message);
+    console.error(`❌ Error stack:`, error.stack);
     return {
       success: false,
       message: "Failed to restore stock",
