@@ -1640,17 +1640,29 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     const wasOnTime = timerExpiresAt && now <= new Date(timerExpiresAt);
     console.log(`Timer check: expires=${timerExpiresAt}, now=${now}, wasOnTime=${wasOnTime}`);
 
-    // Stop timer in order_timers table (if it exists)
+    // Stop timer in order_timers table (create record if it doesn't exist)
     try {
-      await pool.query(`
+      // First, try to update existing record
+      const [updateResult] = await pool.query(`
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
         WHERE order_id = ?
       `, [now, !wasOnTime, orderIdNum]);
-      console.log("Timer record updated successfully");
+      
+      // If no record was updated, create one
+      if (updateResult.affectedRows === 0) {
+        console.log("No timer record found, creating one...");
+        await pool.query(`
+          INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active, is_expired, stopped_at)
+          VALUES (?, ?, 420, ?, ?, FALSE, ?, ?)
+        `, [orderIdNum, order.pickup_code, order.timer_started_at || order.created_at, order.timer_expires_at, !wasOnTime, now]);
+        console.log("Timer record created and stopped");
+      } else {
+        console.log("Timer record updated successfully");
+      }
     } catch (timerError) {
-      console.warn("Timer update failed (table may not exist):", timerError.message);
-      // Continue - this is not critical
+      console.warn("Timer update failed:", timerError.message);
+      // Continue - this is not critical for order completion
     }
 
     // Mark order as Completed
@@ -1689,8 +1701,8 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       const shopRoom = `shop_${Number(shopkeeper_id)}`;
       const customerRoom = `customer_${Number(order.user_id)}`;
       
-      console.log(`Socket: Emitting orderStatusUpdate to ${shopRoom} and ${customerRoom}`);
-      console.log(`Socket: Order data - orderId=${orderIdNum}, status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
+      console.log(`Socket: Emitting events to rooms: ${shopRoom} and ${customerRoom}`);
+      console.log(`Socket: Order ${orderIdNum} - status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
       
       const socketPayload = { 
         orderId: orderIdNum, 
@@ -1701,26 +1713,25 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
         pointsAwarded
       };
       
+      // Emit orderStatusUpdate to both rooms
       req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
       req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
       
-      // Also emit a specific timer stopped event
-      req.io.to(shopRoom).emit("timerStopped", { 
+      // Emit specific timerStopped event to both rooms
+      const timerStoppedPayload = { 
         orderId: orderIdNum, 
         stoppedAt: now.toISOString(),
         wasOnTime,
         pointsAwarded
-      });
-      req.io.to(customerRoom).emit("timerStopped", { 
-        orderId: orderIdNum, 
-        stoppedAt: now.toISOString(),
-        wasOnTime,
-        pointsAwarded
-      });
+      };
+      req.io.to(shopRoom).emit("timerStopped", timerStoppedPayload);
+      req.io.to(customerRoom).emit("timerStopped", timerStoppedPayload);
       
-      console.log(`Socket: Events emitted successfully to ${shopRoom} and ${customerRoom}`);
+      console.log(`Socket: Events emitted successfully`);
+      console.log(`Socket: orderStatusUpdate payload:`, JSON.stringify(socketPayload));
+      console.log(`Socket: timerStopped payload:`, JSON.stringify(timerStoppedPayload));
     } else {
-      console.warn("Socket: req.io is not available!");
+      console.warn("Socket: req.io is not available - socket events not sent!");
     }
 
     // Send push notification to customer

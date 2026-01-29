@@ -20,7 +20,7 @@ async function debugStockIssues() {
              SUM(oi.quantity) as total_quantity
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
-      GROUP BY o.id
+      GROUP BY o.id, o.status, o.created_at, o.user_id, o.shopkeeper_id
       ORDER BY o.created_at DESC
       LIMIT 10
     `);
@@ -44,7 +44,7 @@ async function debugStockIssues() {
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN stock_restoration_log srl ON o.id = srl.order_id
       WHERE o.status = 'Cancelled'
-      GROUP BY o.id
+      GROUP BY o.id, o.created_at, o.status, srl.items_restored, srl.total_quantity_restored, srl.cancelled_by, srl.created_at
       ORDER BY o.created_at DESC
       LIMIT 5
     `);
@@ -124,7 +124,7 @@ async function debugStockIssues() {
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN stock_restoration_log srl ON o.id = srl.order_id
       WHERE o.status = 'Cancelled' AND srl.id IS NULL
-      GROUP BY o.id
+      GROUP BY o.id, o.created_at, o.status
       ORDER BY o.created_at DESC
       LIMIT 5
     `);
