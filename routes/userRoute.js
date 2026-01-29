@@ -851,6 +851,112 @@ userrouter.get("/orders/:orderId/timer", verifyToken, async (req, res) => {
   }
 });
 
+// Force refresh timer status for customer - useful for frontend debugging
+userrouter.get("/orders/:orderId/timer/refresh", verifyToken, async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    console.log(`🔄 Customer force refreshing timer status for order ${orderIdNum}`);
+
+    // Get complete timer info for customer's order
+    const [timerInfo] = await pool.query(`
+      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
+             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
+             s.shop_name, s.name as shopkeeper_name, s.phone as shopkeeper_phone,
+             o.shopkeeper_id
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+      WHERE o.id = ? AND o.user_id = ?
+    `, [orderIdNum, user_id]);
+
+    if (timerInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found" 
+      });
+    }
+
+    const timer = timerInfo[0];
+    let timeLeft = 0;
+
+    if (timer.is_active && timer.timer_expires_at) {
+      const now = new Date();
+      const expiresAt = new Date(timer.timer_expires_at);
+      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    }
+
+    const response = {
+      success: true, 
+      timer: {
+        order_id: timer.id,
+        status: timer.status,
+        has_timer: timer.has_timer,
+        pickup_code: timer.pickup_code,
+        is_active: timer.is_active,
+        is_expired: timer.is_expired,
+        time_left: timeLeft,
+        timer_duration: timer.timer_duration,
+        started_at: timer.timer_started_at,
+        expires_at: timer.timer_expires_at,
+        stopped_at: timer.stopped_at,
+        shop_info: {
+          shop_name: timer.shop_name,
+          shopkeeper_name: timer.shopkeeper_name,
+          shopkeeper_phone: timer.shopkeeper_phone
+        }
+      },
+      debug_info: {
+        order_status: timer.status,
+        timer_stopped: !!timer.stopped_at,
+        timer_active: timer.is_active,
+        current_time: new Date().toISOString()
+      }
+    };
+
+    console.log(`🔄 Customer timer refresh response for order ${orderIdNum}:`, JSON.stringify(response, null, 2));
+
+    // If timer is stopped, emit socket events again to ensure frontend receives them
+    if (timer.stopped_at && timer.status === 'Completed') {
+      console.log(`📡 Re-emitting customer timer stopped events for order ${orderIdNum}`);
+      
+      if (req.io) {
+        const customerRoom = `customer_${Number(user_id)}`;
+        const shopRoom = `shop_${Number(timer.shopkeeper_id)}`;
+        
+        const socketPayload = { 
+          orderId: orderIdNum, 
+          status: 'Completed',
+          timerStopped: true,
+          stoppedAt: timer.stopped_at,
+          refreshed: true
+        };
+        
+        req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
+        req.io.to(customerRoom).emit("timerStopped", { 
+          orderId: orderIdNum, 
+          stoppedAt: timer.stopped_at,
+          refreshed: true
+        });
+        
+        console.log(`📡 Re-emitted customer events to ${customerRoom}`);
+      }
+    }
+
+    res.json(response);
+
+  } catch (err) {
+    console.error("Customer timer refresh error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // Get order status for customer
 userrouter.get("/orders/:orderId/status", verifyToken, async (req, res) => {
   try {

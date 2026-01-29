@@ -1765,7 +1765,10 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
         ? `Order completed on time! Customer earned ${pointsAwarded} Store credits.`
         : `Order completed! Customer earned ${pointsAwarded} Store credits (late arrival).`,
       was_on_time: wasOnTime,
-      points_awarded: pointsAwarded
+      points_awarded: pointsAwarded,
+      timer_stopped: true,
+      stopped_at: now.toISOString(),
+      order_status: 'Completed'
     });
 
   } catch (err) {
@@ -1851,6 +1854,116 @@ shopkeeperRouter.get("/orders/:orderId/timer", verifyToken, verifyShopkeeperStat
 
   } catch (err) {
     console.error("Get timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Force refresh timer status - useful for frontend debugging
+shopkeeperRouter.get("/orders/:orderId/timer/refresh", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { orderId } = req.params;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    console.log(`🔄 Force refreshing timer status for order ${orderIdNum}`);
+
+    // Get complete order and timer info
+    const [orderInfo] = await pool.query(`
+      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
+             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
+             o.user_id, o.shopkeeper_id
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      WHERE o.id = ? AND o.shopkeeper_id = ?
+    `, [orderIdNum, shopkeeper_id]);
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Order not found or not assigned to you" 
+      });
+    }
+
+    const order = orderInfo[0];
+    let timeLeft = 0;
+
+    if (order.is_active && order.timer_expires_at) {
+      const now = new Date();
+      const expiresAt = new Date(order.timer_expires_at);
+      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    }
+
+    const response = {
+      success: true,
+      order: {
+        id: order.id,
+        status: order.status,
+        has_timer: order.has_timer,
+        pickup_code: order.pickup_code
+      },
+      timer: {
+        has_timer: order.has_timer,
+        pickup_code: order.pickup_code,
+        is_active: order.is_active,
+        is_expired: order.is_expired,
+        time_left: timeLeft,
+        timer_duration: order.timer_duration,
+        started_at: order.timer_started_at,
+        expires_at: order.timer_expires_at,
+        stopped_at: order.stopped_at
+      },
+      debug_info: {
+        order_status: order.status,
+        timer_stopped: !!order.stopped_at,
+        timer_active: order.is_active,
+        current_time: new Date().toISOString()
+      }
+    };
+
+    console.log(`🔄 Timer refresh response for order ${orderIdNum}:`, JSON.stringify(response, null, 2));
+
+    // If timer is stopped, emit socket events again to ensure frontend receives them
+    if (order.stopped_at && order.status === 'Completed') {
+      console.log(`📡 Re-emitting timer stopped events for order ${orderIdNum}`);
+      
+      if (req.io) {
+        const shopRoom = `shop_${Number(shopkeeper_id)}`;
+        const customerRoom = `customer_${Number(order.user_id)}`;
+        
+        const socketPayload = { 
+          orderId: orderIdNum, 
+          status: 'Completed',
+          timerStopped: true,
+          stoppedAt: order.stopped_at,
+          refreshed: true
+        };
+        
+        req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
+        req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
+        
+        req.io.to(shopRoom).emit("timerStopped", { 
+          orderId: orderIdNum, 
+          stoppedAt: order.stopped_at,
+          refreshed: true
+        });
+        req.io.to(customerRoom).emit("timerStopped", { 
+          orderId: orderIdNum, 
+          stoppedAt: order.stopped_at,
+          refreshed: true
+        });
+        
+        console.log(`📡 Re-emitted events to ${shopRoom} and ${customerRoom}`);
+      }
+    }
+
+    res.json(response);
+
+  } catch (err) {
+    console.error("Timer refresh error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
