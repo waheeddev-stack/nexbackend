@@ -535,6 +535,8 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscr
         o.latitude,
         o.longitude,
         o.delivery_address,
+        o.order_type,
+        o.scheduled_time,
         u.name AS customer_name,
         u.phone AS customer_phone,
         u.email AS customer_email

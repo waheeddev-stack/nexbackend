@@ -371,8 +371,17 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(401).json({ success: false, message: "User ID not found in token" });
     }
     const { products, total, address, pointsToRedeem = 0, shopId, latitude, longitude } = req.body;
+    const { order_type, scheduled_time } = req.body;
     if (!Array.isArray(products) || products.length === 0 || !total || !address) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    const scheduledDate = scheduled_time ? new Date(scheduled_time) : null;
+    if (!order_type || !["pickup", "delivery"].includes(order_type) || !scheduled_time || Number.isNaN(scheduledDate?.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order type or scheduled time"
+      });
     }
 
     // Validate that shopId is provided - orders must go to a single shop
@@ -476,10 +485,12 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
 
     // Insert single order for the selected shop with timer info
     console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
+    const orderTypeValue = order_type || "pickup";
+    const scheduledTimeValue = scheduled_time || null;
     await pool.query(
-      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [orderId, user_id, shopId, finalTotal, address, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
+      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
     );
 
     // Create timer record in order_timers table
@@ -527,6 +538,8 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
         total: finalTotal,
         status: "Pending",
         address,
+        order_type: orderTypeValue,
+        scheduled_time: scheduledTimeValue,
         items: enrichedItems,
         user_id,
         shop_id: shopId,
