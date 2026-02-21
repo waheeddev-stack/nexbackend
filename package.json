@@ -23,7 +23,9 @@
     "test-working": "node scripts/working-features-test.js",
     "debug-jwt": "node scripts/debug-jwt-shopkeeper.js",
     "fix-id": "node scripts/fix-shopkeeper-id.js",
-    "init-stock-table": "node scripts/init-stock-restoration-table.js"
+    "init-stock-table": "node scripts/init-stock-restoration-table.js",
+    "init-inventory": "node scripts/init-inventory-system.js",
+    "init-schema": "node scripts/init-complete-schema.js"
   },
   "keywords": [],
   "author": "",

@@ -9,6 +9,7 @@ import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
 import authRouter from "./routes/authRoute.js";
+import inventoryRouter from "./routes/inventoryRoute.js";
 import db from "./config/db.js";
 
 // Import stock manager for table initialization
@@ -361,6 +362,7 @@ app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/notifications", notificationRouter);
+app.use("/api/inventory", inventoryRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
