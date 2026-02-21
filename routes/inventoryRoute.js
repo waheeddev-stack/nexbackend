@@ -1,7 +1,6 @@
 import express from 'express';
 import db from '../config/db.js';
 import { verifyToken } from '../middleware/auth.js';
-import { verifyAdminToken } from '../middleware/adminAuth.js';
 
 const inventoryRouter = express.Router();
 
