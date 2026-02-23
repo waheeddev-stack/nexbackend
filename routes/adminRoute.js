@@ -589,7 +589,8 @@ adminRouter.post(
       description,
       brand,
       barcode,
-      shopScales
+      shopScales,
+      imageUrl: providedImageUrl // Image URL from OpenFoodFacts or other sources
     } = req.body;
 
     if (!name || !price) {
@@ -601,6 +602,7 @@ adminRouter.post(
 
     let imageUrl = null;
     try {
+      // Priority: uploaded file > provided URL
       if (req.file) {
         const streamUpload = () =>
           new Promise((resolve, reject) => {
@@ -612,6 +614,9 @@ adminRouter.post(
           });
         const result = await streamUpload();
         imageUrl = result.secure_url;
+      } else if (providedImageUrl) {
+        // Use the provided image URL (e.g., from OpenFoodFacts)
+        imageUrl = providedImageUrl;
       }
 
       // Parse shopScales if it's a string, otherwise use as-is
@@ -703,11 +708,13 @@ adminRouter.put(
       description,
       brand,
       barcode,
-      shopScales
+      shopScales,
+      imageUrl: providedImageUrl // Image URL from OpenFoodFacts or other sources
     } = req.body;
     let imageUrl = req.body.image || null;
 
     try {
+      // Priority: uploaded file > provided URL > existing image
       if (req.file) {
         const streamUpload = () =>
           new Promise((resolve, reject) => {
@@ -719,6 +726,9 @@ adminRouter.put(
           });
         const result = await streamUpload();
         imageUrl = result.secure_url;
+      } else if (providedImageUrl) {
+        // Use the provided image URL (e.g., from OpenFoodFacts)
+        imageUrl = providedImageUrl;
       }
 
       // Parse shopScales if it's a string, otherwise use as-is
