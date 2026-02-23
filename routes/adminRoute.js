@@ -600,6 +600,27 @@ adminRouter.post(
       });
     }
 
+    // Check for duplicate barcode if provided
+    if (barcode) {
+      try {
+        const [existingProducts] = await pool.query(
+          "SELECT id, name FROM global_products WHERE barcode = ?",
+          [barcode]
+        );
+        
+        if (existingProducts.length > 0) {
+          return res.status(409).json({
+            success: false,
+            message: `Product with barcode ${barcode} already exists: "${existingProducts[0].name}"`,
+            existingProduct: existingProducts[0]
+          });
+        }
+      } catch (checkErr) {
+        console.error("Error checking duplicate barcode:", checkErr);
+        // Continue with creation if check fails
+      }
+    }
+
     let imageUrl = null;
     try {
       // Priority: uploaded file > provided URL
