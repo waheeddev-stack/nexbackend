@@ -125,6 +125,183 @@ shopkeeperRouter.get("/stats", verifyToken, verifyShopkeeperStatus, checkSubscri
   }
 });
 
+// ============================================================================
+// DASHBOARD SUMMARY API
+// ============================================================================
+// GET /api/shopkeeper/dashboard/summary - Get complete dashboard data
+shopkeeperRouter.get("/dashboard/summary", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+
+    // Get shopkeeper details including online status and home delivery status
+    const [[shopkeeper]] = await pool.query(
+      "SELECT is_online, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
+      [shopkeeper_id]
+    );
+
+    if (!shopkeeper) {
+      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
+    }
+
+    // Calculate trial days left
+    let trialDaysLeft = 0;
+    if (shopkeeper.subscription_status === 'trial') {
+      const signupDate = shopkeeper.last_payment_date || new Date();
+      const trialEndDate = new Date(signupDate);
+      trialEndDate.setDate(trialEndDate.getDate() + 15); // 15-day trial
+      const today = new Date();
+      const daysLeft = Math.ceil((trialEndDate - today) / (1000 * 60 * 60 * 24));
+      trialDaysLeft = Math.max(0, daysLeft);
+    }
+
+    // Get total sales (only completed/delivered orders)
+    const [[salesData]] = await pool.query(
+      "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    // Get orders delivered count
+    const [[deliveredData]] = await pool.query(
+      "SELECT COUNT(*) AS ordersDelivered FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    // Get cancelled orders count
+    const [[cancelledData]] = await pool.query(
+      "SELECT COUNT(*) AS cancelledOrders FROM orders WHERE status = 'Cancelled' AND shopkeeper_id = ?",
+      [shopkeeper_id]
+    );
+
+    // Get top selling product
+    const [[topProduct]] = await pool.query(`
+      SELECT p.id as productId, p.name, SUM(oi.quantity) AS unitsSold
+      FROM order_items oi
+      JOIN products p ON oi.product_id = p.id
+      JOIN orders o ON oi.order_id = o.id
+      WHERE o.shopkeeper_id = ? AND p.shop_id = ? AND o.status IN ('Completed', 'Delivered')
+      GROUP BY p.id, p.name
+      ORDER BY unitsSold DESC
+      LIMIT 1
+    `, [shopkeeper_id, shopkeeper_id]);
+
+    // Check if home delivery is active (assuming a column exists or default to true)
+    // If no column exists, we'll default to true
+    let homeDeliveryActive = true;
+    try {
+      const [[deliveryStatus]] = await pool.query(
+        "SELECT home_delivery_active FROM shopkeepers WHERE id = ?",
+        [shopkeeper_id]
+      );
+      if (deliveryStatus && deliveryStatus.home_delivery_active !== undefined) {
+        homeDeliveryActive = Boolean(deliveryStatus.home_delivery_active);
+      }
+    } catch (err) {
+      // Column doesn't exist, use default
+      homeDeliveryActive = true;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        isOnline: Boolean(shopkeeper.is_online),
+        homeDeliveryActive: homeDeliveryActive,
+        totalSales: parseFloat(salesData?.totalSales || 0),
+        ordersDelivered: parseInt(deliveredData?.ordersDelivered || 0),
+        cancelledOrders: parseInt(cancelledData?.cancelledOrders || 0),
+        topSelling: topProduct ? {
+          productId: topProduct.productId,
+          name: topProduct.name,
+          unitsSold: parseInt(topProduct.unitsSold)
+        } : null,
+        trialDaysLeft: trialDaysLeft
+      }
+    });
+  } catch (err) {
+    console.error("Dashboard summary error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ============================================================================
+// ONLINE STATUS TOGGLE
+// ============================================================================
+// PATCH /api/shopkeeper/dashboard/online-status - Toggle shop online/offline
+shopkeeperRouter.patch("/dashboard/online-status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { isOnline } = req.body;
+
+    if (typeof isOnline !== 'boolean') {
+      return res.status(400).json({ success: false, message: "isOnline must be a boolean" });
+    }
+
+    await pool.query(
+      "UPDATE shopkeepers SET is_online = ? WHERE id = ?",
+      [isOnline ? 1 : 0, shopkeeper_id]
+    );
+
+    res.json({
+      success: true,
+      message: `Shop is now ${isOnline ? 'online' : 'offline'}`,
+      isOnline: isOnline
+    });
+  } catch (err) {
+    console.error("Online status toggle error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ============================================================================
+// HOME DELIVERY TOGGLE
+// ============================================================================
+// PATCH /api/shopkeeper/dashboard/home-delivery-status - Toggle home delivery
+shopkeeperRouter.patch("/dashboard/home-delivery-status", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { homeDeliveryActive } = req.body;
+
+    if (typeof homeDeliveryActive !== 'boolean') {
+      return res.status(400).json({ success: false, message: "homeDeliveryActive must be a boolean" });
+    }
+
+    // Check if column exists, if not, add it
+    try {
+      await pool.query(
+        "UPDATE shopkeepers SET home_delivery_active = ? WHERE id = ?",
+        [homeDeliveryActive ? 1 : 0, shopkeeper_id]
+      );
+    } catch (updateErr) {
+      // If column doesn't exist, try to add it
+      if (updateErr.code === 'ER_BAD_FIELD_ERROR') {
+        try {
+          await pool.query(
+            "ALTER TABLE shopkeepers ADD COLUMN home_delivery_active TINYINT(1) DEFAULT 1"
+          );
+          // Retry update
+          await pool.query(
+            "UPDATE shopkeepers SET home_delivery_active = ? WHERE id = ?",
+            [homeDeliveryActive ? 1 : 0, shopkeeper_id]
+          );
+        } catch (alterErr) {
+          console.error("Error adding home_delivery_active column:", alterErr);
+          throw alterErr;
+        }
+      } else {
+        throw updateErr;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Home delivery is now ${homeDeliveryActive ? 'enabled' : 'disabled'}`,
+      homeDeliveryActive: homeDeliveryActive
+    });
+  } catch (err) {
+    console.error("Home delivery toggle error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // SHOPKEEPER SIGNUP - Handles both JSON and FormData
 shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
   try {
