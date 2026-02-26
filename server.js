@@ -9,8 +9,16 @@ import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
 import authRouter from "./routes/authRoute.js";
+import googleAuthRouter from "./routes/googleAuthRoute.js";
 import inventoryRouter from "./routes/inventoryRoute.js";
 import db from "./config/db.js";
+
+// Import inventory integration
+import { 
+  initializeInventoryIntegration,
+  registerInventoryRoutes,
+  registerInventoryMiddleware
+} from './server.inventory.integration.js';
 
 // Import stock manager for table initialization
 import { createStockRestorationLogTable } from "./utils/stockManager.js";
@@ -84,6 +92,9 @@ app.use((req, res, next) => {
   req.io = io;
   next();
 });
+
+// Register inventory middleware (attaches hooks to requests)
+registerInventoryMiddleware(app);
 
 // Socket.IO: handle connections and room joins
 io.on("connection", (socket) => {
@@ -357,12 +368,16 @@ app.get("/api/debug-admin", async (req, res) => {
 
 // Routes
 app.use("/api/auth", authRouter);
+app.use("/api/auth", googleAuthRouter); // Google OAuth routes
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
+
+// Register inventory management routes
+registerInventoryRoutes(app);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
@@ -383,6 +398,14 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('✅ Stock restoration table initialized');
   } catch (error) {
     console.error('❌ Failed to initialize stock restoration table:', error);
+  }
+  
+  // Initialize inventory integration
+  try {
+    await initializeInventoryIntegration();
+    console.log('✅ Inventory management integration activated');
+  } catch (error) {
+    console.error('❌ Failed to initialize inventory integration:', error);
   }
   
   // Initialize timer tables
