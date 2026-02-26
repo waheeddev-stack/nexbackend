@@ -3,6 +3,11 @@ import verifyToken from "../middleware/auth.js";
 import { handleOrderTokenExpiration, handleCartTokenExpiration, orderErrorHandler } from "../middleware/orderErrorHandler.js";
 import { refreshTokenIfNeeded } from "../middleware/tokenRefresh.js";
 import pool from "../config/db.js";
+import { 
+  validateStockAvailability,
+  onOrderCreated,
+  onOrderCancelled
+} from '../server.inventory.integration.js';
 
 const router = express.Router();
 
@@ -311,6 +316,18 @@ router.post("/", verifyToken, async (req, res) => {
       });
     }
 
+    // Validate stock availability BEFORE creating order
+    const stockCheck = await validateStockAvailability(items, connection);
+    if (!stockCheck.available) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        message: 'Some items are out of stock',
+        unavailableItems: stockCheck.unavailableItems
+      });
+    }
+
     // Determine if this is a store pickup order
     const hasTimer = deliveryType === 'store_pickup' ? 1 : 0;
     const pickupCode = hasTimer ? Math.floor(100000 + Math.random() * 900000).toString() : null;
@@ -364,6 +381,9 @@ router.post("/", verifyToken, async (req, res) => {
         WHERE id = ? AND stock >= ?
       `, [item.quantity, item.productId, item.quantity]);
     }
+
+    // Deduct inventory stock for order items
+    await onOrderCreated(orderId, connection);
 
     await connection.commit();
 
@@ -438,6 +458,11 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
       SET status = ? 
       WHERE id = ? AND user_id = ?
     `, [dbStatus, orderId, userId]);
+
+    // Restore inventory stock if order is cancelled
+    if (dbStatus === 'Cancelled') {
+      await onOrderCancelled(orderId, 'USER_CANCELLED');
+    }
 
     res.json({
       success: true,

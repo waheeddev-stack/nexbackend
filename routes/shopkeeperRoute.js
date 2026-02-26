@@ -779,7 +779,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
   try {
     const shopkeeper_id = req.user.id;
     const { orderId } = req.params;
-    const { status, cancellation_reason } = req.body;
+    let { status, cancellation_reason } = req.body;
 
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
@@ -795,12 +795,16 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       });
     }
 
-    // Require cancellation reason if status is Cancelled
-    if (status === "Cancelled" && !cancellation_reason) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Cancellation reason is required when cancelling an order" 
-      });
+    // Sanitize and validate cancellation reason
+    if (status === "Cancelled") {
+      if (!cancellation_reason || !cancellation_reason.trim()) {
+        return res.status(400).json({ 
+          success: false, 
+          message: "Cancellation reason is required when cancelling an order" 
+        });
+      }
+      // Sanitize: trim and limit length to prevent abuse
+      cancellation_reason = cancellation_reason.trim().substring(0, 500);
     }
 
     // Check if order belongs to this shopkeeper
@@ -1819,17 +1823,42 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     const wasOnTime = timerExpiresAt && now <= new Date(timerExpiresAt);
     console.log(`Timer check: expires=${timerExpiresAt}, now=${now}, wasOnTime=${wasOnTime}`);
 
+    // ✅ FIX: Use atomic update to prevent race condition
+    // Mark order as Completed ONLY if status is still Pending
+    // This prevents duplicate reward awards from concurrent requests
+    try {
+      const [updateResult] = await pool.query(`
+        UPDATE orders 
+        SET status = 'Completed', has_timer = FALSE
+        WHERE id = ? AND status = 'Pending'
+      `, [orderIdNum]);
+      
+      if (updateResult.affectedRows === 0) {
+        // Order was already completed by another request or has invalid status
+        console.warn(`Order ${orderIdNum} already completed or invalid status`);
+        return res.status(400).json({ 
+          success: false, 
+          message: "Order is already completed or cannot be completed at this time" 
+        });
+      }
+      
+      console.log(`Order ${orderIdNum} marked as Completed (atomic update)`);
+    } catch (updateError) {
+      console.error("Order update error:", updateError);
+      return res.status(500).json({ success: false, message: "Failed to update order: " + updateError.message });
+    }
+
     // Stop timer in order_timers table (create record if it doesn't exist)
     try {
       // First, try to update existing record
-      const [updateResult] = await pool.query(`
+      const [timerUpdateResult] = await pool.query(`
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
         WHERE order_id = ?
       `, [now, !wasOnTime, orderIdNum]);
       
       // If no record was updated, create one
-      if (updateResult.affectedRows === 0) {
+      if (timerUpdateResult.affectedRows === 0) {
         console.log("No timer record found, creating one...");
         await pool.query(`
           INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active, is_expired, stopped_at)
@@ -1842,19 +1871,6 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     } catch (timerError) {
       console.warn("Timer update failed:", timerError.message);
       // Continue - this is not critical for order completion
-    }
-
-    // Mark order as Completed
-    try {
-      await pool.query(`
-        UPDATE orders 
-        SET status = 'Completed', has_timer = FALSE
-        WHERE id = ?
-      `, [orderIdNum]);
-      console.log(`Order ${orderIdNum} marked as Completed`);
-    } catch (updateError) {
-      console.error("Order update error:", updateError);
-      return res.status(500).json({ success: false, message: "Failed to update order: " + updateError.message });
     }
 
     // Award wellness points based on timing
