@@ -34,7 +34,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
       }
     }
 
-    const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at, subscription_status, next_payment_due, last_payment_date, trial_start_date FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
+    const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at, subscription_status, next_payment_due, last_payment_date FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
 
     const [rows] = await pool.query(query, queryParams);
 
@@ -230,15 +230,25 @@ adminRouter.patch("/shopkeepers/:id/verify", verifyAdminToken, async (req, res) 
     }
 
     // Update verification status using is_verified column
-    // If approving, also set trial_start_date and subscription_status
+    // Set subscription_status to active and initialize billing from day 1 when approving
+    // 17-day total cycle: 15 days billing + 2 days grace period
     let updateQuery, updateParams;
     if (action === "approve") {
+      const now = new Date();
+      const nextPaymentDue = new Date(now);
+      nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // 15 days billing period
+      
+      const gracePeriodEnd = new Date(nextPaymentDue);
+      gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 2); // 2 days grace period
+      
       updateQuery = `UPDATE shopkeepers 
                      SET is_verified = ?, 
-                         trial_start_date = COALESCE(trial_start_date, NOW()), 
-                         subscription_status = 'trial'
+                         subscription_status = 'active',
+                         last_payment_date = NOW(),
+                         next_payment_due = ?,
+                         grace_period_end = ?
                      WHERE id = ?`;
-      updateParams = [is_verified, parseInt(shopkeeperId)];
+      updateParams = [is_verified, nextPaymentDue, gracePeriodEnd, parseInt(shopkeeperId)];
     } else {
       updateQuery = "UPDATE shopkeepers SET is_verified = ? WHERE id = ?";
       updateParams = [is_verified, parseInt(shopkeeperId)];
@@ -308,15 +318,25 @@ adminRouter.post("/shopkeepers/:id/status", verifyAdminToken, async (req, res) =
     }
 
     // Update verification status
-    // If approving, also set trial_start_date and subscription_status
+    // Set subscription_status to active and initialize billing from day 1 when approving
+    // 17-day total cycle: 15 days billing + 2 days grace period
     let updateQuery, updateParams;
     if (is_verified === 1) {
+      const now = new Date();
+      const nextPaymentDue = new Date(now);
+      nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // 15 days billing period
+      
+      const gracePeriodEnd = new Date(nextPaymentDue);
+      gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 2); // 2 days grace period
+      
       updateQuery = `UPDATE shopkeepers 
                      SET is_verified = ?, 
-                         trial_start_date = COALESCE(trial_start_date, NOW()), 
-                         subscription_status = 'trial'
+                         subscription_status = 'active',
+                         last_payment_date = NOW(),
+                         next_payment_due = ?,
+                         grace_period_end = ?
                      WHERE id = ?`;
-      updateParams = [is_verified, parseInt(shopkeeperId)];
+      updateParams = [is_verified, nextPaymentDue, gracePeriodEnd, parseInt(shopkeeperId)];
     } else {
       updateQuery = "UPDATE shopkeepers SET is_verified = ? WHERE id = ?";
       updateParams = [is_verified, parseInt(shopkeeperId)];
@@ -1142,9 +1162,9 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
       });
     }
 
-    // Get payment details to check shopkeeper trial status
+    // Get payment details
     const [[payment]] = await pool.query(
-      `SELECT bp.*, s.trial_start_date, s.created_at 
+      `SELECT bp.*, s.created_at 
        FROM billing_payments bp
        JOIN shopkeepers s ON bp.shopkeeper_id = s.id
        WHERE bp.id = ?`,
@@ -1158,40 +1178,8 @@ adminRouter.patch("/payment-requests/:id", verifyAdminToken, async (req, res) =>
       });
     }
 
-    // Check if shopkeeper is still in 90-day trial period
+    // Process payment approval/rejection
     if (action === 'approve') {
-      const trialStart = new Date(payment.trial_start_date || payment.created_at);
-      const trialEnd = new Date(trialStart);
-      trialEnd.setDate(trialEnd.getDate() + 90); // 90-day trial
-      const now = new Date();
-
-      if (now < trialEnd) {
-        const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
-        
-        // Auto-reject payment during trial
-        await pool.query(
-          `UPDATE billing_payments 
-           SET status = 'rejected', 
-               notes = ?,
-               approved_by = ?,
-               approved_at = NOW()
-           WHERE id = ?`,
-          [
-            `Payment rejected: Shopkeeper is still in 90-day trial period (${daysRemaining} days remaining). No fees required during trial. Any payments sent will be refunded.`,
-            req.admin.id,
-            requestId
-          ]
-        );
-
-        return res.json({
-          success: false,
-          message: `Payment rejected: Shopkeeper is in trial period (${daysRemaining} days remaining)`,
-          trial_active: true,
-          days_remaining: daysRemaining
-        });
-      }
-
-      // Trial ended - approve payment and reset billing cycle
       await pool.query(
         `UPDATE billing_payments 
          SET status = 'approved', 
@@ -1303,9 +1291,8 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
       earningsData = data;
     }
 
-    // Get subscription stats from shopkeepers
+    // Get subscription stats from shopkeepers (no trial period)
     let subscriptionStats = {
-      trial_users: 0,
       active_users: 0,
       overdue_users: 0,
       suspended_users: 0
@@ -1314,8 +1301,8 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
     try {
       const [subData] = await pool.query(`
         SELECT 
-          COUNT(CASE WHEN subscription_status = 'trial' OR subscription_status IS NULL THEN 1 END) as trial_users,
-          COUNT(CASE WHEN subscription_status = 'active' THEN 1 END) as active_users,
+          0 as trial_users,
+          COUNT(CASE WHEN subscription_status = 'active' OR subscription_status IS NULL THEN 1 END) as active_users,
           COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
           COUNT(CASE WHEN subscription_status = 'suspended' THEN 1 END) as suspended_users
         FROM shopkeepers
@@ -1340,7 +1327,7 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
       success: true, 
       data: {
         payments: { pending_payments: 0, approved_payments: 0, pending_amount: 0, total_revenue: 0 },
-        subscriptions: { trial_users: 0, active_users: 0, overdue_users: 0, suspended_users: 0 }
+        subscriptions: { active_users: 0, overdue_users: 0, suspended_users: 0 }
       },
       earnings: []
     });
@@ -1374,7 +1361,6 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
 
     // Get subscription stats from shopkeepers (handle missing column)
     let subscriptionData = [{
-      trial_users: 0,
       active_users: 0,
       overdue_users: 0,
       suspended_users: 0
@@ -1383,8 +1369,7 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
     try {
       const [subData] = await pool.query(`
         SELECT 
-          COUNT(CASE WHEN subscription_status = 'trial' OR subscription_status IS NULL THEN 1 END) as trial_users,
-          COUNT(CASE WHEN subscription_status = 'active' THEN 1 END) as active_users,
+          COUNT(CASE WHEN subscription_status = 'active' OR subscription_status IS NULL THEN 1 END) as active_users,
           COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
           COUNT(CASE WHEN subscription_status = 'suspended' THEN 1 END) as suspended_users
         FROM shopkeepers
@@ -1408,7 +1393,7 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
       success: true, 
       data: {
         payments: { pending_payments: 0, approved_payments: 0, pending_amount: 0, total_revenue: 0 },
-        subscriptions: { trial_users: 0, active_users: 0, overdue_users: 0, suspended_users: 0 }
+        subscriptions: { active_users: 0, overdue_users: 0, suspended_users: 0 }
       }
     });
   }
@@ -1551,10 +1536,10 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
 
     // Calculate payment status for each shopkeeper and normalize subscription_status
     const enrichedEarnings = shopkeeperEarnings.map(earning => {
-      // Normalize subscription_status (convert 'free' to 'trial', NULL to 'trial')
+      // No trial period - billing starts from day 1
       let subscription_status = earning.subscription_status;
       if (!subscription_status || subscription_status === 'free') {
-        subscription_status = 'trial';
+        subscription_status = 'active';
       }
       
       let payment_status = 'active';
@@ -1578,7 +1563,7 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       };
     });
 
-    // Calculate summary stats with normalized statuses
+    // Calculate summary stats with normalized statuses (no trial period)
     const summary = {
       total_shopkeepers: enrichedEarnings.length,
       total_pending: enrichedEarnings.reduce((sum, e) => sum + Number(e.pending_amount), 0),
@@ -1586,7 +1571,6 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       overdue_count: enrichedEarnings.filter(e => e.subscription_status === 'overdue').length,
       due_soon_count: enrichedEarnings.filter(e => e.payment_status === 'due_soon').length,
       active_count: enrichedEarnings.filter(e => e.subscription_status === 'active').length,
-      trial_count: enrichedEarnings.filter(e => e.subscription_status === 'trial').length,
       grace_count: enrichedEarnings.filter(e => e.subscription_status === 'overdue').length,
       suspended_count: enrichedEarnings.filter(e => e.subscription_status === 'suspended').length
     };
