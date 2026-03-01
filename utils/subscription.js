@@ -1,7 +1,6 @@
 import pool from '../config/db.js';
 
 // Subscription constants
-const TRIAL_PERIOD_DAYS = 90;
 const BILLING_CYCLE_DAYS = 15;
 const GRACE_PERIOD_DAYS = 2;
 
@@ -21,33 +20,10 @@ async function calculateSubscriptionStatus(shopkeeperId) {
   const shopkeeper = shopkeepers[0];
   const now = new Date();
 
-  // Check if in trial period
-  const trialStartDate = new Date(shopkeeper.trial_start_date || shopkeeper.created_at);
-  const trialEndDate = new Date(trialStartDate);
-  trialEndDate.setDate(trialEndDate.getDate() + TRIAL_PERIOD_DAYS);
-
-  const isInTrial = now < trialEndDate;
-  const trialDaysRemaining = isInTrial 
-    ? Math.ceil((trialEndDate - now) / (1000 * 60 * 60 * 24))
-    : 0;
-
-  // If in trial, return trial status
-  if (isInTrial) {
-    return {
-      status: 'trial',
-      isActive: true,
-      trialDaysRemaining,
-      days_remaining: trialDaysRemaining,
-      trialEndDate,
-      message: `Trial period: ${trialDaysRemaining} days remaining`,
-      needsPayment: false,
-    };
-  }
-
-  // Trial ended - check billing cycle
+  // No trial period - start billing from day 1
   const lastPaymentDate = shopkeeper.last_payment_date 
     ? new Date(shopkeeper.last_payment_date)
-    : trialEndDate;
+    : new Date(shopkeeper.created_at);
 
   const nextPaymentDue = new Date(lastPaymentDate);
   nextPaymentDue.setDate(nextPaymentDue.getDate() + BILLING_CYCLE_DAYS);
@@ -93,8 +69,6 @@ async function calculateSubscriptionStatus(shopkeeperId) {
   return {
     status,
     isActive,
-    trialDaysRemaining: 0,
-    trialEndDate,
     lastPaymentDate,
     nextPaymentDue,
     gracePeriodEnd,
@@ -180,7 +154,6 @@ export {
   updateSubscriptionStatus,
   processPaymentApproval,
   canAccessApp,
-  TRIAL_PERIOD_DAYS,
   BILLING_CYCLE_DAYS,
   GRACE_PERIOD_DAYS,
 };

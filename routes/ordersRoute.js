@@ -8,6 +8,7 @@ import {
   onOrderCreated,
   onOrderCancelled
 } from '../server.inventory.integration.js';
+import { TIMER_DURATION_SECONDS, TIME_SLOT_CONFIG, ORDER_STATUS } from '../config/constants.js';
 
 const router = express.Router();
 
@@ -149,7 +150,20 @@ router.get("/", verifyToken, async (req, res) => {
       })),
       totalAmount: parseFloat(order.totalAmount),
       creditsEarned: parseFloat(order.creditsEarned || 0),
-      creditsUsed: parseInt(order.creditsUsed || 0)
+      creditsUsed: parseInt(order.creditsUsed || 0),
+      // Attach computed delivery slot for home delivery (ephemeral if not stored)
+      deliverySlot: order.deliveryType === 'home_delivery' ? (() => {
+        const created = order.createdAt ? new Date(order.createdAt) : new Date();
+        const start = new Date(created);
+        const minutes = start.getMinutes();
+        const roundedMinutes = minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0 
+          ? minutes 
+          : minutes + (TIME_SLOT_CONFIG.INTERVAL_MINUTES - (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
+        start.setMinutes(roundedMinutes, 0, 0);
+        const end = new Date(start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+        const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+      })() : null
     }));
 
     res.json({
@@ -335,6 +349,11 @@ router.post("/", verifyToken, async (req, res) => {
     // Calculate credits earned (1% of total amount)
     const creditsEarned = Math.floor(totalAmount * 0.01);
 
+    // Precompute timer timestamps for click & collect
+    const now = new Date();
+    const timerStartedAt = hasTimer ? now : null;
+    const timerExpiresAt = hasTimer ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000) : null;
+
     // Insert order
     const [orderResult] = await connection.execute(`
       INSERT INTO orders (
@@ -367,6 +386,19 @@ router.post("/", verifyToken, async (req, res) => {
 
     const orderId = orderResult.insertId;
 
+    // Persist timer fields if supported by schema
+    if (hasTimer) {
+      try {
+        await connection.execute(`
+          UPDATE orders 
+          SET timer_started_at = ?, timer_expires_at = ?
+          WHERE id = ?
+        `, [timerStartedAt, timerExpiresAt, orderId]);
+      } catch (_e) {
+        // If columns are absent, skip silently
+      }
+    }
+
     // Insert order items
     for (const item of items) {
       await connection.execute(`
@@ -387,6 +419,50 @@ router.post("/", verifyToken, async (req, res) => {
 
     await connection.commit();
 
+    // Compute delivery slot (next 12 hours in 30-minute windows)
+    const computeNextDeliverySlot = (baseDate) => {
+      const start = new Date(baseDate);
+      const minutes = start.getMinutes();
+      const roundedMinutes = minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0 
+        ? minutes 
+        : minutes + (TIME_SLOT_CONFIG.INTERVAL_MINUTES - (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
+      start.setMinutes(roundedMinutes, 0, 0);
+      const end = new Date(start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+      const limit = new Date(baseDate.getTime() + 12 * 60 * 60 * 1000);
+      if (start > limit) {
+        // If beyond 12 hours, cap at limit window
+        start.setTime(limit.getTime());
+        end.setTime(limit.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+      }
+      const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+    };
+
+    const deliverySlot = deliveryType === 'home_delivery' ? computeNextDeliverySlot(now) : null;
+
+    // Socket broadcast to shopkeeper and customer rooms
+    try {
+      const payload = {
+        id: orderId,
+        orderId: orderId,
+        userId,
+        shopkeeperId,
+        deliveryType,
+        status: 'pending',
+        totalAmount: parseFloat(totalAmount),
+        creditsEarned,
+        pickupCode,
+        hasTimer: hasTimer === 1,
+        timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
+        timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
+        deliverySlot
+      };
+      req.io?.to(`shop_${Number(shopkeeperId)}`).emit('orderCreated', payload);
+      req.io?.to(`customer_${Number(userId)}`).emit('orderCreated', payload);
+    } catch (_socketErr) {
+      // Non-fatal if sockets not available
+    }
+
     res.status(201).json({
       success: true,
       message: "Order created successfully",
@@ -399,7 +475,10 @@ router.post("/", verifyToken, async (req, res) => {
         totalAmount: parseFloat(totalAmount),
         creditsEarned,
         pickupCode,
-        hasTimer: hasTimer === 1
+        hasTimer: hasTimer === 1,
+        timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
+        timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
+        deliverySlot
       }
     });
 
@@ -463,6 +542,13 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     if (dbStatus === 'Cancelled') {
       await onOrderCancelled(orderId, 'USER_CANCELLED');
     }
+
+    // Socket broadcast status update
+    try {
+      const payload = { orderId: parseInt(orderId), status: status.toLowerCase(), userId };
+      // Broadcast to admin, shopkeeper and customer rooms if known
+      req.io?.emit('orderStatusUpdate', payload);
+    } catch (_socketErr) {}
 
     res.json({
       success: true,

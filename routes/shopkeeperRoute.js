@@ -143,16 +143,7 @@ shopkeeperRouter.get("/dashboard/summary", verifyToken, verifyShopkeeperStatus, 
       return res.status(404).json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Calculate trial days left
-    let trialDaysLeft = 0;
-    if (shopkeeper.subscription_status === 'trial') {
-      const signupDate = shopkeeper.last_payment_date || new Date();
-      const trialEndDate = new Date(signupDate);
-      trialEndDate.setDate(trialEndDate.getDate() + 15); // 15-day trial
-      const today = new Date();
-      const daysLeft = Math.ceil((trialEndDate - today) / (1000 * 60 * 60 * 24));
-      trialDaysLeft = Math.max(0, daysLeft);
-    }
+    // No trial period - billing starts from day 1
 
     // Get total sales (only completed/delivered orders)
     const [[salesData]] = await pool.query(
@@ -212,8 +203,7 @@ shopkeeperRouter.get("/dashboard/summary", verifyToken, verifyShopkeeperStatus, 
           productId: topProduct.productId,
           name: topProduct.name,
           unitsSold: parseInt(topProduct.unitsSold)
-        } : null,
-        trialDaysLeft: trialDaysLeft
+        } : null
       }
     });
   } catch (err) {
@@ -1338,7 +1328,7 @@ shopkeeperRouter.get("/earnings", verifyToken, verifyShopkeeperStatus, async (re
       data: {
         total_paid: payments[0]?.total_paid || 0,
         pending_amount: pendingPayments[0]?.pending_amount || 0,
-        subscription_status: shopData.subscription_status || 'trial',
+        subscription_status: shopData.subscription_status || 'active',
         shop_scale: shopData.shop_scale || 'small',
         trial_ends_at: shopData.trial_ends_at,
         next_payment_due: shopData.next_payment_due,
@@ -1404,16 +1394,6 @@ shopkeeperRouter.get("/earnings/status", verifyToken, verifyShopkeeperStatus, as
     }
 
     const data = shopkeeper[0];
-    const now = new Date();
-    
-    // Calculate days remaining in trial
-    let daysRemaining = 0;
-    if (data.trial_ends_at) {
-      const trialEnds = new Date(data.trial_ends_at);
-      if (trialEnds > now) {
-        daysRemaining = Math.ceil((trialEnds - now) / (1000 * 60 * 60 * 24));
-      }
-    }
 
     // Get this month's payment total
     const [monthPayments] = await pool.query(
@@ -1429,11 +1409,8 @@ shopkeeperRouter.get("/earnings/status", verifyToken, verifyShopkeeperStatus, as
     res.json({
       success: true,
       data: {
-        subscription_status: data.subscription_status || 'trial',
+        subscription_status: data.subscription_status || 'active',
         shop_scale: data.shop_scale || 'small',
-        trial_ends_at: data.trial_ends_at,
-        days_remaining: daysRemaining,
-        is_trial_active: data.subscription_status === 'trial' && daysRemaining > 0,
         next_payment_due: data.next_payment_due,
         last_payment_date: data.last_payment_date,
         paid_this_month: monthPayments[0]?.paid_this_month || 0
@@ -1459,13 +1436,11 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       });
     }
     
-    // Set trial period for new scale selection
-    const trialEndDate = new Date();
-    trialEndDate.setDate(trialEndDate.getDate() + 90);
+    // No trial period - billing starts immediately
     
     const [result] = await pool.query(
-      "UPDATE shopkeepers SET shop_scale = ?, trial_ends_at = ?, subscription_status = 'trial' WHERE id = ?",
-      [shop_scale, trialEndDate, shopkeeperId]
+      "UPDATE shopkeepers SET shop_scale = ?, subscription_status = 'active' WHERE id = ?",
+      [shop_scale, shopkeeperId]
     );
     
     if (result.affectedRows === 0) {
@@ -1511,7 +1486,6 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
     res.json({ 
       success: true, 
       message: `Shop scale updated to ${shop_scale}`,
-      trial_ends_at: trialEndDate,
       products_added: productsAdded
     });
   } catch (err) {
@@ -1524,7 +1498,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
 shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   try {
     const [shopkeeper] = await pool.query(
-      "SELECT shop_scale, trial_ends_at, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
+      "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
     
@@ -1533,34 +1507,15 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
     }
     
     const data = shopkeeper[0];
-    const now = new Date();
-    const trialEndsAt = new Date(data.trial_ends_at);
     
-    // Calculate days remaining
-    let daysRemaining = 0;
-    let status = data.subscription_status;
-    
-    if (status === 'trial' && trialEndsAt > now) {
-      daysRemaining = Math.ceil((trialEndsAt - now) / (1000 * 60 * 60 * 24));
-    } else if (status === 'trial' && trialEndsAt <= now) {
-      // Trial expired, update status
-      status = 'overdue';
-      const nextPaymentDue = new Date(trialEndsAt);
-      nextPaymentDue.setDate(nextPaymentDue.getDate() + 17); // 15 + 2 grace days
-      
-      await pool.query(
-        "UPDATE shopkeepers SET subscription_status = 'overdue', next_payment_due = ? WHERE id = ?",
-        [nextPaymentDue, req.user.id]
-      );
-    }
-    
+    // No trial period - always return active status
     res.json({ 
       success: true, 
       data: {
         ...data,
-        subscription_status: status,
-        days_remaining: daysRemaining,
-        is_trial_active: status === 'trial' && daysRemaining > 0
+        subscription_status: data.subscription_status || 'active',
+        days_remaining: 0,
+        is_trial_active: false
       }
     });
   } catch (err) {
@@ -1569,39 +1524,13 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   }
 });
 
-// Submit payment - Check trial period first
+// Submit payment
 shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
     const { amount, payment_method, transaction_id } = req.body;
 
-    // Get shopkeeper details
-    const [[shopkeeper]] = await pool.query(
-      "SELECT trial_start_date, created_at FROM shopkeepers WHERE id = ?",
-      [shopkeeper_id]
-    );
-
-    if (!shopkeeper) {
-      return res.status(404).json({ success: false, message: "Shopkeeper not found" });
-    }
-
-    // Check if still in 90-day trial period
-    const trialStart = new Date(shopkeeper.trial_start_date || shopkeeper.created_at);
-    const trialEnd = new Date(trialStart);
-    trialEnd.setDate(trialEnd.getDate() + 90); // 90-day trial
-    const now = new Date();
-
-    if (now < trialEnd) {
-      const daysRemaining = Math.ceil((trialEnd - now) / (1000 * 60 * 60 * 24));
-      return res.status(400).json({ 
-        success: false, 
-        message: `You are currently in your 90-day FREE trial period with ${daysRemaining} days remaining. No payment is required during trial. ⚠️ If you accidentally send any payment during trial, it will be refunded.`,
-        trial_active: true,
-        days_remaining: daysRemaining
-      });
-    }
-
-    // Trial ended - allow payment submission
+    // Validate amount
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, message: "Valid amount is required" });
     }
