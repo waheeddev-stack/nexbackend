@@ -673,22 +673,35 @@ shopkeeperRouter.get("/shop-status", verifyToken, async (req, res) => {
 // SHOPKEEPER ORDER ROUTES (get, update status)
 
 // Get orders for a specific shopkeeper
+// Supports filtering by status and deliveryType (click_and_collect vs home_delivery)
 shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
-    const { status } = req.query; // Optional filter by status
+    const { status, deliveryType } = req.query; // Optional filters
 
-    console.log(`Fetching orders for shopkeeper ${shopkeeper_id} (type: ${typeof shopkeeper_id})`);
+    console.log(`Fetching orders for shopkeeper ${shopkeeper_id} (status: ${status}, deliveryType: ${deliveryType})`);
 
     let whereClause = "WHERE o.shopkeeper_id = ?";
     const params = [shopkeeper_id];
 
+    // Filter by status if provided
     if (status) {
       whereClause += " AND o.status = ?";
       params.push(status);
     }
 
-    // Fetch orders first (without JSON aggregation for TiDB compatibility)
+    // Filter by delivery type if provided
+    // click_and_collect = has_timer = 1 (7 minute timer)
+    // home_delivery = has_timer = 0 or NULL (30 minute slots in next 12 hours)
+    if (deliveryType) {
+      if (deliveryType === 'click_and_collect' || deliveryType === 'store_pickup') {
+        whereClause += " AND o.has_timer = 1";
+      } else if (deliveryType === 'home_delivery') {
+        whereClause += " AND (o.has_timer = 0 OR o.has_timer IS NULL)";
+      }
+    }
+
+    // Fetch orders with delivery type classification
     const [orderRows] = await pool.query(
       `SELECT 
         o.id AS order_id,
@@ -697,13 +710,22 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscr
         o.status,
         o.total_amount,
         o.credits_used,
-        o.created_at,
         o.credits_earned,
+        o.created_at,
         o.latitude,
         o.longitude,
         o.delivery_address,
         o.order_type,
         o.scheduled_time,
+        o.has_timer,
+        o.pickup_code,
+        o.timer_started_at,
+        o.timer_expires_at,
+        o.payment_method,
+        CASE 
+          WHEN o.has_timer = 1 THEN 'click_and_collect'
+          ELSE 'home_delivery'
+        END as delivery_type,
         u.name AS customer_name,
         u.phone AS customer_phone,
         u.email AS customer_email
@@ -748,11 +770,41 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscr
         });
       }
 
-      // Attach items to orders
-      const orders = orderRows.map(order => ({
-        ...order,
-        items: itemsByOrder[order.order_id] || []
-      }));
+      // Compute delivery slots for home delivery orders (30-minute slots in next 12 hours)
+      const computeDeliverySlot = (createdAt) => {
+        const created = new Date(createdAt);
+        const start = new Date(created);
+        const minutes = start.getMinutes();
+        const roundedMinutes = minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
+        start.setMinutes(roundedMinutes, 0, 0);
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
+        const limit = new Date(created.getTime() + 12 * 60 * 60 * 1000);
+        if (start > limit) {
+          start.setTime(limit.getTime());
+          end.setTime(limit.getTime() + 30 * 60 * 1000);
+        }
+        const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+      };
+
+      // Attach items and computed fields to orders
+      const orders = orderRows.map(order => {
+        const orderData = {
+          ...order,
+          items: itemsByOrder[order.order_id] || [],
+          // Add delivery slot for home delivery orders
+          deliverySlot: order.delivery_type === 'home_delivery' ? computeDeliverySlot(order.created_at) : null,
+          // Add timer info for click & collect orders
+          timerInfo: order.delivery_type === 'click_and_collect' ? {
+            hasTimer: order.has_timer === 1,
+            pickupCode: order.pickup_code,
+            timerStartedAt: order.timer_started_at,
+            timerExpiresAt: order.timer_expires_at,
+            isExpired: order.timer_expires_at ? new Date() > new Date(order.timer_expires_at) : false
+          } : null
+        };
+        return orderData;
+      });
 
       return res.json({ success: true, orders });
     }
@@ -890,32 +942,50 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     // Broadcast via sockets: to shop room and to the specific customer room
     try {
       // fetch user_id for this order
-      const [[orderRow]] = await pool.query("SELECT user_id FROM orders WHERE id = ?", [orderIdNum]);
+      const [[orderRow]] = await pool.query("SELECT user_id, shopkeeper_id, total_amount, has_timer FROM orders WHERE id = ?", [orderIdNum]);
       const customerId = orderRow?.user_id;
+      const shopkeeperId = orderRow?.shopkeeper_id || shopkeeper_id;
       
       console.log(`📡 Socket: Broadcasting order status update - orderId: ${orderIdNum}, status: ${status}`);
-      console.log(`📡 Socket: customerId: ${customerId}, shopkeeper_id: ${shopkeeper_id}`);
+      console.log(`📡 Socket: customerId: ${customerId}, shopkeeper_id: ${shopkeeperId}`);
       
       if (req.io) {
-        const shopRoom = `shop_${shopkeeper_id}`;
-        const customerRoom = `customer_${customerId}`;
+        const shopRoom = `shop_${Number(shopkeeperId)}`;
+        const customerRoom = `customer_${Number(customerId)}`;
         
         const socketPayload = { 
-          orderId: orderIdNum, 
-          status
+          orderId: orderIdNum,
+          order_id: orderIdNum, // Add for compatibility
+          status,
+          originalStatus: status,
+          shopkeeperId: shopkeeperId,
+          shopkeeper_id: shopkeeperId, // Add for compatibility
+          userId: customerId,
+          user_id: customerId, // Add for compatibility
+          totalAmount: parseFloat(orderRow?.total_amount || 0),
+          total_amount: parseFloat(orderRow?.total_amount || 0), // Add for compatibility
+          hasTimer: orderRow?.has_timer === 1,
+          has_timer: orderRow?.has_timer === 1, // Add for compatibility
+          cancellation_reason: status === "Cancelled" ? cancellation_reason : undefined,
+          updatedAt: new Date().toISOString(),
+          updated_at: new Date().toISOString() // Add for compatibility
         };
         
-        console.log(`📡 Socket: Emitting to ${shopRoom}`);
+        console.log(`📡 Socket: Emitting orderStatusUpdate to ${shopRoom}`);
         req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
         
         if (customerId) {
-          console.log(`📡 Socket: Emitting to ${customerRoom}`);
+          console.log(`📡 Socket: Emitting orderStatusUpdate to ${customerRoom}`);
           req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
         }
         
-        console.log(`📡 Socket: Emissions completed successfully`);
+        // Also emit to admin room
+        console.log(`📡 Socket: Emitting orderStatusUpdate to admin room`);
+        req.io.to('admin').emit("orderStatusUpdate", socketPayload);
+        
+        console.log(`📡 Socket: Order status update broadcast completed successfully`);
       } else {
-        console.error(`📡 Socket: req.io is not available!`);
+        console.warn('📡 Socket: req.io not available - status updates will not sync in real-time!');
       }
 
       // send push notification to customer
@@ -1825,37 +1895,65 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       const shopRoom = `shop_${Number(shopkeeper_id)}`;
       const customerRoom = `customer_${Number(order.user_id)}`;
       
-      console.log(`Socket: Emitting events to rooms: ${shopRoom} and ${customerRoom}`);
-      console.log(`Socket: Order ${orderIdNum} - status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
+      console.log(`📡 Socket: Emitting events to rooms: ${shopRoom} and ${customerRoom}`);
+      console.log(`📡 Socket: Order ${orderIdNum} - status=Completed, wasOnTime=${wasOnTime}, points=${pointsAwarded}`);
       
       const socketPayload = { 
-        orderId: orderIdNum, 
+        orderId: orderIdNum,
+        order_id: orderIdNum, // Add for compatibility
         status: 'Completed',
+        originalStatus: 'Completed',
         wasOnTime,
+        was_on_time: wasOnTime, // Add for compatibility
         timerStopped: true,
+        timer_stopped: true, // Add for compatibility
         stoppedAt: now.toISOString(),
-        pointsAwarded
+        stopped_at: now.toISOString(), // Add for compatibility
+        pointsAwarded,
+        points_awarded: pointsAwarded, // Add for compatibility
+        userId: order.user_id,
+        user_id: order.user_id, // Add for compatibility
+        shopkeeperId: shopkeeper_id,
+        shopkeeper_id: shopkeeper_id, // Add for compatibility
+        totalAmount: parseFloat(order.total_amount),
+        total_amount: parseFloat(order.total_amount), // Add for compatibility
+        pickupCode: order.pickup_code,
+        pickup_code: order.pickup_code, // Add for compatibility
+        updatedAt: now.toISOString(),
+        updated_at: now.toISOString() // Add for compatibility
       };
       
       // Emit orderStatusUpdate to both rooms
       req.io.to(shopRoom).emit("orderStatusUpdate", socketPayload);
       req.io.to(customerRoom).emit("orderStatusUpdate", socketPayload);
       
+      // Also emit to admin room
+      req.io.to('admin').emit("orderStatusUpdate", socketPayload);
+      
       // Emit specific timerStopped event to both rooms
       const timerStoppedPayload = { 
-        orderId: orderIdNum, 
+        orderId: orderIdNum,
+        order_id: orderIdNum, // Add for compatibility
         stoppedAt: now.toISOString(),
+        stopped_at: now.toISOString(), // Add for compatibility
         wasOnTime,
-        pointsAwarded
+        was_on_time: wasOnTime, // Add for compatibility
+        pointsAwarded,
+        points_awarded: pointsAwarded, // Add for compatibility
+        userId: order.user_id,
+        user_id: order.user_id, // Add for compatibility
+        shopkeeperId: shopkeeper_id,
+        shopkeeper_id: shopkeeper_id // Add for compatibility
       };
       req.io.to(shopRoom).emit("timerStopped", timerStoppedPayload);
       req.io.to(customerRoom).emit("timerStopped", timerStoppedPayload);
+      req.io.to('admin').emit("timerStopped", timerStoppedPayload);
       
-      console.log(`Socket: Events emitted successfully`);
-      console.log(`Socket: orderStatusUpdate payload:`, JSON.stringify(socketPayload));
-      console.log(`Socket: timerStopped payload:`, JSON.stringify(timerStoppedPayload));
+      console.log(`📡 Socket: Events emitted successfully`);
+      console.log(`📡 Socket: orderStatusUpdate payload:`, JSON.stringify(socketPayload));
+      console.log(`📡 Socket: timerStopped payload:`, JSON.stringify(timerStoppedPayload));
     } else {
-      console.warn("Socket: req.io is not available - socket events not sent!");
+      console.warn("📡 Socket: req.io is not available - socket events not sent!");
     }
 
     // Send push notification to customer

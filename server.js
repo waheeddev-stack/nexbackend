@@ -98,17 +98,20 @@ registerInventoryMiddleware(app);
 
 // Socket.IO: handle connections and room joins
 io.on("connection", (socket) => {
-  console.log("Socket connected:", socket.id);
+  console.log("📡 Socket connected:", socket.id);
 
   // Join as shopkeeper
   socket.on("joinShop", (shopkeeper_id) => {
-    if (!shopkeeper_id) return;
+    if (!shopkeeper_id) {
+      console.log(`📡 Socket ${socket.id}: joinShop called with empty shopkeeper_id`);
+      return;
+    }
     // Convert to number for consistent room naming
     const numericShopkeeperId = Number(shopkeeper_id);
     const room = `shop_${numericShopkeeperId}`;
     socket.join(room);
     socket.shopkeeper_id = numericShopkeeperId;
-    console.log(`Socket ${socket.id} joined ${room}`);
+    console.log(`📡 Socket ${socket.id} joined ${room} (shopkeeper_id: ${numericShopkeeperId})`);
     
     // Notify admin of shopkeeper connection
     socket.to("admin").emit("shopkeeperOnline", { shopkeeper_id: numericShopkeeperId, socket_id: socket.id });
@@ -117,7 +120,7 @@ io.on("connection", (socket) => {
   // Join as customer
   socket.on("joinCustomer", (user_id) => {
     if (!user_id) {
-      console.log(`Socket ${socket.id}: joinCustomer called with empty user_id`);
+      console.log(`📡 Socket ${socket.id}: joinCustomer called with empty user_id`);
       return;
     }
     // Convert to number for consistent room naming
@@ -125,7 +128,7 @@ io.on("connection", (socket) => {
     const room = `customer_${numericUserId}`;
     socket.join(room);
     socket.user_id = numericUserId;
-    console.log(`Socket ${socket.id} joined ${room}`);
+    console.log(`📡 Socket ${socket.id} joined ${room} (user_id: ${numericUserId})`);
     
     // Notify admin of customer connection
     socket.to("admin").emit("customerOnline", { user_id: numericUserId, socket_id: socket.id });
@@ -133,29 +136,37 @@ io.on("connection", (socket) => {
 
   // Join as admin
   socket.on("joinAdmin", (admin_id) => {
-    if (!admin_id) return;
+    if (!admin_id) {
+      console.log(`📡 Socket ${socket.id}: joinAdmin called with empty admin_id`);
+      return;
+    }
     socket.join("admin");
     socket.admin_id = admin_id;
-    console.log(`Socket ${socket.id} joined admin room`);
+    console.log(`📡 Socket ${socket.id} joined admin room (admin_id: ${admin_id})`);
   });
 
   // Handle order status updates from shopkeeper
   socket.on("updateOrderStatus", (data) => {
-    const { orderId, status, shopkeeperId } = data;
+    const { orderId, status, shopkeeperId, customerId } = data;
+    console.log(`📡 Socket: Received updateOrderStatus - orderId: ${orderId}, status: ${status}`);
     
     // Broadcast to admin
     socket.to("admin").emit("orderStatusUpdate", { orderId, status, shopkeeperId });
     
     // Broadcast to specific customer if available
-    if (data.customerId) {
-      socket.to(`customer_${data.customerId}`).emit("orderStatusUpdate", { orderId, status });
+    if (customerId) {
+      const customerRoom = `customer_${Number(customerId)}`;
+      console.log(`📡 Socket: Broadcasting to ${customerRoom}`);
+      socket.to(customerRoom).emit("orderStatusUpdate", { orderId, status });
     }
   });
 
   // Handle customer notifications
   socket.on("notifyCustomer", (data) => {
     const { customerId, message, shopkeeperId } = data;
-    socket.to(`customer_${customerId}`).emit("notification", {
+    console.log(`📡 Socket: Notifying customer ${customerId} from shopkeeper ${shopkeeperId}`);
+    const customerRoom = `customer_${Number(customerId)}`;
+    socket.to(customerRoom).emit("notification", {
       type: "shopkeeper_message",
       message,
       shopkeeperId,
@@ -166,6 +177,7 @@ io.on("connection", (socket) => {
   // Handle admin broadcasts
   socket.on("broadcastToShopkeepers", (message) => {
     if (socket.admin_id) {
+      console.log(`📡 Socket: Admin broadcasting to all shopkeepers`);
       io.emit("adminBroadcast", {
         type: "shopkeeper",
         message,
@@ -176,6 +188,7 @@ io.on("connection", (socket) => {
 
   socket.on("broadcastToCustomers", (message) => {
     if (socket.admin_id) {
+      console.log(`📡 Socket: Admin broadcasting to all customers`);
       io.emit("adminBroadcast", {
         type: "customer", 
         message,
@@ -187,7 +200,9 @@ io.on("connection", (socket) => {
   socket.on("notifyShopkeeper", (data) => {
     if (socket.admin_id) {
       const { shopkeeperId, message } = data;
-      socket.to(`shop_${shopkeeperId}`).emit("adminNotification", {
+      console.log(`📡 Socket: Admin notifying shopkeeper ${shopkeeperId}`);
+      const shopRoom = `shop_${Number(shopkeeperId)}`;
+      socket.to(shopRoom).emit("adminNotification", {
         message,
         timestamp: new Date().toISOString(),
       });
@@ -198,12 +213,12 @@ io.on("connection", (socket) => {
   socket.on("leaveRoom", (room) => {
     if (!room) return;
     socket.leave(room);
-    console.log(`Socket ${socket.id} left ${room}`);
+    console.log(`📡 Socket ${socket.id} left ${room}`);
   });
 
   // Handle disconnection
   socket.on("disconnect", (reason) => {
-    console.log("Socket disconnected:", socket.id, reason);
+    console.log(`📡 Socket disconnected: ${socket.id}, reason: ${reason}`);
     
     // Notify admin of disconnections
     if (socket.shopkeeper_id) {

@@ -442,25 +442,112 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Socket broadcast to shopkeeper and customer rooms
     try {
+      // Get shopkeeper details for the payload
+      const [shopkeeperDetails] = await connection.execute(
+        "SELECT shop_name, name, phone, address FROM shopkeepers WHERE id = ?",
+        [shopkeeperId]
+      );
+
+      const shopkeeper = shopkeeperDetails[0] || {};
+
+      // Get product details for items
+      const itemsWithDetails = [];
+      for (const item of items) {
+        const [productDetails] = await connection.execute(
+          "SELECT name, image, category FROM products WHERE id = ?",
+          [item.productId]
+        );
+        const product = productDetails[0] || {};
+        itemsWithDetails.push({
+          productId: item.productId,
+          productName: product.name || 'Unknown Product',
+          productImage: product.image || null,
+          productCategory: product.category || null,
+          quantity: item.quantity,
+          price: parseFloat(item.price)
+        });
+      }
+
       const payload = {
         id: orderId,
         orderId: orderId,
+        order_id: orderId, // Add for compatibility
         userId,
+        user_id: userId, // Add for compatibility
         shopkeeperId,
+        shopkeeper_id: shopkeeperId, // Add for compatibility
         deliveryType,
+        delivery_type: deliveryType, // Add for compatibility
         status: 'pending',
+        originalStatus: 'Pending',
         totalAmount: parseFloat(totalAmount),
+        total_amount: parseFloat(totalAmount), // Add for compatibility
         creditsEarned,
+        credits_earned: creditsEarned, // Add for compatibility
+        creditsUsed,
+        credits_used: creditsUsed, // Add for compatibility
         pickupCode,
+        pickup_code: pickupCode, // Add for compatibility
         hasTimer: hasTimer === 1,
+        has_timer: hasTimer === 1, // Add for compatibility
         timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
+        timer_started_at: timerStartedAt ? timerStartedAt.toISOString() : null, // Add for compatibility
         timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-        deliverySlot
+        timer_expires_at: timerExpiresAt ? timerExpiresAt.toISOString() : null, // Add for compatibility
+        deliverySlot,
+        delivery_slot: deliverySlot, // Add for compatibility
+        deliveryAddress,
+        delivery_address: deliveryAddress, // Add for compatibility
+        latitude,
+        longitude,
+        paymentMethod,
+        payment_method: paymentMethod, // Add for compatibility
+        createdAt: now.toISOString(),
+        created_at: now.toISOString(), // Add for compatibility
+        shopName: shopkeeper.shop_name,
+        shop_name: shopkeeper.shop_name, // Add for compatibility
+        shopkeeperName: shopkeeper.name,
+        shopkeeper_name: shopkeeper.name, // Add for compatibility
+        shopkeeperPhone: shopkeeper.phone,
+        shopkeeper_phone: shopkeeper.phone, // Add for compatibility
+        shopAddress: shopkeeper.address,
+        shop_address: shopkeeper.address, // Add for compatibility
+        items: itemsWithDetails,
+        // Add timer info for click & collect
+        timerInfo: hasTimer === 1 ? {
+          hasTimer: true,
+          pickupCode,
+          timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
+          timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
+          isExpired: false
+        } : null
       };
+
+      console.log(`📡 Socket: Broadcasting new order ${orderId} to shopkeeper ${shopkeeperId} and customer ${userId}`);
+      console.log(`📡 Socket: Order type: ${deliveryType}, hasTimer: ${hasTimer === 1}`);
+      
       // Emit events used by clients
-      req.io?.to(`shop_${Number(shopkeeperId)}`).emit('newOrder', payload);
-      req.io?.to(`customer_${Number(userId)}`).emit('newOrder', payload);
+      if (req.io) {
+        const shopRoom = `shop_${Number(shopkeeperId)}`;
+        const customerRoom = `customer_${Number(userId)}`;
+        
+        console.log(`📡 Socket: Emitting newOrder to ${shopRoom}`);
+        req.io.to(shopRoom).emit('newOrder', payload);
+        
+        console.log(`📡 Socket: Emitting newOrder to ${customerRoom}`);
+        req.io.to(customerRoom).emit('newOrder', payload);
+        
+        // Also emit to admin room for monitoring
+        console.log(`📡 Socket: Emitting newOrder to admin room`);
+        req.io.to('admin').emit('newOrder', payload);
+        
+        console.log(`📡 Socket: New order broadcast completed successfully`);
+      } else {
+        console.warn('📡 Socket: req.io not available - orders will not sync in real-time!');
+      }
     } catch (_socketErr) {
+      console.error('📡 Socket: Error broadcasting new order:', _socketErr);
+      console.error('📡 Socket: Stack trace:', _socketErr.stack);
       // Non-fatal if sockets not available
     }
 
@@ -546,10 +633,59 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
 
     // Socket broadcast status update
     try {
-      const payload = { orderId: parseInt(orderId), status: status.toLowerCase(), userId };
-      // Broadcast to admin, shopkeeper and customer rooms if known
-      req.io?.emit('orderStatusUpdate', payload);
-    } catch (_socketErr) {}
+      // Get order details for proper broadcasting
+      const [orderDetails] = await pool.execute(
+        "SELECT shopkeeper_id, user_id, total_amount, has_timer FROM orders WHERE id = ?",
+        [orderId]
+      );
+
+      if (orderDetails.length > 0) {
+        const shopkeeperId = orderDetails[0].shopkeeper_id;
+        const orderUserId = orderDetails[0].user_id;
+        const payload = { 
+          orderId: parseInt(orderId),
+          order_id: parseInt(orderId), // Add for compatibility
+          status: status.toLowerCase(),
+          originalStatus: dbStatus,
+          userId: orderUserId,
+          user_id: orderUserId, // Add for compatibility
+          shopkeeperId: shopkeeperId,
+          shopkeeper_id: shopkeeperId, // Add for compatibility
+          totalAmount: parseFloat(orderDetails[0].total_amount),
+          total_amount: parseFloat(orderDetails[0].total_amount), // Add for compatibility
+          hasTimer: orderDetails[0].has_timer === 1,
+          has_timer: orderDetails[0].has_timer === 1, // Add for compatibility
+          updatedAt: new Date().toISOString(),
+          updated_at: new Date().toISOString() // Add for compatibility
+        };
+        
+        console.log(`📡 Socket: Broadcasting order status update - orderId: ${orderId}, status: ${status}`);
+        console.log(`📡 Socket: Shopkeeper: ${shopkeeperId}, Customer: ${orderUserId}`);
+        
+        if (req.io) {
+          // Broadcast to shopkeeper room
+          const shopRoom = `shop_${Number(shopkeeperId)}`;
+          console.log(`📡 Socket: Emitting orderStatusUpdate to ${shopRoom}`);
+          req.io.to(shopRoom).emit('orderStatusUpdate', payload);
+          
+          // Broadcast to customer room
+          const customerRoom = `customer_${Number(orderUserId)}`;
+          console.log(`📡 Socket: Emitting orderStatusUpdate to ${customerRoom}`);
+          req.io.to(customerRoom).emit('orderStatusUpdate', payload);
+          
+          // Also emit to admin room
+          console.log(`📡 Socket: Emitting orderStatusUpdate to admin room`);
+          req.io.to('admin').emit('orderStatusUpdate', payload);
+          
+          console.log(`📡 Socket: Order status update broadcast completed successfully`);
+        } else {
+          console.warn('📡 Socket: req.io not available - status updates will not sync in real-time!');
+        }
+      }
+    } catch (_socketErr) {
+      console.error('📡 Socket: Error broadcasting order status update:', _socketErr);
+      console.error('📡 Socket: Stack trace:', _socketErr.stack);
+    }
 
     res.json({
       success: true,

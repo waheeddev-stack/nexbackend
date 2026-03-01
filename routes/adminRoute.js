@@ -912,6 +912,158 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
+// ============================================================================
+// SUSPEND SHOPKEEPER
+// ============================================================================
+// PATCH /api/admin/shopkeepers/:id/suspend - Suspend a shopkeeper
+adminRouter.patch("/shopkeepers/:id/suspend", verifyAdminToken, async (req, res) => {
+  const shopkeeperId = req.params.id;
+  const { reason } = req.body; // Optional suspension reason
+
+  // Validate shopkeeper ID
+  if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid shopkeeper ID"
+    });
+  }
+
+  try {
+    // Check if shopkeeper exists
+    const [existingShopkeeper] = await pool.query(
+      "SELECT id, name, email, shop_name, subscription_status FROM shopkeepers WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (existingShopkeeper.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Shopkeeper not found" 
+      });
+    }
+
+    const shopkeeper = existingShopkeeper[0];
+
+    // Check if already suspended
+    if (shopkeeper.subscription_status === 'suspended') {
+      return res.status(400).json({
+        success: false,
+        message: `Shopkeeper "${shopkeeper.name}" is already suspended`
+      });
+    }
+
+    // Suspend the shopkeeper
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET subscription_status = 'suspended' WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to suspend shopkeeper" 
+      });
+    }
+
+    console.log(`🚫 Suspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})${reason ? ` - Reason: ${reason}` : ''}`);
+
+    res.json({
+      success: true,
+      message: `Shopkeeper "${shopkeeper.name}" suspended successfully`,
+      shopkeeper: {
+        id: shopkeeper.id,
+        name: shopkeeper.name,
+        email: shopkeeper.email,
+        shop_name: shopkeeper.shop_name,
+        subscription_status: 'suspended',
+        suspension_reason: reason || null
+      }
+    });
+  } catch (err) {
+    console.error("Suspend shopkeeper error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+});
+
+// ============================================================================
+// UNSUSPEND SHOPKEEPER
+// ============================================================================
+// PATCH /api/admin/shopkeepers/:id/unsuspend - Unsuspend a shopkeeper
+adminRouter.patch("/shopkeepers/:id/unsuspend", verifyAdminToken, async (req, res) => {
+  const shopkeeperId = req.params.id;
+
+  // Validate shopkeeper ID
+  if (!shopkeeperId || shopkeeperId === 'null' || shopkeeperId === 'undefined' || isNaN(parseInt(shopkeeperId))) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid shopkeeper ID"
+    });
+  }
+
+  try {
+    // Check if shopkeeper exists
+    const [existingShopkeeper] = await pool.query(
+      "SELECT id, name, email, shop_name, subscription_status FROM shopkeepers WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (existingShopkeeper.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Shopkeeper not found" 
+      });
+    }
+
+    const shopkeeper = existingShopkeeper[0];
+
+    // Check if not suspended
+    if (shopkeeper.subscription_status !== 'suspended') {
+      return res.status(400).json({
+        success: false,
+        message: `Shopkeeper "${shopkeeper.name}" is not suspended (current status: ${shopkeeper.subscription_status || 'active'})`
+      });
+    }
+
+    // Unsuspend the shopkeeper - set to active
+    const [result] = await pool.query(
+      "UPDATE shopkeepers SET subscription_status = 'active' WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Failed to unsuspend shopkeeper" 
+      });
+    }
+
+    console.log(`✅ Unsuspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})`);
+
+    res.json({
+      success: true,
+      message: `Shopkeeper "${shopkeeper.name}" unsuspended successfully`,
+      shopkeeper: {
+        id: shopkeeper.id,
+        name: shopkeeper.name,
+        email: shopkeeper.email,
+        shop_name: shopkeeper.shop_name,
+        subscription_status: 'active'
+      }
+    });
+  } catch (err) {
+    console.error("Unsuspend shopkeeper error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error", 
+      error: err.message 
+    });
+  }
+});
+
 // GET /api/admin/products - Get all shop-specific products
 adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   try {
@@ -1038,40 +1190,218 @@ adminRouter.get("/admins", verifyAdminToken, async (req, res) => {
 // Fetch all orders (admin)
 adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
   try {
+    const { status = 'all', deliveryType } = req.query;
+
+    // Build WHERE clause for filtering
+    let whereConditions = [];
+    let queryParams = [];
+
+    // Add status filter
+    if (status && status !== 'all') {
+      if (status === 'pending') {
+        whereConditions.push("o.status IN ('Pending', 'Processing')");
+      } else if (status === 'completed') {
+        whereConditions.push("o.status IN ('Completed', 'Delivered')");
+      } else if (status === 'cancelled') {
+        whereConditions.push("o.status = 'Cancelled'");
+      }
+    }
+
+    // Add delivery type filter
+    if (deliveryType) {
+      if (deliveryType === 'store_pickup') {
+        whereConditions.push('o.has_timer = 1');
+      } else if (deliveryType === 'home_delivery') {
+        whereConditions.push('(o.has_timer = 0 OR o.has_timer IS NULL)');
+      }
+    }
+
+    const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+    // Get counts for all statuses
+    const [counts] = await pool.query(`
+      SELECT 
+        COUNT(*) as all_count,
+        SUM(CASE WHEN o.status IN ('Pending', 'Processing') THEN 1 ELSE 0 END) as pending_count,
+        SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN o.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_count
+      FROM orders o
+    `);
+
+    // Fetch orders with details
     const [orders] = await pool.query(
       `SELECT 
-         o.id, o.user_id, o.shopkeeper_id, o.status, o.total_amount, o.credits_earned,
-         o.latitude, o.longitude, o.delivery_address, o.created_at,
-         u.name AS customer_name, u.email AS customer_email, u.phone AS customer_phone,
-         s.shop_name, s.name AS shopkeeper_name
+         o.id,
+         o.user_id as userId,
+         o.shopkeeper_id as shopkeeperId,
+         CASE 
+           WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
+           WHEN o.status = 'Cancelled' THEN 'cancelled'
+           ELSE 'pending'
+         END as status,
+         o.status as originalStatus,
+         o.total_amount as totalAmount,
+         o.credits_earned as creditsEarned,
+         o.credits_used as creditsUsed,
+         o.payment_method as paymentMethod,
+         o.latitude,
+         o.longitude,
+         o.delivery_address as deliveryAddress,
+         o.has_timer as hasTimer,
+         o.pickup_code as pickupCode,
+         o.timer_started_at as timerStartedAt,
+         o.timer_expires_at as timerExpiresAt,
+         o.created_at as createdAt,
+         CASE 
+           WHEN o.has_timer = 1 THEN 'store_pickup'
+           ELSE 'home_delivery'
+         END as deliveryType,
+         u.name AS customerName,
+         u.email AS customerEmail,
+         u.phone AS customerPhone,
+         s.shop_name as shopName,
+         s.name AS shopkeeperName,
+         s.phone as shopkeeperPhone,
+         s.address as shopAddress
        FROM orders o
-       JOIN users u ON o.user_id = u.id
-       JOIN shopkeepers s ON o.shopkeeper_id = s.id
-       ORDER BY o.created_at DESC`
+       LEFT JOIN users u ON o.user_id = u.id
+       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+       ${whereClause}
+       ORDER BY o.created_at DESC`,
+      queryParams
     );
 
+    // Fetch order items
     const orderIds = orders.map((o) => o.id);
     let itemsMap = {};
 
     if (orderIds.length) {
+      const placeholders = orderIds.map(() => '?').join(',');
       const [items] = await pool.query(
-        `SELECT oi.order_id, oi.product_id, oi.quantity, oi.price, 
-                COALESCE(p.name, 'Product Unavailable') AS product_name,
-                p.image AS product_image
+        `SELECT 
+           oi.order_id,
+           oi.product_id as productId,
+           oi.quantity,
+           oi.price,
+           COALESCE(p.name, 'Product Unavailable') AS productName,
+           p.image AS productImage,
+           p.category as productCategory
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.id
-         WHERE oi.order_id IN (?)`,
-        [orderIds]
+         WHERE oi.order_id IN (${placeholders})`,
+        orderIds
       );
-      items.forEach((it) => {
-        if (!itemsMap[it.order_id]) itemsMap[it.order_id] = [];
-        itemsMap[it.order_id].push(it);
+      
+      items.forEach((item) => {
+        if (!itemsMap[item.order_id]) itemsMap[item.order_id] = [];
+        itemsMap[item.order_id].push({
+          productId: item.productId,
+          productName: item.productName,
+          productImage: item.productImage,
+          productCategory: item.productCategory,
+          quantity: item.quantity,
+          price: parseFloat(item.price)
+        });
       });
     }
 
-    const result = orders.map((o) => ({ ...o, items: itemsMap[o.id] || [] }));
-    res.json({ success: true, data: result });
+    // Attach items to orders and format response
+    const ordersWithItems = orders.map((order) => ({
+      ...order,
+      items: itemsMap[order.id] || [],
+      totalAmount: parseFloat(order.totalAmount),
+      creditsEarned: parseFloat(order.creditsEarned || 0),
+      creditsUsed: parseInt(order.creditsUsed || 0)
+    }));
+
+    res.json({
+      success: true,
+      orders: ordersWithItems,
+      counts: {
+        all: parseInt(counts[0].all_count) || 0,
+        pending: parseInt(counts[0].pending_count) || 0,
+        completed: parseInt(counts[0].completed_count) || 0,
+        cancelled: parseInt(counts[0].cancelled_count) || 0
+      }
+    });
   } catch (err) {
+    console.error('Admin get orders error:', err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// Update order status (admin)
+adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // Validate status
+    const validStatuses = ['Pending', 'Processing', 'Completed', 'Delivered', 'Cancelled', 'completed', 'cancelled', 'pending'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid status. Must be one of: Pending, Processing, Completed, Delivered, Cancelled" 
+      });
+    }
+
+    // Normalize status for database
+    let dbStatus = status;
+    if (status === 'completed') dbStatus = 'Completed';
+    if (status === 'cancelled') dbStatus = 'Cancelled';
+    if (status === 'pending') dbStatus = 'Pending';
+
+    // Check if order exists
+    const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [id]);
+    if (orders.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orders[0];
+
+    // Update order status
+    await pool.query('UPDATE orders SET status = ? WHERE id = ?', [dbStatus, id]);
+
+    console.log(`📡 Admin updated order #${id} status to ${dbStatus}`);
+
+    // Broadcast socket event to shopkeeper and customer
+    if (global.io) {
+      const socketPayload = {
+        orderId: parseInt(id),
+        order_id: parseInt(id),
+        status: dbStatus,
+        updatedBy: 'admin',
+        updated_by: 'admin',
+        timestamp: new Date().toISOString()
+      };
+
+      // Emit to shopkeeper room
+      if (order.shopkeeper_id) {
+        global.io.to(`shopkeeper_${order.shopkeeper_id}`).emit('orderStatusUpdate', socketPayload);
+        console.log(`📡 Emitted orderStatusUpdate to shopkeeper_${order.shopkeeper_id}`);
+      }
+
+      // Emit to customer room
+      if (order.user_id) {
+        global.io.to(`user_${order.user_id}`).emit('orderStatusUpdate', socketPayload);
+        console.log(`📡 Emitted orderStatusUpdate to user_${order.user_id}`);
+      }
+
+      // Emit to admin room
+      global.io.to('admin').emit('orderStatusUpdate', socketPayload);
+      console.log(`📡 Emitted orderStatusUpdate to admin room`);
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Order status updated to ${dbStatus}`,
+      order: {
+        id: parseInt(id),
+        status: dbStatus
+      }
+    });
+  } catch (err) {
+    console.error('Admin update order status error:', err);
     res.status(500).json({ success: false, message: "Server error", error: err.message });
   }
 });
@@ -1700,7 +2030,6 @@ adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
 
     const [subscriptionStats] = await pool.query(`
       SELECT 
-        COUNT(CASE WHEN subscription_status = 'trial' THEN 1 END) as trial_users,
         COUNT(CASE WHEN subscription_status = 'active' THEN 1 END) as active_users,
         COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
         COUNT(CASE WHEN subscription_status = 'suspended' THEN 1 END) as suspended_users
