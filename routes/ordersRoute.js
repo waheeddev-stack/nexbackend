@@ -457,8 +457,9 @@ router.post("/", verifyToken, async (req, res) => {
         timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
         deliverySlot
       };
-      req.io?.to(`shop_${Number(shopkeeperId)}`).emit('orderCreated', payload);
-      req.io?.to(`customer_${Number(userId)}`).emit('orderCreated', payload);
+      // Emit events used by clients
+      req.io?.to(`shop_${Number(shopkeeperId)}`).emit('newOrder', payload);
+      req.io?.to(`customer_${Number(userId)}`).emit('newOrder', payload);
     } catch (_socketErr) {
       // Non-fatal if sockets not available
     }
