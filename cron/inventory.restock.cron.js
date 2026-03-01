@@ -2,7 +2,10 @@
  * Inventory Restock Cron Job
  * 
  * This module implements the auto-restock cron job from inventorymng.
- * It runs periodically to restore stock for products that have reached their restock time.
+ * Runs ONCE per day at midnight (12:00 AM) to restore stock for all products with stock = 0.
+ * 
+ * Schedule: Daily at 12:00 AM (00:00)
+ * Behavior: Restocks ALL products that have stock = 0, regardless of restockAt time
  * 
  * CRITICAL: Uses existing database connection, no schema changes.
  */
@@ -13,8 +16,8 @@ import { getInventoryDB } from '../config/inventory.db.bridge.js';
 let cronJob = null;
 
 /**
- * Start the restock cron job (from inventorymng/cron/restockCron.js)
- * Runs every minute to check for products that need restocking
+ * Start the restock cron job
+ * Runs ONCE per day at midnight (12:00 AM) to restock all products with stock = 0
  */
 export function startRestockCron() {
   if (cronJob) {
@@ -22,46 +25,49 @@ export function startRestockCron() {
     return;
   }
   
-  // Schedule cron job to run every minute
-  cronJob = cron.schedule('* * * * *', async () => {
+  // Schedule cron job to run daily at midnight (00:00)
+  // Format: "0 0 * * *" = At 00:00 (midnight) every day
+  cronJob = cron.schedule('0 0 * * *', async () => {
+    console.log('🌙 Daily restock starting at midnight...');
+    
     try {
-      const { models, sequelize } = await getInventoryDB();
-      const { Op } = sequelize.Sequelize;
-      const now = new Date();
+      const { models } = await getInventoryDB();
       
-      // Find products that need restocking
+      // Find ALL products with stock = 0 (ignore restockAt time)
       const products = await models.InventoryProduct.findAll({
         where: {
-          stock: 0,
-          restockAt: { 
-            [Op.lte]: now,
-            [Op.ne]: null
-          }
+          stock: 0
         }
       });
       
       if (products.length === 0) {
-        return; // No products to restock
+        console.log('✅ No products need restocking');
+        return;
       }
       
-      // Restock each product
+      console.log(`📦 Found ${products.length} product(s) with stock = 0, restocking...`);
+      
+      // Restock each product to baseline quantity
+      let restockedCount = 0;
       for (const product of products) {
         const previousStock = product.stock;
         product.stock = product.baselineQty;
-        product.restockAt = null;
+        product.restockAt = null; // Clear restockAt time
         await product.save();
         
-        console.log(`✅ Auto-restocked: ${product.name} (${previousStock} → ${product.stock})`);
+        console.log(`✅ Restocked: ${product.name} (${previousStock} → ${product.stock})`);
+        restockedCount++;
       }
       
-      console.log(`🔄 Restock cron completed: ${products.length} product(s) restocked`);
+      console.log(`🔄 Daily restock completed: ${restockedCount} product(s) restocked at midnight`);
       
     } catch (error) {
-      console.error('❌ Restock cron error:', error);
+      console.error('❌ Daily restock error:', error);
     }
   });
   
-  console.log('✅ Inventory restock cron started (runs every minute)');
+  console.log('✅ Inventory restock cron started (runs daily at midnight 12:00 AM)');
+  console.log('📅 Next restock will occur at 00:00 (midnight)');
 }
 
 /**
@@ -81,7 +87,7 @@ export function stopRestockCron() {
 export function getRestockCronStatus() {
   return {
     running: cronJob !== null,
-    schedule: '* * * * *', // Every minute
-    description: 'Auto-restocks products when restockAt time is reached'
+    schedule: '0 0 * * *', // Daily at midnight (00:00)
+    description: 'Auto-restocks ALL products with stock = 0 once per day at midnight (12:00 AM)'
   };
 }
