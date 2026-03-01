@@ -3,8 +3,12 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Support multiple client IDs for different apps
+const NEXKIRANA_CLIENT_ID = '664815906028-2sj6e86rgl9njt5m884l66i99je06esj.apps.googleusercontent.com';
+const SHOPKEEPER_CLIENT_ID = '664815906028-2fkqn0bd9dqbk09g452v3n0nkq723a9r.apps.googleusercontent.com';
+
 const client = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_ID || SHOPKEEPER_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_CALLBACK_URL
 );
@@ -12,13 +16,18 @@ const client = new OAuth2Client(
 /**
  * Verify Google ID token
  * @param {string} token - Google ID token from client
+ * @param {string} userType - 'user' or 'shopkeeper' to determine which client ID to use
  * @returns {Promise<Object>} User info from Google
  */
-export async function verifyGoogleToken(token) {
+export async function verifyGoogleToken(token, userType = 'shopkeeper') {
   try {
+    // Determine which client ID to use based on user type
+    const clientId = userType === 'user' ? NEXKIRANA_CLIENT_ID : SHOPKEEPER_CLIENT_ID;
+    
+    // Try to verify with the appropriate client ID
     const ticket = await client.verifyIdToken({
       idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: clientId,
     });
     
     const payload = ticket.getPayload();

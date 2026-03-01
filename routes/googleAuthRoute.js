@@ -152,7 +152,7 @@ googleAuthRouter.post('/google/verify', async (req, res) => {
     }
 
     // Verify Google token
-    const userInfo = await verifyGoogleToken(idToken);
+    const userInfo = await verifyGoogleToken(idToken, userType);
 
     // Check if user exists
     const tableName = userType === 'shopkeeper' ? 'shopkeepers' : 'users';
