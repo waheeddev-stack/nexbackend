@@ -1568,7 +1568,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
 shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   try {
     const [shopkeeper] = await pool.query(
-      "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
+      "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due, grace_period_end FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
     
@@ -1577,15 +1577,32 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
     }
     
     const data = shopkeeper[0];
+    const now = new Date();
     
-    // No trial period - always return active status
+    // Calculate grace days remaining if in grace period
+    let graceDaysRemaining = 0;
+    if (data.grace_period_end) {
+      const gracePeriodEnd = new Date(data.grace_period_end);
+      graceDaysRemaining = Math.ceil((gracePeriodEnd - now) / (1000 * 60 * 60 * 24));
+      graceDaysRemaining = graceDaysRemaining > 0 ? graceDaysRemaining : 0;
+    }
+    
+    // Calculate days until payment due
+    let daysUntilDue = 0;
+    if (data.next_payment_due) {
+      const nextPaymentDue = new Date(data.next_payment_due);
+      daysUntilDue = Math.ceil((nextPaymentDue - now) / (1000 * 60 * 60 * 24));
+    }
+    
     res.json({ 
       success: true, 
       data: {
         ...data,
         subscription_status: data.subscription_status || 'active',
-        days_remaining: 0,
-        is_trial_active: false
+        graceDaysRemaining,
+        daysUntilDue,
+        is_trial_active: false,
+        can_access: data.subscription_status !== 'suspended'
       }
     });
   } catch (err) {

@@ -1020,11 +1020,11 @@ adminRouter.patch("/shopkeepers/:id/unsuspend", verifyAdminToken, async (req, re
 
     const shopkeeper = existingShopkeeper[0];
 
-    // Check if not suspended
-    if (shopkeeper.subscription_status !== 'suspended') {
+    // Check if not suspended or in grace period
+    if (shopkeeper.subscription_status !== 'suspended' && shopkeeper.subscription_status !== 'grace_period') {
       return res.status(400).json({
         success: false,
-        message: `Shopkeeper "${shopkeeper.name}" is not suspended (current status: ${shopkeeper.subscription_status || 'active'})`
+        message: `Shopkeeper "${shopkeeper.name}" is not suspended or in grace period (current status: ${shopkeeper.subscription_status || 'active'})`
       });
     }
 

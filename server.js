@@ -23,6 +23,9 @@ import {
 // Import stock manager for table initialization
 import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
+// Import subscription status cron job
+import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
+
 // Import timer table initialization
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -452,6 +455,14 @@ server.listen(PORT, '0.0.0.0', async () => {
     }
   } catch (error) {
     console.error('❌ Failed to initialize timer tables:', error);
+  }
+  
+  // Start subscription status cron job
+  try {
+    startSubscriptionStatusCron();
+    console.log('✅ Subscription status monitoring activated');
+  } catch (error) {
+    console.error('❌ Failed to start subscription status cron:', error);
   }
   
   console.log('📋 Available endpoints:');

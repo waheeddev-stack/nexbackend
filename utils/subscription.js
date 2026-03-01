@@ -43,7 +43,7 @@ async function calculateSubscriptionStatus(shopkeeperId) {
     ? Math.ceil((gracePeriodEnd - now) / (1000 * 60 * 60 * 24))
     : 0;
 
-  // Determine status
+  // Determine status with grace_period support
   let status = 'active';
   let isActive = true;
   let message = 'Subscription active';
@@ -55,14 +55,14 @@ async function calculateSubscriptionStatus(shopkeeperId) {
     message = 'Account suspended - Payment overdue';
     needsPayment = true;
   } else if (isInGracePeriod) {
-    status = 'overdue';
-    isActive = true;
-    message = `Payment overdue - ${graceDaysRemaining} grace days remaining`;
+    status = 'grace_period';
+    isActive = true; // Still active during grace period
+    message = `Grace period - ${graceDaysRemaining} day(s) remaining to make payment`;
     needsPayment = true;
   } else if (isPaymentOverdue) {
-    status = 'overdue';
-    isActive = false;
-    message = 'Payment required';
+    status = 'grace_period';
+    isActive = true;
+    message = 'Payment required - Grace period active';
     needsPayment = true;
   }
 
