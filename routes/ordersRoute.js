@@ -33,9 +33,9 @@ router.get("/", verifyToken, async (req, res) => {
     // Add status filter (map UI status to DB status)
     if (status && status !== 'all') {
       if (status === 'pending') {
-        whereConditions.push("o.status IN ('Pending', 'Processing')");
+        whereConditions.push("o.status = 'Pending'");
       } else if (status === 'completed') {
-        whereConditions.push("o.status IN ('Completed', 'Delivered')");
+        whereConditions.push("o.status = 'Completed'");
       } else if (status === 'cancelled') {
         whereConditions.push("o.status = 'Cancelled'");
       }
@@ -69,8 +69,8 @@ router.get("/", verifyToken, async (req, res) => {
     const [counts] = await pool.execute(`
       SELECT 
         COUNT(*) as all_count,
-        SUM(CASE WHEN o.status IN ('Pending', 'Processing') THEN 1 ELSE 0 END) as pending_count,
-        SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN o.status = 'Pending' THEN 1 ELSE 0 END) as pending_count,
+        SUM(CASE WHEN o.status = 'Completed' THEN 1 ELSE 0 END) as completed_count,
         SUM(CASE WHEN o.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_count
       FROM orders o
       WHERE ${countWhereClause}
@@ -87,7 +87,7 @@ router.get("/", verifyToken, async (req, res) => {
           ELSE 'home_delivery'
         END as deliveryType,
         CASE 
-          WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
+          WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,
@@ -208,9 +208,9 @@ router.get("/status/:status", verifyToken, async (req, res) => {
     // Build status condition
     let statusCondition = '';
     if (status === 'pending') {
-      statusCondition = "AND o.status IN ('Pending', 'Processing')";
+      statusCondition = "AND o.status = 'Pending'";
     } else if (status === 'completed') {
-      statusCondition = "AND o.status IN ('Completed', 'Delivered')";
+      statusCondition = "AND o.status = 'Completed'";
     } else if (status === 'cancelled') {
       statusCondition = "AND o.status = 'Cancelled'";
     }
@@ -225,7 +225,7 @@ router.get("/status/:status", verifyToken, async (req, res) => {
           ELSE 'home_delivery'
         END as deliveryType,
         CASE 
-          WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
+          WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,

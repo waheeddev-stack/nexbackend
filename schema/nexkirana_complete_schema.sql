@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS `shopkeepers` (
   `is_deleted` TINYINT(1) DEFAULT 0,
   `deleted_at` DATETIME NULL,
   -- Subscription management
-  `subscription_status` ENUM('trial', 'active', 'overdue', 'suspended') DEFAULT 'trial',
+  `subscription_status` ENUM('active', 'overdue', 'grace_period', 'suspended') DEFAULT 'active',
   `last_payment_date` DATETIME NULL,
   `next_payment_due` DATETIME NULL,
   PRIMARY KEY (`id`),

@@ -829,7 +829,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     }
 
     // Validate status - use Completed instead of Delivered
-    const validStatuses = ["Pending", "Processing", "Completed", "Cancelled"];
+    const validStatuses = ["Pending", "Completed", "Cancelled"];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ 
         success: false, 
