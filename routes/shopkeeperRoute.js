@@ -328,10 +328,6 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Get the next available ID (since auto-increment isn't working)
-    const [maxIdResult] = await pool.query("SELECT MAX(id) as maxId FROM shopkeepers");
-    const nextId = (maxIdResult[0].maxId || 0) + 1;
-
     // Parse latitude and longitude if provided
     const lat = latitude ? parseFloat(latitude) : null;
     const lng = longitude ? parseFloat(longitude) : null;
@@ -356,18 +352,19 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
       }
     }
 
-    // Insert new shopkeeper with explicit ID, including address, coordinates, and image
+    // Insert new shopkeeper - let database auto-increment handle ID
     const [result] = await pool.query(
-      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nextId, name, email, hashedPassword, phone, shop_name, addr, lat, lng, imgUrl]
+      `INSERT INTO shopkeepers (name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, email, hashedPassword, phone, shop_name, addr, lat, lng, imgUrl]
     );
 
-    console.log('Insert result:', result);
+    const newShopkeeperId = result.insertId;
+    console.log('New shopkeeper created with ID:', newShopkeeperId);
 
     // Get the created shopkeeper
     const [userRows] = await pool.query(
       "SELECT id, name, email, phone, shop_name FROM shopkeepers WHERE id = ?",
-      [nextId]
+      [newShopkeeperId]
     );
 
     console.log('User rows:', userRows);

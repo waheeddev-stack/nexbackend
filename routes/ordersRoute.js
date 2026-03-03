@@ -533,13 +533,19 @@ router.post("/", verifyToken, async (req, res) => {
         
         console.log(`📡 Socket: Emitting newOrder to ${shopRoom}`);
         req.io.to(shopRoom).emit('newOrder', payload);
+        console.log(`📡 Socket: Emitting orderCreated to ${shopRoom} (compat)`);
+        req.io.to(shopRoom).emit('orderCreated', payload);
         
         console.log(`📡 Socket: Emitting newOrder to ${customerRoom}`);
         req.io.to(customerRoom).emit('newOrder', payload);
+        console.log(`📡 Socket: Emitting orderCreated to ${customerRoom} (compat)`);
+        req.io.to(customerRoom).emit('orderCreated', payload);
         
         // Also emit to admin room for monitoring
         console.log(`📡 Socket: Emitting newOrder to admin room`);
         req.io.to('admin').emit('newOrder', payload);
+        console.log(`📡 Socket: Emitting orderCreated to admin room (compat)`);
+        req.io.to('admin').emit('orderCreated', payload);
         
         console.log(`📡 Socket: New order broadcast completed successfully`);
       } else {

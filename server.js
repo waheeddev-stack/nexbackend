@@ -24,6 +24,7 @@ import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
 // Import subscription status cron job
 import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
+import { startTimerCleanupCron, getTimerCleanupCronStatus } from "./cron/timer.cleanup.cron.js";
 
 // Import timer table initialization
 import { fileURLToPath } from 'url';
@@ -471,6 +472,15 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('✅ Subscription status monitoring activated');
   } catch (error) {
     console.error('❌ Failed to start subscription status cron:', error);
+  }
+  
+  // Start timer cleanup cron job
+  try {
+    startTimerCleanupCron();
+    const timerCronStatus = getTimerCleanupCronStatus();
+    console.log(`✅ Timer cleanup cron started (interval ${timerCronStatus.intervalMs}ms)`);
+  } catch (error) {
+    console.error('❌ Failed to start timer cleanup cron:', error);
   }
   
   console.log('📋 Available endpoints:');
