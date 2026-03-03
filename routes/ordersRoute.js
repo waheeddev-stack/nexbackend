@@ -7,7 +7,7 @@ import {
   validateStockAvailability,
   onOrderCreated,
   onOrderCancelled
-} from '../server.inventory.integration.js';
+} from '../middleware/inventory.order.hooks.js';
 import { TIMER_DURATION_SECONDS, TIME_SLOT_CONFIG, ORDER_STATUS } from '../config/constants.js';
 
 const router = express.Router();
