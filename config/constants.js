@@ -31,7 +31,7 @@ export const WELLNESS_TIERS = {
 // ==================== DELIVERY CONSTANTS ====================
 
 // Delivery fee for home delivery (in rupees)
-export const DELIVERY_FEE = 49;
+export const DELIVERY_FEE = 0;
 
 // Time slot configuration
 export const TIME_SLOT_CONFIG = {

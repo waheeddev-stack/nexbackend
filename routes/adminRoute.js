@@ -1028,10 +1028,23 @@ adminRouter.patch("/shopkeepers/:id/unsuspend", verifyAdminToken, async (req, re
       });
     }
 
-    // Unsuspend the shopkeeper - set to active
+    // Reset billing cycle when unsuspending (payment assumed to be made)
+    const now = new Date();
+    const nextPaymentDue = new Date(now);
+    nextPaymentDue.setDate(nextPaymentDue.getDate() + 15); // 15 days billing period
+    
+    const gracePeriodEnd = new Date(nextPaymentDue);
+    gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 2); // 2 days grace period
+
+    // Unsuspend the shopkeeper and reset billing cycle
     const [result] = await pool.query(
-      "UPDATE shopkeepers SET subscription_status = 'active' WHERE id = ?",
-      [parseInt(shopkeeperId)]
+      `UPDATE shopkeepers 
+       SET subscription_status = 'active',
+           last_payment_date = ?,
+           next_payment_due = ?,
+           grace_period_end = ?
+       WHERE id = ?`,
+      [now, nextPaymentDue, gracePeriodEnd, parseInt(shopkeeperId)]
     );
 
     if (result.affectedRows === 0) {
@@ -1041,17 +1054,20 @@ adminRouter.patch("/shopkeepers/:id/unsuspend", verifyAdminToken, async (req, re
       });
     }
 
-    console.log(`✅ Unsuspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})`);
+    console.log(`✅ Unsuspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name}) - Billing cycle reset`);
 
     res.json({
       success: true,
-      message: `Shopkeeper "${shopkeeper.name}" unsuspended successfully`,
+      message: `Shopkeeper "${shopkeeper.name}" unsuspended successfully. Billing cycle reset.`,
       shopkeeper: {
         id: shopkeeper.id,
         name: shopkeeper.name,
         email: shopkeeper.email,
         shop_name: shopkeeper.shop_name,
-        subscription_status: 'active'
+        subscription_status: 'active',
+        last_payment_date: now,
+        next_payment_due: nextPaymentDue,
+        grace_period_end: gracePeriodEnd
       }
     });
   } catch (err) {

@@ -13,12 +13,11 @@ import googleAuthRouter from "./routes/googleAuthRoute.js";
 import inventoryRouter from "./routes/inventoryRoute.js";
 import db from "./config/db.js";
 
-// Import inventory integration
-import { 
-  initializeInventoryIntegration,
-  registerInventoryRoutes,
-  registerInventoryMiddleware
-} from './server.inventory.integration.js';
+// Import inventory management integration components
+import { initializeInventoryDB } from './config/inventory.db.bridge.js';
+import { startRestockCron, getRestockCronStatus } from './cron/inventory.restock.cron.js';
+import inventoryMgmtRouter from './routes/inventory.routes.wrapper.js';
+import { attachInventoryHooks } from './middleware/inventory.order.hooks.js';
 
 // Import stock manager for table initialization
 import { createStockRestorationLogTable } from "./utils/stockManager.js";
@@ -97,7 +96,7 @@ app.use((req, res, next) => {
 });
 
 // Register inventory middleware (attaches hooks to requests)
-registerInventoryMiddleware(app);
+app.use(attachInventoryHooks);
 
 // Socket.IO: handle connections and room joins
 io.on("connection", (socket) => {
@@ -395,7 +394,7 @@ app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
 
 // Register inventory management routes
-registerInventoryRoutes(app);
+app.use('/api/inventory-mgmt', inventoryMgmtRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
@@ -420,7 +419,16 @@ server.listen(PORT, '0.0.0.0', async () => {
   
   // Initialize inventory integration
   try {
-    await initializeInventoryIntegration();
+    console.log('🔧 Initializing inventory management integration...');
+    
+    // Initialize database bridge
+    await initializeInventoryDB();
+    console.log('✅ Inventory database bridge initialized');
+    
+    // Start restock cron job
+    startRestockCron();
+    const cronStatus = getRestockCronStatus();
+    console.log(`✅ Restock cron started (${cronStatus.schedule})`);
     console.log('✅ Inventory management integration activated');
   } catch (error) {
     console.error('❌ Failed to initialize inventory integration:', error);

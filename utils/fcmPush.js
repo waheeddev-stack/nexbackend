@@ -17,9 +17,9 @@ function initializeFirebase() {
     }
 
     // Initialize with service account or default credentials
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT 
-      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-      : null;
+    // Check both FIREBASE_SERVICE_ACCOUNT and FIREBASE_SERVICE_ACCOUNT_KEY
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    const serviceAccount = serviceAccountJson ? JSON.parse(serviceAccountJson) : null;
 
     if (serviceAccount) {
       admin.initializeApp({
@@ -33,9 +33,9 @@ function initializeFirebase() {
     }
     
     firebaseInitialized = true;
-    console.log('Firebase Admin SDK initialized successfully');
+    console.log('✅ Firebase Admin SDK initialized successfully');
   } catch (error) {
-    console.error('Failed to initialize Firebase Admin SDK:', error);
+    console.error('❌ Failed to initialize Firebase Admin SDK:', error.message);
   }
 }
 
