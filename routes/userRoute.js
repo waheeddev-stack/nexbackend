@@ -24,10 +24,12 @@ userrouter.get("/nearby-shops", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
+    console.log(`🔍 Nearby shops request: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km`);
+
     // Find nearby ONLINE shops using Haversine formula
     // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates AND is_online = 1
     const [onlineShops] = await pool.query(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -46,6 +48,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
        ORDER BY distance ASC`,
       [latitude, longitude, latitude, radiusKm]
     );
+
+    console.log(`✅ Found ${onlineShops.length} online verified shops within ${radiusKm}km`);
 
     // Find nearby OFFLINE shops (to show "Shop Offline" message)
     const [offlineShops] = await pool.query(
@@ -69,7 +73,32 @@ userrouter.get("/nearby-shops", async (req, res) => {
       [latitude, longitude, latitude, radiusKm]
     );
     
-    console.log(`Nearby shops query: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km, online=${onlineShops.length}, offline=${offlineShops.length}`);
+    console.log(`📴 Found ${offlineShops.length} offline shops within ${radiusKm}km`);
+
+    // Check for unverified shops nearby (for debugging)
+    const [unverifiedShops] = await pool.query(
+      `SELECT id, name, shop_name, is_verified, is_online,
+              (6371 * acos(
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
+              )) AS distance
+       FROM shopkeepers
+       WHERE latitude IS NOT NULL 
+         AND longitude IS NOT NULL
+         AND latitude != 0 
+         AND longitude != 0
+         AND is_verified = 0
+       HAVING distance <= ?
+       ORDER BY distance ASC`,
+      [latitude, longitude, latitude, radiusKm]
+    );
+    
+    if (unverifiedShops.length > 0) {
+      console.log(`⚠️ Found ${unverifiedShops.length} unverified shops nearby (not shown to users)`);
+    }
 
     // If no online shops but there are offline shops nearby, return special response
     if (onlineShops.length === 0 && offlineShops.length > 0) {
@@ -96,6 +125,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
        ORDER BY created_at DESC`,
       [shopIds]
     );
+
+    console.log(`📦 Found ${products.length} products across ${shopIds.length} shops`);
 
     // Group products under their shop, ensure address is never null/undefined
     const shopsWithProducts = onlineShops.map(shop => ({
