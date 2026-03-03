@@ -20,14 +20,8 @@ export function startTimerCleanupCron(scheduleMs = 60_000) {
         const orderIds = expiredTimers.map(t => t.order_id);
         await db.query(
           `UPDATE order_timers 
-           SET is_active = FALSE, is_expired = TRUE
+           SET is_expired = TRUE
            WHERE order_id IN (${orderIds.map(() => '?').join(',')})`,
-          orderIds
-        );
-        await db.query(
-          `UPDATE orders 
-           SET has_timer = FALSE
-           WHERE id IN (${orderIds.map(() => '?').join(',')})`,
           orderIds
         );
         console.log(`⏱️ Timer cleanup cron: expired ${expiredTimers.length} timers`);

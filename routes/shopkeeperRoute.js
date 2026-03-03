@@ -2219,21 +2219,14 @@ shopkeeperRouter.post("/cleanup-expired-timers", verifyToken, verifyShopkeeperSt
     if (expiredTimers.length > 0) {
       const orderIds = expiredTimers.map(t => t.order_id);
       
-      // Mark timers as expired
+      // Mark timers as expired but keep them active and visible
       await pool.query(`
         UPDATE order_timers 
-        SET is_active = FALSE, is_expired = TRUE
+        SET is_expired = TRUE
         WHERE order_id IN (${orderIds.map(() => '?').join(',')})
       `, orderIds);
 
-      // Update orders table
-      await pool.query(`
-        UPDATE orders 
-        SET has_timer = FALSE
-        WHERE id IN (${orderIds.map(() => '?').join(',')})
-      `, orderIds);
-
-      console.log(`Expired ${expiredTimers.length} timers`);
+      console.log(`Expired ${expiredTimers.length} timers (kept visible for code/QR verification)`);
     }
 
     res.json({ 
