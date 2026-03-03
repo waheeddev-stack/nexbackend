@@ -476,7 +476,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   
   // Start timer cleanup cron job
   try {
-    startTimerCleanupCron();
+    startTimerCleanupCron(undefined, io);
     const timerCronStatus = getTimerCleanupCronStatus();
     console.log(`✅ Timer cleanup cron started (interval ${timerCronStatus.intervalMs}ms)`);
   } catch (error) {

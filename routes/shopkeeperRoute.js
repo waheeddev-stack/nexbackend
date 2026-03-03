@@ -2226,6 +2226,33 @@ shopkeeperRouter.post("/cleanup-expired-timers", verifyToken, verifyShopkeeperSt
         WHERE order_id IN (${orderIds.map(() => '?').join(',')})
       `, orderIds);
 
+      // Broadcast timerExpired events for UI indication
+      if (req.io) {
+        const placeholders = orderIds.map(() => '?').join(',');
+        const [orders] = await pool.query(
+          `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at 
+           FROM orders 
+           WHERE id IN (${placeholders})`,
+          orderIds
+        );
+        for (const o of orders) {
+          const payload = {
+            orderId: o.id,
+            userId: o.user_id,
+            shopkeeperId: o.shopkeeper_id,
+            pickupCode: o.pickup_code,
+            timerStartedAt: o.timer_started_at,
+            timerExpiresAt: o.timer_expires_at,
+            expiredAt: new Date().toISOString()
+          };
+          const shopRoom = `shop_${Number(o.shopkeeper_id)}`;
+          const customerRoom = `customer_${Number(o.user_id)}`;
+          req.io.to(shopRoom).emit('timerExpired', payload);
+          req.io.to(customerRoom).emit('timerExpired', payload);
+          req.io.to('admin').emit('timerExpired', payload);
+        }
+      }
+
       console.log(`Expired ${expiredTimers.length} timers (kept visible for code/QR verification)`);
     }
 
