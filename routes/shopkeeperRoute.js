@@ -812,13 +812,15 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscr
     console.error("Error details:", {
       message: err.message,
       stack: err.stack,
-      shopkeeper_id,
-      status,
-      deliveryType
+      shopkeeper_id: req.user?.id,
+      status: req.query?.status,
+      deliveryType: req.query?.deliveryType
     });
     res.status(500).json({ 
       success: false, 
-      message: "Server error",
+      message: "Internal server error",
+      code: "INTERNAL_ERROR",
+      timestamp: new Date().toISOString(),
       error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
