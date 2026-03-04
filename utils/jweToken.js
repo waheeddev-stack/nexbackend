@@ -68,11 +68,26 @@ export const createJWEToken = async (payload, expiresIn = '7d') => {
 export const verifyJWEToken = async (token) => {
   try {
     if (!token || typeof token !== 'string') {
+      console.error('JWE verification failed: Invalid token format', { 
+        hasToken: !!token, 
+        type: typeof token 
+      });
       throw new Error('Invalid token format');
+    }
+
+    // Check token structure
+    const parts = token.split('.');
+    if (parts.length !== 5) {
+      console.error('JWE verification failed: Invalid JWE structure', { 
+        parts: parts.length,
+        expected: 5
+      });
+      throw new Error('MALFORMED_TOKEN');
     }
 
     // Check if token is blacklisted
     if (isTokenBlacklisted(token)) {
+      console.warn('JWE verification failed: Token is blacklisted');
       throw new Error('TOKEN_REVOKED');
     }
 
@@ -82,11 +97,17 @@ export const verifyJWEToken = async (token) => {
     // Check if token is expired
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp && payload.exp < now) {
+      const expiredAt = new Date(payload.exp * 1000).toISOString();
+      console.warn('JWE verification failed: Token expired', { 
+        expiredAt,
+        userId: payload.id 
+      });
       throw new Error('TOKEN_EXPIRED');
     }
 
     // Validate required claims
     if (!payload.id && payload.id !== 0) {
+      console.error('JWE verification failed: Missing user ID in payload');
       throw new Error('Invalid token: missing user ID');
     }
 
@@ -96,10 +117,20 @@ export const verifyJWEToken = async (token) => {
       throw new Error('TOKEN_EXPIRED');
     } else if (error.message === 'TOKEN_REVOKED') {
       throw new Error('TOKEN_REVOKED');
+    } else if (error.message === 'MALFORMED_TOKEN') {
+      throw new Error('MALFORMED_TOKEN');
     } else if (error.code === 'ERR_JWE_DECRYPTION_FAILED') {
+      console.error('JWE decryption failed - possible secret mismatch', {
+        errorCode: error.code,
+        errorMessage: error.message
+      });
       throw new Error('MALFORMED_TOKEN');
     } else {
-      console.error('JWE token verification error:', error);
+      console.error('JWE token verification error:', {
+        errorMessage: error.message,
+        errorCode: error.code,
+        errorName: error.name
+      });
       throw new Error('INVALID_TOKEN');
     }
   }

@@ -208,6 +208,9 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
       email: user[0].email 
     }, "7d");
     
+    // Log for debugging
+    console.log('User signin successful:', { userId: user[0].id, email: user[0].email });
+    
     res.json({ 
       success: true, 
       token, 
