@@ -808,8 +808,19 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, checkSubscr
 
     res.json({ success: true, orders: [] });
   } catch (err) {
-    console.error("Get shopkeeper orders error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("❌ Get shopkeeper orders error:", err);
+    console.error("Error details:", {
+      message: err.message,
+      stack: err.stack,
+      shopkeeper_id,
+      status,
+      deliveryType
+    });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
