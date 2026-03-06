@@ -352,20 +352,27 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
       }
     }
 
-    // Insert new shopkeeper - let database auto-increment handle ID
+    // WORKAROUND: Manual ID generation for TiDB Cloud
+    // TiDB Cloud doesn't support AUTO_INCREMENT on existing columns
+    // Generate ID manually until table is recreated with AUTO_RANDOM
+    const [maxIdResult] = await pool.query('SELECT COALESCE(MAX(id), 0) as max_id FROM shopkeepers');
+    const nextId = maxIdResult[0].max_id + 1;
+    
+    console.log('Manually generating ID:', nextId);
+
+    // Insert new shopkeeper with explicit ID
     const [result] = await pool.query(
-      `INSERT INTO shopkeepers (name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, email, hashedPassword, phone, shop_name, addr, lat, lng, imgUrl]
+      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nextId, name, email, hashedPassword, phone, shop_name, addr, lat, lng, imgUrl]
     );
 
-    const newShopkeeperId = result.insertId;
+    const newShopkeeperId = result.insertId || nextId;
     console.log('New shopkeeper created with ID:', newShopkeeperId);
 
-    // Validate insertId
+    // Validate ID
     if (!newShopkeeperId || newShopkeeperId === 0) {
-      console.error('❌ CRITICAL: Database returned invalid insertId:', newShopkeeperId);
-      console.error('This indicates AUTO_INCREMENT is broken on shopkeepers table');
-      throw new Error('Database configuration error: AUTO_INCREMENT not working. Please contact support.');
+      console.error('❌ CRITICAL: Failed to generate valid ID');
+      throw new Error('Database configuration error: Failed to generate shopkeeper ID. Please contact support.');
     }
 
     // Get the created shopkeeper
