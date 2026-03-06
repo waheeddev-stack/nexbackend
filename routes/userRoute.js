@@ -201,6 +201,18 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
     if (!validPass)
       return res.status(401).json({ success: false, message: "Invalid credentials" });
 
+    // Defensive validation: Validate that user.id is not null before sending response
+    if (!user[0].id || user[0].id === null || user[0].id === undefined) {
+      console.error('⚠️ CRITICAL: User signin succeeded but user.id is null!', { 
+        email: user[0].email,
+        userId: user[0].id 
+      });
+      return res.status(500).json({ 
+        success: false, 
+        message: "Database error: User ID not found. Please contact support." 
+      });
+    }
+
     // Create JWE token with user info and role
     const token = await createJWEToken({ 
       id: user[0].id, 
@@ -208,8 +220,13 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
       email: user[0].email 
     }, "7d");
     
-    // Log for debugging
-    console.log('User signin successful:', { userId: user[0].id, email: user[0].email });
+    // Response logging: Log complete response structure being sent
+    console.log('✅ User signin successful:', { 
+      userId: user[0].id, 
+      email: user[0].email,
+      tokenLength: token?.length || 0,
+      tokenType: 'JWE'
+    });
     
     res.json({ 
       success: true, 
@@ -222,7 +239,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
       } 
     });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('❌ Login error:', err);
     res.status(500).json({ success: false, message: "Server error during login" });
   }
 });

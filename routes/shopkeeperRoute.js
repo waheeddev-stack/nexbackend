@@ -462,11 +462,32 @@ shopkeeperRouter.post("/signin", async (req, res) => {
     
     // Only approved shopkeepers (is_verified = 1) can proceed
 
+    // Defensive validation: Validate that user.id is not null before sending response
+    if (!user[0].id || user[0].id === null || user[0].id === undefined) {
+      console.error('⚠️ CRITICAL: Shopkeeper signin succeeded but user.id is null!', { 
+        email: user[0].email,
+        shopkeeperId: user[0].id 
+      });
+      return res.status(500).json({ 
+        success: false, 
+        message: "Database error: Shopkeeper ID not found. Please contact support." 
+      });
+    }
+
     const token = await createJWEToken({ 
       id: user[0].id, 
       role: 'shopkeeper',
       email: user[0].email 
     }, '7d');
+    
+    // Response logging: Log complete response structure being sent
+    console.log('✅ Shopkeeper signin successful:', { 
+      shopkeeperId: user[0].id, 
+      email: user[0].email,
+      shopName: user[0].shop_name,
+      tokenLength: token?.length || 0,
+      tokenType: 'JWE'
+    });
     
     res.json({
       success: true,
