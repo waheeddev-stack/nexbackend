@@ -304,9 +304,15 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 });
 userrouter.get("/products", async (req, res) => {
   try {
-    // Only return products with stock > 0 to prevent showing out-of-stock items
-    const [rows] = await pool.query("SELECT * FROM products WHERE stock > 0 ORDER BY created_at DESC");
-    res.json({ success: true, products: rows });
+    // ✅ FIX: Return empty array instead of all products when location is not provided
+    // This prevents showing products from all shops when location permission is denied
+    // Users should only see products from nearby shops with proper location context
+    console.log("⚠️ /products endpoint called without location - returning empty array");
+    res.json({ 
+      success: true, 
+      products: [], 
+      message: "Location required to view nearby products" 
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -691,8 +697,37 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       finalTotal: finalTotal
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('❌ Order creation error:', err);
+    console.error('Error stack:', err.stack);
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      errno: err.errno,
+      sqlMessage: err.sqlMessage
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = "Server error";
+    
+    if (err.code === 'ER_DUP_ENTRY') {
+      errorMessage = "Duplicate order detected. Please try again.";
+    } else if (err.code === 'ER_NO_REFERENCED_ROW' || err.code === 'ER_NO_REFERENCED_ROW_2') {
+      errorMessage = "Invalid shop or product reference. Please refresh and try again.";
+    } else if (err.message?.includes('stock')) {
+      errorMessage = "Stock validation failed. Please refresh your cart.";
+    } else if (err.message?.includes('points') || err.message?.includes('credits')) {
+      errorMessage = err.message; // Use the specific points error message
+    } else if (err.errno === 'ECONNREFUSED') {
+      errorMessage = "Database connection failed. Please try again.";
+    } else if (err.message) {
+      errorMessage = err.message;
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: errorMessage,
+      code: err.code || 'UNKNOWN_ERROR'
+    });
   }
 });
 

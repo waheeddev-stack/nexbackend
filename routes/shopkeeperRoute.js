@@ -1142,7 +1142,7 @@ shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, check
   try {
     const shop_id = req.user.id;
     const productId = req.params.id;
-    const { name, description, category, price, stock } = req.body;
+    const { name, description, category, price, stock, baselineQty } = req.body;
 
     const [existing] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
     if (existing.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
@@ -1180,6 +1180,13 @@ shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, check
       values.push(formattedPrice); 
     }
     if (stock != null) { const s = Number(stock); if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); fields.push("stock = ?"); values.push(s); }
+    // ✅ FIX: Add baselineQty handling
+    if (baselineQty != null) { 
+      const b = Number(baselineQty); 
+      if (Number.isNaN(b) || b < 0) return res.status(400).json({ success: false, message: "Invalid baseline quantity" }); 
+      fields.push("baselineQty = ?"); 
+      values.push(b); 
+    }
     if (imageUrl !== existing[0].image) { fields.push("image = ?"); values.push(imageUrl); }
 
     if (fields.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
