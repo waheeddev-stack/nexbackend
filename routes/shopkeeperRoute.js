@@ -391,10 +391,22 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     });
   } catch (err) {
     console.error("Shopkeeper signup error:", err);
+    console.error("Error details:", {
+      message: err.message,
+      code: err.code,
+      errno: err.errno,
+      sqlMessage: err.sqlMessage,
+      sqlState: err.sqlState
+    });
     return res.status(500).json({ 
       success: false, 
-      message: process.env.NODE_ENV === 'development' ? err.message : "Server error",
-      error: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      message: "Server error",
+      // Always include error details for debugging
+      debug: {
+        message: err.message,
+        code: err.code,
+        sqlMessage: err.sqlMessage
+      }
     });
   }
 });
