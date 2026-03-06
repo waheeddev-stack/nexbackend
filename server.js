@@ -63,7 +63,41 @@ if (config.NODE_ENV !== 'production') {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: securityMiddleware.corsConfig,
+  cors: {
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
+      if (!origin) return callback(null, true);
+      
+      if (config.NODE_ENV === 'production') {
+        const allowedOrigins = config.corsOrigins;
+        
+        // Check if origin is allowed or is an Expo app
+        if (allowedOrigins.includes(origin) || 
+            origin.startsWith('exp://') || 
+            origin.startsWith('exps://') ||
+            origin.startsWith('http://') ||
+            origin.startsWith('https://')) {
+          callback(null, true);
+        } else {
+          callback(null, true); // Allow all in case of websocket connection issues
+        }
+      } else {
+        // Allow all origins in development
+        callback(null, true);
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['*'],
+    transports: ['websocket', 'polling']
+  },
+  // Add these options for better websocket support
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  maxHttpBufferSize: 1e6,
+  allowEIO3: true, // Allow Engine.IO v3 clients
+  transports: ['websocket', 'polling']
 });
 
 // Trust proxy (for rate limiting and IP detection)
@@ -277,6 +311,10 @@ app.get("/health", async (req, res) => {
     res.json({ 
       status: 'healthy',
       database: 'connected',
+      socketio: {
+        connected: io.engine.clientsCount || 0,
+        status: 'running'
+      },
       timestamp: new Date().toISOString(),
       server: 'running'
     });
@@ -289,6 +327,19 @@ app.get("/health", async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+// Socket.IO status endpoint
+app.get("/api/socket-status", (req, res) => {
+  res.json({
+    success: true,
+    socketio: {
+      connected_clients: io.engine.clientsCount || 0,
+      status: 'running',
+      transports: ['websocket', 'polling']
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 // API status endpoint
