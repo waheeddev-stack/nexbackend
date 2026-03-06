@@ -361,6 +361,13 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     const newShopkeeperId = result.insertId;
     console.log('New shopkeeper created with ID:', newShopkeeperId);
 
+    // Validate insertId
+    if (!newShopkeeperId || newShopkeeperId === 0) {
+      console.error('❌ CRITICAL: Database returned invalid insertId:', newShopkeeperId);
+      console.error('This indicates AUTO_INCREMENT is broken on shopkeepers table');
+      throw new Error('Database configuration error: AUTO_INCREMENT not working. Please contact support.');
+    }
+
     // Get the created shopkeeper
     const [userRows] = await pool.query(
       "SELECT id, name, email, phone, shop_name FROM shopkeepers WHERE id = ?",
