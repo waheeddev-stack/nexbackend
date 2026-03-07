@@ -1,8 +1,9 @@
-const express = require('express');
+import express from 'express';
+import { OAuth2Client } from 'google-auth-library';
+import db from '../config/db.js';
+import { createJWEToken } from '../utils/jweToken.js';
+
 const router = express.Router();
-const { OAuth2Client } = require('google-auth-library');
-const db = require('../config/db');
-const { createJWEToken } = require('../utils/jweToken');
 
 // Initialize Google OAuth client
 const getGoogleClient = () => {
@@ -217,4 +218,4 @@ router.post('/google-signout', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
