@@ -1710,7 +1710,26 @@ shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
     });
   } catch (err) {
     console.error("Submit payment error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    
+    // Provide more specific error messages
+    if (err.code === 'ER_NO_SUCH_TABLE') {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Database table not found. Please contact support." 
+      });
+    }
+    
+    if (err.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Database schema mismatch. Please contact support." 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: err.message || "Failed to submit payment. Please try again." 
+    });
   }
 });
 

@@ -149,6 +149,37 @@ userrouter.get("/nearby-shops", async (req, res) => {
   }
 });
 
+// PUBLIC: Get shop info (for customers to check delivery settings)
+userrouter.get("/shop-info/:shopId", async (req, res) => {
+  try {
+    const shopId = parseInt(req.params.shopId);
+    
+    if (!shopId || isNaN(shopId)) {
+      return res.status(400).json({ success: false, message: "Invalid shop ID" });
+    }
+
+    const [shop] = await pool.query(
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, 
+              is_online, is_verified, home_delivery_active
+       FROM shopkeepers 
+       WHERE id = ? AND is_verified = 1`,
+      [shopId]
+    );
+
+    if (shop.length === 0) {
+      return res.status(404).json({ success: false, message: "Shop not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      shop: shop[0]
+    });
+  } catch (err) {
+    console.error("Shop info error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 import { validateUserRegistration, createRateLimiter, validate } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
