@@ -253,13 +253,23 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 // PROFILE
 userrouter.get("/profile/:id", async (req, res) => {
   try {
-    const [user] = await pool.query("SELECT id, email, name, phone, address, img, store_credits, created_at FROM users WHERE id = ?", [req.params.id]);
+    const [user] = await pool.query(
+      "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?", 
+      [req.params.id]
+    );
     if (user.length === 0)
       return res.status(404).json({ success: false, message: "User not found" });
 
+    console.log(`✅ Profile fetched for user ${req.params.id}:`, {
+      id: user[0].id,
+      email: user[0].email,
+      name: user[0].name,
+      hasAddress: !!user[0].address
+    });
+
     res.json({ success: true, user: user[0] });
   } catch (err) {
-    console.error(err);
+    console.error("Profile fetch error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
