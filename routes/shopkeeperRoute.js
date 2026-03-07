@@ -543,7 +543,7 @@ shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
     }
 
     const [user] = await pool.query(
-      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, is_deleted, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, is_deleted, created_at, home_delivery_active FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
@@ -643,7 +643,7 @@ shopkeeperRouter.put("/profile/:id", verifyToken, upload.fields([{ name: "img", 
     }
 
     const [userRows] = await pool.query(
-      "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, created_at FROM shopkeepers WHERE id = ?",
+      "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, created_at, home_delivery_active FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
 
@@ -971,24 +971,34 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     }
 
     // Award wellness points if order is completed
-    // Note: For proper timer-based rewards, use verify-pickup endpoint instead
+    // Note: Credits are ONLY awarded for PICKUP orders, NOT for home delivery
     if (status === "Completed") {
       try {
         const [[orderDetails]] = await pool.query(
-          "SELECT user_id, created_at, timer_started_at, total_amount FROM orders WHERE id = ?",
+          "SELECT user_id, created_at, timer_started_at, total_amount, order_type, delivery_mode FROM orders WHERE id = ?",
           [orderIdNum]
         );
         
         if (orderDetails) {
-          const pointsData = await awardWellnessPoints(
-            pool, 
-            orderDetails.user_id, 
-            new Date(), // completion time (now)
-            orderDetails.timer_started_at || orderDetails.created_at, // timer start or order creation time
-            orderDetails.total_amount // ✅ NEW: Pass order amount for minimum check
-          );
+          // Check if this is a pickup order (only pickup orders earn credits)
+          const orderType = orderDetails.order_type || orderDetails.delivery_mode || 'pickup';
+          const isHomeDelivery = orderType === 'delivery' || orderType === 'home_delivery';
           
-          console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for order ${orderIdNum}`);
+          if (isHomeDelivery) {
+            // Home delivery: NO credits awarded
+            console.log(`Order ${orderIdNum} is home delivery - no credits awarded (credits only for pickup orders)`);
+          } else {
+            // Store pickup: Use timer-based wellness points
+            const pointsData = await awardWellnessPoints(
+              pool, 
+              orderDetails.user_id, 
+              new Date(), // completion time (now)
+              orderDetails.timer_started_at || orderDetails.created_at, // timer start or order creation time
+              orderDetails.total_amount // Pass order amount for minimum check
+            );
+            
+            console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for pickup order ${orderIdNum}`);
+          }
         }
       } catch (pointsError) {
         console.error("Error awarding wellness points:", pointsError);

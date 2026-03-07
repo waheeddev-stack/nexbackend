@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `latitude` DECIMAL(9,6) DEFAULT NULL,
   `longitude` DECIMAL(9,6) DEFAULT NULL,
   `delivery_address` VARCHAR(255) DEFAULT NULL,
+  -- Scheduling and delivery mode
+  `scheduled_time` DATETIME DEFAULT NULL COMMENT 'Scheduled pickup or delivery time',
+  `order_type` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Order type: pickup or delivery',
+  `delivery_mode` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Delivery mode: pickup or delivery',
   -- Timer functionality
   `has_timer` TINYINT(1) DEFAULT 0,
   `pickup_code` VARCHAR(10) DEFAULT NULL,
@@ -162,6 +166,8 @@ CREATE TABLE IF NOT EXISTS `orders` (
   KEY `fk_shopkeeper_id` (`shopkeeper_id`),
   INDEX `idx_orders_pickup_code` (`pickup_code`),
   INDEX `idx_orders_timer` (`has_timer`, `timer_expires_at`),
+  INDEX `idx_orders_scheduled` (`scheduled_time`),
+  INDEX `idx_orders_delivery_mode` (`delivery_mode`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`shopkeeper_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2220001;

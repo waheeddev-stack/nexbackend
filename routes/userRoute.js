@@ -438,8 +438,26 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     }
     const { products, total, address, pointsToRedeem = 0, shopId, latitude, longitude } = req.body;
     const { order_type, scheduled_time } = req.body;
-    if (!Array.isArray(products) || products.length === 0 || !total || !address) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+    
+    // STRICT VALIDATION: Check all required fields
+    if (!Array.isArray(products) || products.length === 0 || !total) {
+      return res.status(400).json({ success: false, message: "Missing required fields: products and total are required" });
+    }
+
+    // STRICT VALIDATION: Address is COMPULSORY for ALL orders
+    if (!address || typeof address !== 'string' || address.trim().length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Delivery address is required for all orders. Please update your profile with a valid address." 
+      });
+    }
+
+    // STRICT VALIDATION: Address must be at least 10 characters
+    if (address.trim().length < 10) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Please provide a complete address with at least 10 characters." 
+      });
     }
 
     const scheduledDate = scheduled_time ? new Date(scheduled_time) : null;
@@ -447,6 +465,14 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Invalid order type or scheduled time"
+      });
+    }
+
+    // EXTRA STRICT VALIDATION: For home delivery, address must be detailed (at least 20 characters)
+    if (order_type === 'delivery' && address.trim().length < 20) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "For home delivery, please provide a detailed address including house/flat number, street, and landmark (minimum 20 characters)." 
       });
     }
 
@@ -552,11 +578,12 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     // Insert single order for the selected shop with timer info
     console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
     const orderTypeValue = order_type || "pickup";
+    const deliveryModeValue = order_type || "pickup"; // delivery_mode should match order_type
     const scheduledTimeValue = scheduled_time || null;
     await pool.query(
-      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
+      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, delivery_mode, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, deliveryModeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
     );
 
     // Create timer record in order_timers table
