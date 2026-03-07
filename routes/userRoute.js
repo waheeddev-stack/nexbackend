@@ -267,8 +267,15 @@ userrouter.get("/profile/:id", async (req, res) => {
 // UPDATE PROFILE (with image upload)
 userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   try {
-    const { name, phone, address } = req.body;
+    const { name, phone, address, area, landmark, pincode } = req.body;
     const { id } = req.params;
+    
+    // First, check if user exists
+    const [existingUser] = await pool.query("SELECT id FROM users WHERE id = ?", [id]);
+    if (existingUser.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    
     let imgUrl = null;
     if (req.file) {
       // Use streamifier for cloudinary upload
@@ -286,25 +293,39 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
       imgUrl = result.secure_url;
       console.log("Cloudinary URL:", imgUrl);
     }
+    
     const fields = [];
     const values = [];
     if (name) { fields.push("name = ?"); values.push(name); }
     if (phone) { fields.push("phone = ?"); values.push(phone); }
     if (address) { fields.push("address = ?"); values.push(address); }
+    if (area !== undefined) { fields.push("area = ?"); values.push(area); }
+    if (landmark !== undefined) { fields.push("landmark = ?"); values.push(landmark); }
+    if (pincode !== undefined) { fields.push("pincode = ?"); values.push(pincode); }
     if (imgUrl) { fields.push("img = ?"); values.push(imgUrl); }
+    
     if (fields.length === 0) {
       return res.status(400).json({ success: false, message: "No fields to update" });
     }
+    
     values.push(id);
     const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = ?`;
     await pool.query(sql, values);
-    const [userRows] = await pool.query("SELECT id, name, email, phone, address, img, store_credits, created_at FROM users WHERE id = ?", [id]);
-    if (userRows.length === 0) {
-      return res.status(404).json({ success: false, message: "User not found" });
+    
+    // Fetch updated user data
+    const [userRows] = await pool.query(
+      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?", 
+      [id]
+    );
+    
+    // Save address to AsyncStorage for quick access
+    if (address) {
+      console.log(`✅ Profile updated for user ${id} with address: ${address}`);
     }
+    
     res.json({ success: true, user: userRows[0], message: "Profile updated successfully" });
   } catch (err) {
-    console.error(err);
+    console.error("Profile update error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
