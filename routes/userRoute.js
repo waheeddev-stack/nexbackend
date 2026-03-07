@@ -402,6 +402,8 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
         o.pickup_code,
         o.delivery_mode,
         o.order_type,
+        o.cancellation_reason,
+        o.scheduled_time,
         JSON_ARRAYAGG(
           JSON_OBJECT(
             'product_id', oi.product_id,
@@ -415,7 +417,7 @@ userrouter.get("/orders", verifyToken, async (req, res) => {
        JOIN order_items oi ON o.id = oi.order_id
        LEFT JOIN products p ON oi.product_id = p.id
        WHERE o.user_id = ?
-       GROUP BY o.id, o.status, o.total_amount, o.created_at, o.delivery_address, o.pickup_code, o.delivery_mode, o.order_type
+       GROUP BY o.id, o.status, o.total_amount, o.created_at, o.delivery_address, o.pickup_code, o.delivery_mode, o.order_type, o.cancellation_reason, o.scheduled_time
        ORDER BY o.created_at DESC`,
       [user_id]
     );

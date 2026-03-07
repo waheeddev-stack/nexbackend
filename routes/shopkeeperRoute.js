@@ -920,8 +920,15 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     }
 
     // Prepare update query and parameters
-    const updateQuery = "UPDATE orders SET status = ? WHERE id = ?";
-    const updateParams = [status, orderIdNum];
+    let updateQuery, updateParams;
+    
+    if (status === "Cancelled" && cancellation_reason) {
+      updateQuery = "UPDATE orders SET status = ?, cancellation_reason = ? WHERE id = ?";
+      updateParams = [status, cancellation_reason, orderIdNum];
+    } else {
+      updateQuery = "UPDATE orders SET status = ? WHERE id = ?";
+      updateParams = [status, orderIdNum];
+    }
 
     // Handle stock restoration for cancelled orders
     if (status === "Cancelled") {
@@ -931,7 +938,7 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
       await pool.query("START TRANSACTION");
       
       try {
-        // Update order status to Cancelled
+        // Update order status to Cancelled with reason
         await pool.query(updateQuery, updateParams);
         
         // Restore stock using the stock manager utility
