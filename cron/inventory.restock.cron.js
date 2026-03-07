@@ -18,6 +18,9 @@ let cronJob = null;
 /**
  * Start the restock cron job
  * Runs ONCE per day at midnight (12:00 AM) to restock out-of-stock products
+ * 
+ * For testing: Change schedule to '* * * * *' to run every minute
+ * For production: Use '0 0 * * *' to run at midnight
  */
 export function startRestockCron() {
   if (cronJob) {
@@ -25,25 +28,31 @@ export function startRestockCron() {
     return;
   }
   
-  // Schedule cron job to run daily at midnight (00:00)
-  // Format: "0 0 * * *" = At 00:00 (midnight) every day
-  cronJob = cron.schedule('0 0 * * *', async () => {
-    console.log('🌙 Daily restock starting at midnight (12:00 AM)...');
+  // Schedule cron job
+  // Testing: "* * * * *" = Every minute
+  // Production: "0 0 * * *" = At 00:00 (midnight) every day
+  const schedule = process.env.RESTOCK_CRON_SCHEDULE || '0 0 * * *';
+  
+  cronJob = cron.schedule(schedule, async () => {
+    const isTestMode = schedule === '* * * * *';
+    console.log(`🔄 ${isTestMode ? 'TEST MODE' : 'PRODUCTION'} restock starting...`);
     
     try {
-      // Update ONLY products where stock = 0 (completely out of stock)
-      // Products with stock > 0 are NOT restocked (shopkeeper manages those)
+      // Update ALL products where:
+      // 1. stock = 0 (completely out of stock)
+      // 2. baselineQty > 0 (has a valid baseline quantity set by shopkeeper)
+      // Note: Products with baselineQty = 0 or NULL won't be restocked (shopkeeper hasn't set baseline yet)
       const [result] = await pool.query(`
         UPDATE products 
         SET stock = baselineQty 
-        WHERE baselineQty > 0 
-        AND stock = 0
+        WHERE stock = 0 
+        AND baselineQty > 0
       `);
       
       const restockedCount = result.affectedRows;
       
       if (restockedCount === 0) {
-        console.log('✅ No products need restocking (no products at stock = 0)');
+        console.log('✅ No products need restocking (no products at stock = 0 with baselineQty > 0)');
         return;
       }
       
@@ -53,7 +62,7 @@ export function startRestockCron() {
       const [samples] = await pool.query(`
         SELECT id, name, shop_id, stock, baselineQty
         FROM products
-        WHERE baselineQty > 0 AND stock > 0
+        WHERE stock > 0 AND baselineQty > 0
         ORDER BY RAND()
         LIMIT 5
       `);
@@ -65,16 +74,20 @@ export function startRestockCron() {
         });
       }
       
-      console.log(`🔄 Daily restock completed at midnight: ${restockedCount} product(s) restocked from 0 to baselineQty`);
+      console.log(`🔄 Restock completed: ${restockedCount} product(s) restocked from 0 to baselineQty`);
       
     } catch (error) {
-      console.error('❌ Daily restock error:', error);
+      console.error('❌ Restock error:', error);
     }
   });
   
-  console.log('✅ Inventory restock cron started (runs daily at midnight 12:00 AM)');
-  console.log('📅 Next restock will occur at 00:00 (midnight)');
-  console.log('🔄 ONLY products with stock = 0 will be restocked to baselineQty');
+  console.log(`✅ Inventory restock cron started (schedule: ${schedule})`);
+  if (schedule === '* * * * *') {
+    console.log('⚠️  TEST MODE: Running every minute');
+  } else {
+    console.log('📅 PRODUCTION MODE: Runs daily at midnight (00:00)');
+  }
+  console.log('🔄 ONLY products with stock = 0 AND baselineQty > 0 will be restocked');
 }
 
 /**
