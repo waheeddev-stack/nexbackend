@@ -941,6 +941,19 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         // Update order status to Cancelled with reason
         await pool.query(updateQuery, updateParams);
         
+        // Stop timer if order has one
+        try {
+          await pool.query(`
+            UPDATE order_timers 
+            SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
+            WHERE order_id = ? AND is_active = TRUE
+          `, [orderIdNum]);
+          console.log(`⏱️ Timer stopped for cancelled order ${orderIdNum}`);
+        } catch (timerError) {
+          console.warn(`⏱️ Could not stop timer for order ${orderIdNum}:`, timerError.message);
+          // Continue - timer table might not exist or no timer for this order
+        }
+        
         // Restore stock using the stock manager utility
         const stockRestoration = await restoreStockForCancelledOrder(
           orderIdNum, 
@@ -1041,6 +1054,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
           hasTimer: orderRow?.has_timer === 1,
           has_timer: orderRow?.has_timer === 1, // Add for compatibility
           cancellation_reason: status === "Cancelled" ? cancellation_reason : undefined,
+          timerStopped: status === "Cancelled" ? true : undefined, // Indicate timer was stopped for cancellations
+          stoppedAt: status === "Cancelled" ? new Date().toISOString() : undefined,
           updatedAt: new Date().toISOString(),
           updated_at: new Date().toISOString() // Add for compatibility
         };

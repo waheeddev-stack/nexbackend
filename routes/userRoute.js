@@ -873,6 +873,19 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
         [orderIdNum]
       );
       
+      // Stop timer if order has one
+      try {
+        await pool.query(`
+          UPDATE order_timers 
+          SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
+          WHERE order_id = ? AND is_active = TRUE
+        `, [orderIdNum]);
+        console.log(`⏱️ Timer stopped for cancelled order ${orderIdNum}`);
+      } catch (timerError) {
+        console.warn(`⏱️ Could not stop timer for order ${orderIdNum}:`, timerError.message);
+        // Continue - timer table might not exist or no timer for this order
+      }
+      
       // Restore stock using the stock manager utility
       const stockRestoration = await restoreStockForCancelledOrder(
         orderIdNum, 
@@ -911,7 +924,9 @@ userrouter.post("/orders/:orderId/cancel", verifyToken, async (req, res) => {
           orderId: orderIdNum,
           status: 'Cancelled',
           stockRestored: true,
-          restoredItems: stockRestoration.success ? stockRestoration.totalItemsRestored : 0
+          restoredItems: stockRestoration.success ? stockRestoration.totalItemsRestored : 0,
+          timerStopped: true, // Indicate timer was stopped
+          stoppedAt: new Date().toISOString()
         };
         console.log(`📡 Socket: Payload:`, cancellationData);
         
