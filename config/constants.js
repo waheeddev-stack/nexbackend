@@ -34,9 +34,11 @@ export const WELLNESS_TIERS = {
 export const DELIVERY_FEE = 0;
 
 // Time slot configuration
+// Operating hours: 8 AM to 8 PM (12 hours)
+// Excluded: 8 PM to 8 AM (12 hours)
 export const TIME_SLOT_CONFIG = {
-  START_HOUR: 10, // 10 AM
-  END_HOUR: 21,   // 9 PM
+  START_HOUR: 8,  // 8 AM
+  END_HOUR: 20,   // 8 PM (20:00 in 24-hour format)
   INTERVAL_MINUTES: 30
 };
 
