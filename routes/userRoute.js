@@ -129,11 +129,17 @@ userrouter.get("/nearby-shops", async (req, res) => {
     console.log(`📦 Found ${products.length} products across ${shopIds.length} shops`);
 
     // Group products under their shop, ensure address is never null/undefined
+    // Add unit field based on stock quantity
     const shopsWithProducts = onlineShops.map(shop => ({
       ...shop,
       // Provide fallback address if not set
       address: shop.address || `Near coordinates (${parseFloat(shop.latitude).toFixed(4)}, ${parseFloat(shop.longitude).toFixed(4)})`,
-      products: products.filter(p => p.shop_id === shop.id),
+      products: products
+        .filter(p => p.shop_id === shop.id)
+        .map(p => ({
+          ...p,
+          unit: p.stock > 1 ? `${p.stock} units available` : `${p.stock} unit available`
+        })),
     }));
 
     res.json({ success: true, shops: shopsWithProducts, hasOfflineShops: offlineShops.length > 0 });
