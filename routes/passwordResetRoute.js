@@ -81,7 +81,7 @@ router.post('/request', async (req, res) => {
       // Create reset token (expires in 1 hour)
       const resetToken = await createJWEToken(
         {
-          userId: user.id,
+          id: user.id,
           email: user.email,
           type: 'password_reset'
         },
@@ -168,7 +168,7 @@ router.post('/verify', async (req, res) => {
       // Check if user still exists
       const [users] = await pool.query(
         'SELECT id, email FROM users WHERE id = ? AND email = ?',
-        [payload.userId, payload.email]
+        [payload.id, payload.email]
       );
 
       if (users.length === 0) {
@@ -265,7 +265,7 @@ router.post('/reset', async (req, res) => {
     // Get user
     const [users] = await pool.query(
       'SELECT id, email, name, password FROM users WHERE id = ? AND email = ?',
-      [payload.userId, payload.email]
+      [payload.id, payload.email]
     );
 
     if (users.length === 0) {
