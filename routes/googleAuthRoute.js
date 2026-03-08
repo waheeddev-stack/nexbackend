@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../config/db.js';
-import { createAccessToken, createRefreshToken } from '../utils/token.js';
+import { createJWEToken } from '../utils/jweToken.js';
 import { OAuth2Client } from 'google-auth-library';
 
 const router = express.Router();
@@ -139,8 +139,8 @@ router.post('/users', async (req, res) => {
     }
 
     // Generate tokens
-    const accessToken = createAccessToken(user.id, 'user');
-    const refreshToken = createRefreshToken(user.id, 'user');
+    const accessToken = await createJWEToken({ id: user.id, role: 'user' }, '7d');
+    const refreshToken = await createJWEToken({ id: user.id, role: 'user', type: 'refresh' }, '30d');
 
     // Save refresh token
     await pool.query(
@@ -257,8 +257,8 @@ router.post('/shopkeepers', async (req, res) => {
     }
 
     // Generate tokens
-    const accessToken = createAccessToken(shopkeeper.id, 'shopkeeper');
-    const refreshToken = createRefreshToken(shopkeeper.id, 'shopkeeper');
+    const accessToken = await createJWEToken({ id: shopkeeper.id, role: 'shopkeeper' }, '7d');
+    const refreshToken = await createJWEToken({ id: shopkeeper.id, role: 'shopkeeper', type: 'refresh' }, '30d');
 
     // Save refresh token
     await pool.query(
@@ -370,8 +370,8 @@ router.post('/shopkeepers/register', async (req, res) => {
     };
 
     // Generate tokens
-    const accessToken = createAccessToken(shopkeeper.id, 'shopkeeper');
-    const refreshToken = createRefreshToken(shopkeeper.id, 'shopkeeper');
+    const accessToken = await createJWEToken({ id: shopkeeper.id, role: 'shopkeeper' }, '7d');
+    const refreshToken = await createJWEToken({ id: shopkeeper.id, role: 'shopkeeper', type: 'refresh' }, '30d');
 
     // Save refresh token
     await pool.query(
