@@ -32,7 +32,10 @@ export const sendPasswordResetEmailSendGrid = async (to, resetToken, userName) =
       throw new Error('SendGrid not configured. Please set SENDGRID_API_KEY in environment variables.');
     }
     
-    const resetLink = `nexkirana://reset-password?token=${resetToken}`;
+    // Use HTTPS link that redirects to deep link (works better in emails)
+    const backendUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || 'https://nexbackend.onrender.com';
+    const resetLink = `${backendUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+    
     const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || 'resetnexkirana@gmail.com';
     const fromName = process.env.SENDGRID_FROM_NAME || 'NexKirana';
     const templateId = process.env.SENDGRID_TEMPLATE_ID;
