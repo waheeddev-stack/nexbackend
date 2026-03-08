@@ -1,5 +1,16 @@
 import nodemailer from 'nodemailer';
 import { getConfig } from './environment.js';
+import { 
+  sendPasswordResetEmailSendGrid, 
+  sendPasswordResetConfirmationSendGrid 
+} from './email.sendgrid.js';
+
+/**
+ * Check if SendGrid is configured
+ */
+const isSendGridConfigured = () => {
+  return !!process.env.SENDGRID_API_KEY;
+};
 
 /**
  * Get the nodemailer createTransport function
@@ -34,21 +45,23 @@ const createTransporter = () => {
     const createTransport = getCreateTransport();
     
     // Gmail configuration with timeouts and IPv4 enforcement
+    // Try port 465 (SSL) as port 587 may be blocked on Render
     const transporter = createTransport({
-      host: 'smtp.gmail.com',  // Use explicit host instead of service to control connection
-      port: 587,               // Use port 587 (STARTTLS)
-      secure: false,           // Use STARTTLS
+      host: 'smtp.gmail.com',
+      port: 465,               // Use port 465 (SSL) - more likely to work on restricted networks
+      secure: true,            // Use SSL
       auth: {
         user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
         pass: process.env.EMAIL_PASSWORD, // App-specific password
       },
       tls: {
-        rejectUnauthorized: false
+        rejectUnauthorized: false,
+        minVersion: 'TLSv1.2'
       },
       // Add connection timeouts to prevent hanging
-      connectionTimeout: 10000, // 10 seconds
-      greetingTimeout: 10000,   // 10 seconds
-      socketTimeout: 15000,     // 15 seconds
+      connectionTimeout: 15000, // 15 seconds (increased for slower connections)
+      greetingTimeout: 15000,   // 15 seconds
+      socketTimeout: 20000,     // 20 seconds
       // Force IPv4 to avoid IPv6 connectivity issues on some servers
       family: 4,
     });
@@ -62,12 +75,29 @@ const createTransporter = () => {
 
 /**
  * Send password reset email
+ * Uses SendGrid if configured (for production), falls back to Gmail SMTP (for local)
  * @param {string} to - Recipient email
  * @param {string} resetToken - Password reset token
  * @param {string} userName - User's name
  * @returns {Promise<Object>} Email send result
  */
 export const sendPasswordResetEmail = async (to, resetToken, userName) => {
+  // Use SendGrid if configured (production on Render)
+  if (isSendGridConfigured()) {
+    console.log('[EMAIL] Using SendGrid for email delivery');
+    return await sendPasswordResetEmailSendGrid(to, resetToken, userName);
+  }
+  
+  // Fall back to Gmail SMTP (local development)
+  console.log('[EMAIL] Using Gmail SMTP for email delivery');
+  return await sendPasswordResetEmailGmail(to, resetToken, userName);
+};
+
+/**
+ * Send password reset email via Gmail SMTP
+ * Used for local development
+ */
+const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
   try {
     console.log(`[EMAIL] Attempting to send password reset email to: ${to}`);
     const transporter = createTransporter();
@@ -328,11 +358,25 @@ This email was sent to: ${to}
 
 /**
  * Send password reset confirmation email
+ * Uses SendGrid if configured, falls back to Gmail SMTP
  * @param {string} to - Recipient email
  * @param {string} userName - User's name
  * @returns {Promise<Object>} Email send result
  */
 export const sendPasswordResetConfirmation = async (to, userName) => {
+  // Use SendGrid if configured
+  if (isSendGridConfigured()) {
+    return await sendPasswordResetConfirmationSendGrid(to, userName);
+  }
+  
+  // Fall back to Gmail SMTP
+  return await sendPasswordResetConfirmationGmail(to, userName);
+};
+
+/**
+ * Send password reset confirmation email via Gmail SMTP
+ */
+const sendPasswordResetConfirmationGmail = async (to, userName) => {
   try {
     const transporter = createTransporter();
     
