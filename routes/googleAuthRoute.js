@@ -38,7 +38,7 @@ async function verifyGoogleToken(idToken) {
  * @desc    Google Sign-In for Users (Customers)
  * @access  Public
  */
-router.post('/users', async (req, res) => {
+router.post('/google/users', async (req, res) => {
   try {
     const { idToken, expoPushToken } = req.body;
 
@@ -180,7 +180,7 @@ router.post('/users', async (req, res) => {
  * @desc    Google Sign-In for Shopkeepers
  * @access  Public
  */
-router.post('/shopkeepers', async (req, res) => {
+router.post('/google/shopkeepers', async (req, res) => {
   try {
     const { idToken, expoPushToken } = req.body;
 
@@ -300,7 +300,7 @@ router.post('/shopkeepers', async (req, res) => {
  * @desc    Complete shopkeeper registration with Google
  * @access  Public
  */
-router.post('/shopkeepers/register', async (req, res) => {
+router.post('/google/shopkeepers/register', async (req, res) => {
   try {
     const { idToken, shopName, phone, address, latitude, longitude, expoPushToken } = req.body;
 
