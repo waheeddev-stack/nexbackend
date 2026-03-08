@@ -91,7 +91,15 @@ router.post('/request', async (req, res) => {
       // Send password reset email
       try {
         console.log(`[PASSWORD-RESET] Sending reset email to: ${user.email}`);
-        await sendPasswordResetEmail(user.email, resetToken, user.name);
+        
+        // Add timeout wrapper for the entire email operation
+        const emailPromise = sendPasswordResetEmail(user.email, resetToken, user.name);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Email operation timeout')), 25000); // 25 second timeout
+        });
+        
+        await Promise.race([emailPromise, timeoutPromise]);
+        
         console.log(`[PASSWORD-RESET] ✅ Password reset email sent successfully to: ${user.email}`);
       } catch (emailError) {
         console.error('[PASSWORD-RESET] ❌ Failed to send password reset email:', emailError.message);

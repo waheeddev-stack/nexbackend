@@ -33,7 +33,7 @@ const createTransporter = () => {
   try {
     const createTransport = getCreateTransport();
     
-    // Gmail configuration
+    // Gmail configuration with timeouts
     const transporter = createTransport({
       service: 'gmail',
       auth: {
@@ -42,7 +42,11 @@ const createTransporter = () => {
       },
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      // Add connection timeouts to prevent hanging
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000,   // 10 seconds
+      socketTimeout: 15000,     // 15 seconds
     });
 
     return transporter;
@@ -64,14 +68,8 @@ export const sendPasswordResetEmail = async (to, resetToken, userName) => {
     console.log(`[EMAIL] Attempting to send password reset email to: ${to}`);
     const transporter = createTransporter();
     
-    // Verify transporter configuration before sending
-    try {
-      await transporter.verify();
-      console.log('[EMAIL] Transporter verified successfully');
-    } catch (verifyError) {
-      console.error('[EMAIL] Transporter verification failed:', verifyError.message);
-      throw new Error(`Email service configuration error: ${verifyError.message}`);
-    }
+    // Skip verify() as it can hang - we'll catch errors during send instead
+    console.log('[EMAIL] Transporter created, proceeding to send email...');
     
     // Create reset link (adjust URL based on your app's deep linking setup)
     const resetLink = `nexkirana://reset-password?token=${resetToken}`;
@@ -285,7 +283,15 @@ This email was sent to: ${to}
     };
 
     console.log('[EMAIL] Sending email...');
-    const info = await transporter.sendMail(mailOptions);
+    
+    // Wrap sendMail in a timeout promise to prevent hanging
+    const sendEmailPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Email send timeout after 20 seconds')), 20000);
+    });
+    
+    const info = await Promise.race([sendEmailPromise, timeoutPromise]);
+    
     console.log(`[EMAIL] ✅ Password reset email sent successfully! Message ID: ${info.messageId}`);
     
     return {
