@@ -399,35 +399,19 @@ router.post("/", verifyToken, async (req, res) => {
       }
     }
 
-    // OPTIMIZED: Batch insert order items (single query instead of N queries)
-    if (items.length > 0) {
-      const itemValues = items.map(item => 
-        `(${orderId}, ${item.productId}, ${item.quantity}, ${item.price})`
-      ).join(', ');
-      
+    // Insert order items
+    for (const item of items) {
       await connection.execute(`
         INSERT INTO order_items (order_id, product_id, quantity, price)
-        VALUES ${itemValues}
-      `);
-    }
+        VALUES (?, ?, ?, ?)
+      `, [orderId, item.productId, item.quantity, item.price]);
 
-    // OPTIMIZED: Batch update stock (single query with CASE statement)
-    if (items.length > 0) {
-      const productIds = items.map(item => item.productId);
-      const caseStatements = items.map(item => 
-        `WHEN id = ${item.productId} THEN stock - ${item.quantity}`
-      ).join(' ');
-      
+      // Reduce stock
       await connection.execute(`
         UPDATE products 
-        SET stock = CASE ${caseStatements} END
-        WHERE id IN (${productIds.join(',')}) 
-        AND stock >= (
-          CASE ${items.map(item => 
-            `WHEN id = ${item.productId} THEN ${item.quantity}`
-          ).join(' ')} END
-        )
-      `);
+        SET stock = stock - ? 
+        WHERE id = ? AND stock >= ?
+      `, [item.quantity, item.productId, item.quantity]);
     }
 
     // Deduct inventory stock for order items
