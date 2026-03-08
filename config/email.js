@@ -33,9 +33,11 @@ const createTransporter = () => {
   try {
     const createTransport = getCreateTransport();
     
-    // Gmail configuration with timeouts
+    // Gmail configuration with timeouts and IPv4 enforcement
     const transporter = createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',  // Use explicit host instead of service to control connection
+      port: 587,               // Use port 587 (STARTTLS)
+      secure: false,           // Use STARTTLS
       auth: {
         user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
         pass: process.env.EMAIL_PASSWORD, // App-specific password
@@ -47,6 +49,8 @@ const createTransporter = () => {
       connectionTimeout: 10000, // 10 seconds
       greetingTimeout: 10000,   // 10 seconds
       socketTimeout: 15000,     // 15 seconds
+      // Force IPv4 to avoid IPv6 connectivity issues on some servers
+      family: 4,
     });
 
     return transporter;
