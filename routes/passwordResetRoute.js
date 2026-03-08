@@ -90,13 +90,24 @@ router.post('/request', async (req, res) => {
 
       // Send password reset email
       try {
+        console.log(`[PASSWORD-RESET] Sending reset email to: ${user.email}`);
         await sendPasswordResetEmail(user.email, resetToken, user.name);
-        console.log(`Password reset email sent to: ${user.email}`);
+        console.log(`[PASSWORD-RESET] ✅ Password reset email sent successfully to: ${user.email}`);
       } catch (emailError) {
-        console.error('Failed to send password reset email:', emailError);
+        console.error('[PASSWORD-RESET] ❌ Failed to send password reset email:', emailError.message);
+        console.error('[PASSWORD-RESET] Error details:', emailError);
+        
+        // Return more specific error message
+        let errorMessage = 'Failed to send password reset email. Please try again later.';
+        if (emailError.message.includes('authentication')) {
+          errorMessage = 'Email service is temporarily unavailable. Please contact support.';
+        } else if (emailError.message.includes('connect')) {
+          errorMessage = 'Unable to reach email service. Please try again in a few minutes.';
+        }
+        
         return res.status(500).json({
           success: false,
-          message: 'Failed to send password reset email. Please try again later.'
+          message: errorMessage
         });
       }
     } else {

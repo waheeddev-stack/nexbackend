@@ -27,7 +27,8 @@
     "init-stock-table": "node scripts/init-stock-restoration-table.js",
     "init-inventory": "node scripts/init-inventory-system.js",
     "init-schema": "node scripts/init-complete-schema.js",
-    "migrate-google-oauth": "node scripts/migrate-google-oauth.js"
+    "migrate-google-oauth": "node scripts/migrate-google-oauth.js",
+    "diagnose-nodemailer": "node scripts/diagnose-nodemailer.js"
   },
   "keywords": [],
   "author": "",

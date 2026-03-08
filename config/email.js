@@ -1,25 +1,55 @@
 import nodemailer from 'nodemailer';
 import { getConfig } from './environment.js';
 
-const config = getConfig();
+/**
+ * Get the nodemailer createTransport function
+ * Handles both CommonJS and ES module exports
+ */
+const getCreateTransport = () => {
+  // Try different ways nodemailer might be exported
+  if (typeof nodemailer?.createTransport === 'function') {
+    return nodemailer.createTransport.bind(nodemailer);
+  }
+  if (typeof nodemailer?.default?.createTransport === 'function') {
+    return nodemailer.default.createTransport.bind(nodemailer.default);
+  }
+  
+  // Log what we actually got
+  console.error('[EMAIL] nodemailer object:', {
+    hasCreateTransport: !!nodemailer?.createTransport,
+    hasDefault: !!nodemailer?.default,
+    hasDefaultCreateTransport: !!nodemailer?.default?.createTransport,
+    type: typeof nodemailer,
+    keys: Object.keys(nodemailer || {})
+  });
+  
+  throw new Error('nodemailer.createTransport is not available. Module may not be installed correctly.');
+};
 
 /**
  * Create email transporter for sending emails
  */
 const createTransporter = () => {
-  // Gmail configuration
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
-      pass: process.env.EMAIL_PASSWORD, // App-specific password
-    },
-    tls: {
-      rejectUnauthorized: false
-    }
-  });
+  try {
+    const createTransport = getCreateTransport();
+    
+    // Gmail configuration
+    const transporter = createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
+        pass: process.env.EMAIL_PASSWORD, // App-specific password
+      },
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
 
-  return transporter;
+    return transporter;
+  } catch (error) {
+    console.error('[EMAIL] Error creating transporter:', error.message);
+    throw error;
+  }
 };
 
 /**
@@ -31,7 +61,17 @@ const createTransporter = () => {
  */
 export const sendPasswordResetEmail = async (to, resetToken, userName) => {
   try {
+    console.log(`[EMAIL] Attempting to send password reset email to: ${to}`);
     const transporter = createTransporter();
+    
+    // Verify transporter configuration before sending
+    try {
+      await transporter.verify();
+      console.log('[EMAIL] Transporter verified successfully');
+    } catch (verifyError) {
+      console.error('[EMAIL] Transporter verification failed:', verifyError.message);
+      throw new Error(`Email service configuration error: ${verifyError.message}`);
+    }
     
     // Create reset link (adjust URL based on your app's deep linking setup)
     const resetLink = `nexkirana://reset-password?token=${resetToken}`;
@@ -244,16 +284,35 @@ This email was sent to: ${to}
       `
     };
 
+    console.log('[EMAIL] Sending email...');
     const info = await transporter.sendMail(mailOptions);
-    console.log('Password reset email sent:', info.messageId);
+    console.log(`[EMAIL] ✅ Password reset email sent successfully! Message ID: ${info.messageId}`);
     
     return {
       success: true,
       messageId: info.messageId
     };
   } catch (error) {
-    console.error('Error sending password reset email:', error);
-    throw new Error('Failed to send password reset email');
+    console.error('[EMAIL] ❌ Error sending password reset email:', error.message);
+    console.error('[EMAIL] Error details:', {
+      code: error.code,
+      command: error.command,
+      response: error.response,
+      responseCode: error.responseCode
+    });
+    
+    // Provide more specific error messages
+    if (error.code === 'EAUTH') {
+      throw new Error('Email authentication failed. Please check EMAIL_USER and EMAIL_PASSWORD in .env');
+    } else if (error.code === 'ECONNECTION' || error.code === 'ETIMEDOUT') {
+      throw new Error('Unable to connect to email server. Please check your internet connection');
+    } else if (error.responseCode === 550) {
+      throw new Error('Email address not found or rejected by server');
+    } else if (error.responseCode === 554) {
+      throw new Error('Email rejected due to spam or policy violation');
+    }
+    
+    throw new Error(`Failed to send password reset email: ${error.message}`);
   }
 };
 
