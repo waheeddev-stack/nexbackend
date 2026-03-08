@@ -8,10 +8,10 @@ const config = getConfig();
  */
 const createTransporter = () => {
   // Gmail configuration
-  const transporter = nodemailer.createTransporter({
+  const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: process.env.EMAIL_USER || 'nexkiranaofficial@gmail.com',
+      user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
       pass: process.env.EMAIL_PASSWORD, // App-specific password
     },
     tls: {
@@ -39,73 +39,157 @@ export const sendPasswordResetEmail = async (to, resetToken, userName) => {
     const mailOptions = {
       from: {
         name: 'NexKirana',
-        address: process.env.EMAIL_USER || 'nexkiranaofficial@gmail.com'
+        address: process.env.EMAIL_USER || 'resetnexkirana@gmail.com'
       },
       to,
-      subject: 'Reset Your NexKirana Password',
+      subject: 'Password Reset Request - NexKirana Account',
       html: `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Reset Your Password</title>
+          <meta http-equiv="X-UA-Compatible" content="IE=edge">
+          <title>Password Reset Request - NexKirana</title>
         </head>
-        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px;">
+        <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f6f6f6; line-height: 1.5;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f6f6f6; padding: 40px 20px;">
             <tr>
               <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border: 1px solid #ddd;">
+                  
                   <!-- Header -->
                   <tr>
-                    <td style="background: linear-gradient(135deg, #00A6CB 0%, #0088A8 100%); padding: 40px 20px; text-align: center;">
-                      <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">NexKirana</h1>
+                    <td style="background-color: #232f3e; padding: 20px 40px; border-bottom: 4px solid #ff9900;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td align="left">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 400; letter-spacing: 0.5px;">NexKirana</h1>
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                   
-                  <!-- Content -->
+                  <!-- Main Content -->
                   <tr>
-                    <td style="padding: 40px 30px;">
-                      <h2 style="color: #333333; margin: 0 0 20px 0; font-size: 24px;">Reset Your Password</h2>
-                      <p style="color: #666666; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                        Hi ${userName || 'there'},
-                      </p>
-                      <p style="color: #666666; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                        We received a request to reset your password for your NexKirana account. Click the button below to create a new password:
+                    <td style="padding: 40px 40px 30px 40px;">
+                      <h2 style="color: #111111; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; line-height: 1.3;">Password Reset Request</h2>
+                      
+                      <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 10px 0;">
+                        Hello ${userName || 'Customer'},
                       </p>
                       
-                      <!-- Reset Button -->
-                      <table width="100%" cellpadding="0" cellspacing="0" style="margin: 30px 0;">
+                      <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                        We received a request to reset the password for your NexKirana account. Click the button below to reset your password:
+                      </p>
+                      
+                      <!-- CTA Button -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 25px 0;">
                         <tr>
-                          <td align="center">
-                            <a href="${resetLink}" style="display: inline-block; background-color: #00A6CB; color: #ffffff; text-decoration: none; padding: 14px 40px; border-radius: 6px; font-size: 16px; font-weight: bold;">Reset Password</a>
+                          <td align="left" style="padding: 0;">
+                            <a href="${resetLink}" 
+                               style="display: inline-block; 
+                                      background-color: #ff9900; 
+                                      color: #111111; 
+                                      text-decoration: none; 
+                                      padding: 12px 30px; 
+                                      border-radius: 3px; 
+                                      font-size: 14px; 
+                                      font-weight: 700; 
+                                      border: 1px solid #e77600;">
+                              Reset Password
+                            </a>
                           </td>
                         </tr>
                       </table>
                       
-                      <p style="color: #666666; font-size: 14px; line-height: 1.6; margin: 20px 0 0 0;">
-                        Or copy and paste this link into your browser:
+                      <p style="color: #555555; font-size: 13px; line-height: 1.5; margin: 20px 0 8px 0;">
+                        If the button above doesn't work, copy and paste this link into your browser:
                       </p>
-                      <p style="color: #00A6CB; font-size: 14px; word-break: break-all; margin: 10px 0 20px 0;">
+                      <p style="color: #0066c0; 
+                                font-size: 12px; 
+                                word-break: break-all; 
+                                margin: 0 0 25px 0; 
+                                padding: 12px; 
+                                background-color: #f3f3f3; 
+                                border: 1px solid #ddd;
+                                border-radius: 3px;">
                         ${resetLink}
                       </p>
                       
-                      <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
-                        <p style="color: #856404; font-size: 14px; margin: 0; line-height: 1.6;">
-                          <strong>Security Notice:</strong> This link will expire in 1 hour. If you didn't request a password reset, please ignore this email or contact support if you have concerns.
-                        </p>
-                      </div>
+                      <!-- Security Notice -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 25px 0;">
+                        <tr>
+                          <td style="background-color: #f7f7f7; 
+                                     border-left: 3px solid #555555; 
+                                     padding: 15px 20px;">
+                            <p style="color: #111111; font-size: 13px; margin: 0 0 8px 0; font-weight: 700;">
+                              Security Information
+                            </p>
+                            <p style="color: #333333; font-size: 13px; margin: 0; line-height: 1.5;">
+                              This link will expire in 1 hour for your protection. If you did not request this password reset, please ignore this email. Your account remains secure.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Additional Info -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 20px 0 0 0;">
+                        <tr>
+                          <td style="padding: 15px 0; border-top: 1px solid #e7e7e7;">
+                            <p style="color: #111111; font-size: 13px; margin: 0 0 10px 0; line-height: 1.5;">
+                              <strong>Why did I receive this email?</strong>
+                            </p>
+                            <p style="color: #555555; font-size: 13px; margin: 0 0 15px 0; line-height: 1.5;">
+                              This email was sent because a password reset was requested for your account.
+                            </p>
+                            <p style="color: #111111; font-size: 13px; margin: 0 0 10px 0; line-height: 1.5;">
+                              <strong>Didn't request this?</strong>
+                            </p>
+                            <p style="color: #555555; font-size: 13px; margin: 0; line-height: 1.5;">
+                              If you did not make this request, please contact our support team immediately.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                   
                   <!-- Footer -->
                   <tr>
-                    <td style="background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef;">
-                      <p style="color: #6c757d; font-size: 14px; margin: 0 0 10px 0;">
-                        Need help? Contact us at <a href="mailto:nexkiranaofficial@gmail.com" style="color: #00A6CB; text-decoration: none;">nexkiranaofficial@gmail.com</a>
+                    <td style="background-color: #f6f6f6; padding: 30px 40px; border-top: 1px solid #e7e7e7;">
+                      <p style="color: #555555; font-size: 13px; margin: 0 0 10px 0; line-height: 1.5;">
+                        Need help? Contact our support team:
                       </p>
-                      <p style="color: #6c757d; font-size: 12px; margin: 0;">
-                        © ${new Date().getFullYear()} NexKirana. All rights reserved.
+                      <p style="color: #111111; font-size: 13px; margin: 0 0 20px 0;">
+                        <a href="mailto:resetnexkirana@gmail.com" 
+                           style="color: #0066c0; 
+                                  text-decoration: none;">
+                          resetnexkirana@gmail.com
+                        </a>
+                      </p>
+                      
+                      <div style="border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px;">
+                        <p style="color: #777777; font-size: 11px; margin: 0 0 5px 0;">
+                          © ${new Date().getFullYear()} NexKirana. All rights reserved.
+                        </p>
+                        <p style="color: #999999; font-size: 11px; margin: 0; line-height: 1.4;">
+                          This is an automated message. Please do not reply to this email.<br>
+                          This email was sent to: ${to}
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+                
+                <!-- Email Client Spacer -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; margin-top: 20px;">
+                  <tr>
+                    <td style="text-align: center; padding: 0 20px;">
+                      <p style="color: #a0aec0; font-size: 11px; margin: 0; line-height: 1.5;">
+                        You're receiving this email because you have a NexKirana account.<br>
+                        This email was sent to: ${to}
                       </p>
                     </td>
                   </tr>
@@ -117,21 +201,46 @@ export const sendPasswordResetEmail = async (to, resetToken, userName) => {
         </html>
       `,
       text: `
-        Reset Your Password
-        
-        Hi ${userName || 'there'},
-        
-        We received a request to reset your password for your NexKirana account.
-        
-        Click this link to reset your password: ${resetLink}
-        
-        This link will expire in 1 hour.
-        
-        If you didn't request a password reset, please ignore this email.
-        
-        Need help? Contact us at nexkiranaofficial@gmail.com
-        
-        © ${new Date().getFullYear()} NexKirana. All rights reserved.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        NEXKIRANA - PASSWORD RESET REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dear ${userName || 'Valued Customer'},
+
+We have received a request to reset the password for your NexKirana account.
+
+To proceed with resetting your password, please click the link below or copy 
+and paste it into your browser:
+
+${resetLink}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 SECURITY INFORMATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• This secure link will expire in 1 HOUR for your protection
+• If you did not request this password reset, please disregard this email
+• Your account remains secure, and no changes have been made
+• This link is encrypted using JWE (JSON Web Encryption) technology
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEED ASSISTANCE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you believe this is suspicious activity or need help, please contact 
+our support team immediately:
+
+Email: resetnexkirana@gmail.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+© ${new Date().getFullYear()} NexKirana. All rights reserved.
+
+This is an automated message. Please do not reply directly to this email.
+You're receiving this email because you have a NexKirana account.
+This email was sent to: ${to}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       `
     };
 
@@ -161,53 +270,149 @@ export const sendPasswordResetConfirmation = async (to, userName) => {
     const mailOptions = {
       from: {
         name: 'NexKirana',
-        address: process.env.EMAIL_USER || 'nexkiranaofficial@gmail.com'
+        address: process.env.EMAIL_USER || 'resetnexkirana@gmail.com'
       },
       to,
-      subject: 'Your NexKirana Password Has Been Reset',
+      subject: 'Security Alert: Password Successfully Changed - NexKirana',
       html: `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Password Reset Successful</title>
+          <meta http-equiv="X-UA-Compatible" content="IE=edge">
+          <title>Password Successfully Changed - NexKirana</title>
         </head>
-        <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px;">
+        <body style="margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; background-color: #f6f6f6; line-height: 1.5;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #f6f6f6; padding: 40px 20px;">
             <tr>
               <td align="center">
-                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border: 1px solid #ddd;">
+                  
+                  <!-- Success Header -->
                   <tr>
-                    <td style="background: linear-gradient(135deg, #28a745 0%, #20883a 100%); padding: 40px 20px; text-align: center;">
-                      <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">✓ Password Reset Successful</h1>
+                    <td style="background-color: #232f3e; padding: 20px 40px; border-bottom: 4px solid #ff9900;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                          <td align="left">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 400; letter-spacing: 0.5px;">NexKirana</h1>
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                   
+                  <!-- Main Content -->
                   <tr>
-                    <td style="padding: 40px 30px;">
-                      <p style="color: #666666; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                        Hi ${userName || 'there'},
-                      </p>
-                      <p style="color: #666666; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                        Your NexKirana password has been successfully reset. You can now sign in with your new password.
+                    <td style="padding: 40px 40px 30px 40px;">
+                      <h2 style="color: #111111; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; line-height: 1.3;">Password Successfully Changed</h2>
+                      
+                      <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 10px 0;">
+                        Hello ${userName || 'Customer'},
                       </p>
                       
-                      <div style="background-color: #d1ecf1; border-left: 4px solid #0c5460; padding: 15px; margin: 20px 0;">
-                        <p style="color: #0c5460; font-size: 14px; margin: 0; line-height: 1.6;">
-                          <strong>Security Tip:</strong> If you didn't make this change, please contact our support team immediately at nexkiranaofficial@gmail.com
+                      <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
+                        This email confirms that your NexKirana account password has been successfully changed. You can now sign in using your new password.
+                      </p>
+                      
+                      <!-- Account Details -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 20px 0;">
+                        <tr>
+                          <td style="background-color: #f7f7f7; 
+                                     padding: 15px 20px; 
+                                     border: 1px solid #ddd;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                              <tr>
+                                <td style="padding: 8px 0;">
+                                  <p style="color: #555555; font-size: 12px; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">Account Email</p>
+                                  <p style="color: #111111; font-size: 14px; margin: 5px 0 0 0; font-weight: 700;">${to}</p>
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style="padding: 8px 0; border-top: 1px solid #ddd;">
+                                  <p style="color: #555555; font-size: 12px; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">Changed On</p>
+                                  <p style="color: #111111; font-size: 14px; margin: 5px 0 0 0; font-weight: 700;">${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}</p>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Security Alert -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 25px 0;">
+                        <tr>
+                          <td style="background-color: #fff3cd; 
+                                     border-left: 3px solid #856404; 
+                                     padding: 15px 20px;">
+                            <p style="color: #111111; font-size: 13px; margin: 0 0 8px 0; font-weight: 700;">
+                              Didn't Make This Change?
+                            </p>
+                            <p style="color: #333333; font-size: 13px; margin: 0 0 10px 0; line-height: 1.5;">
+                              If you did not authorize this password change, your account may be compromised. Please take immediate action:
+                            </p>
+                            <ul style="color: #333333; font-size: 13px; margin: 0; padding-left: 20px; line-height: 1.6;">
+                              <li>Contact our support team immediately</li>
+                              <li>Reset your password again using a secure device</li>
+                              <li>Review your recent account activity</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                      
+                      <!-- Security Tips -->
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 20px 0 0 0;">
+                        <tr>
+                          <td style="padding: 15px 0; border-top: 1px solid #e7e7e7;">
+                            <p style="color: #111111; font-size: 13px; margin: 0 0 10px 0; font-weight: 700;">
+                              Security Best Practices
+                            </p>
+                            <ul style="color: #555555; font-size: 13px; margin: 0; padding-left: 20px; line-height: 1.6;">
+                              <li>Never share your password with anyone</li>
+                              <li>Use a unique password for your NexKirana account</li>
+                              <li>Enable two-factor authentication if available</li>
+                              <li>Regularly update your password every 90 days</li>
+                            </ul>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  
+                  <!-- Footer -->
+                  <tr>
+                    <td style="background-color: #f6f6f6; padding: 30px 40px; border-top: 1px solid #e7e7e7;">
+                      <p style="color: #555555; font-size: 13px; margin: 0 0 10px 0; line-height: 1.5;">
+                        Need help? Contact our support team:
+                      </p>
+                      <p style="color: #111111; font-size: 13px; margin: 0 0 20px 0;">
+                        <a href="mailto:resetnexkirana@gmail.com" 
+                           style="color: #0066c0; 
+                                  text-decoration: none;">
+                          resetnexkirana@gmail.com
+                        </a>
+                      </p>
+                      
+                      <div style="border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px;">
+                        <p style="color: #777777; font-size: 11px; margin: 0 0 5px 0;">
+                          © ${new Date().getFullYear()} NexKirana. All rights reserved.
+                        </p>
+                        <p style="color: #999999; font-size: 11px; margin: 0; line-height: 1.4;">
+                          This is an automated security notification. Please do not reply to this email.<br>
+                          This email was sent to: ${to}
                         </p>
                       </div>
                     </td>
                   </tr>
-                  
+                </table>
+                
+                <!-- Email Client Spacer -->
+                <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; margin-top: 20px;">
                   <tr>
-                    <td style="background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef;">
-                      <p style="color: #6c757d; font-size: 14px; margin: 0 0 10px 0;">
-                        Need help? Contact us at <a href="mailto:nexkiranaofficial@gmail.com" style="color: #00A6CB; text-decoration: none;">nexkiranaofficial@gmail.com</a>
-                      </p>
-                      <p style="color: #6c757d; font-size: 12px; margin: 0;">
-                        © ${new Date().getFullYear()} NexKirana. All rights reserved.
+                    <td style="text-align: center; padding: 0 20px;">
+                      <p style="color: #a0aec0; font-size: 11px; margin: 0; line-height: 1.5;">
+                        You're receiving this security notification because your password was changed.<br>
+                        This email was sent to: ${to}
                       </p>
                     </td>
                   </tr>
@@ -219,15 +424,61 @@ export const sendPasswordResetConfirmation = async (to, userName) => {
         </html>
       `,
       text: `
-        Password Reset Successful
-        
-        Hi ${userName || 'there'},
-        
-        Your NexKirana password has been successfully reset. You can now sign in with your new password.
-        
-        If you didn't make this change, please contact our support team immediately at nexkiranaofficial@gmail.com
-        
-        © ${new Date().getFullYear()} NexKirana. All rights reserved.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              NEXKIRANA - PASSWORD SUCCESSFULLY CHANGED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dear ${userName || 'Valued Customer'},
+
+This email confirms that your NexKirana account password has been 
+successfully changed. You can now sign in to your account using your 
+new password.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ACCOUNT DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Account Email: ${to}
+Changed On: ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ DIDN'T MAKE THIS CHANGE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you did not authorize this password change, your account may be 
+compromised. Please take immediate action:
+
+• Contact our support team immediately at resetnexkirana@gmail.com
+• Reset your password again using a secure device
+• Review your recent account activity
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛡️ SECURITY BEST PRACTICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Never share your password with anyone
+• Use a unique password for your NexKirana account
+• Enable two-factor authentication if available
+• Regularly update your password every 90 days
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEED ASSISTANCE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Our support team is here to help.
+Email: resetnexkirana@gmail.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+© ${new Date().getFullYear()} NexKirana. All rights reserved.
+
+This is an automated security notification. Please do not reply directly 
+to this email. Secured with JWE encryption technology.
+
+You're receiving this security notification because your password was changed.
+This email was sent to: ${to}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       `
     };
 

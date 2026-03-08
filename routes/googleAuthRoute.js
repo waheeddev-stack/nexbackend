@@ -1,219 +1,398 @@
 import express from 'express';
+import bcrypt from 'bcryptjs';
+import pool from '../config/db.js';
+import { createAccessToken, createRefreshToken } from '../utils/token.js';
 import { OAuth2Client } from 'google-auth-library';
-import db from '../config/db.js';
-import { createJWEToken } from '../utils/jweToken.js';
 
 const router = express.Router();
 
 // Initialize Google OAuth client
-const getGoogleClient = () => {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    throw new Error('GOOGLE_CLIENT_ID not configured in environment variables');
-  }
-  return new OAuth2Client(clientId);
-};
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /**
- * @route   POST /api/user/google-signin
- * @desc    Authenticate user with Google ID token
+ * Verify Google ID token
+ */
+async function verifyGoogleToken(idToken) {
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    
+    const payload = ticket.getPayload();
+    return {
+      googleId: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+      emailVerified: payload.email_verified,
+    };
+  } catch (error) {
+    console.error('Google token verification failed:', error);
+    throw new Error('Invalid Google token');
+  }
+}
+
+/**
+ * @route   POST /api/auth/google/users
+ * @desc    Google Sign-In for Users (Customers)
  * @access  Public
  */
-router.post('/google-signin', async (req, res) => {
+router.post('/users', async (req, res) => {
   try {
-    const { idToken, user } = req.body;
+    const { idToken, expoPushToken } = req.body;
 
-    // Validate request
-    if (!idToken || !user?.email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Missing required fields: idToken and user.email are required' 
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google ID token is required',
       });
     }
 
-    // Verify Google ID token
-    const client = getGoogleClient();
+    // Verify Google token
     let googleUser;
-    
     try {
-      const ticket = await client.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
+      googleUser = await verifyGoogleToken(idToken);
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Google token',
       });
-      googleUser = ticket.getPayload();
+    }
+
+    // Check if user exists with this Google ID
+    let [users] = await pool.query(
+      'SELECT * FROM users WHERE google_id = ?',
+      [googleUser.googleId]
+    );
+
+    let user;
+
+    if (users.length > 0) {
+      // User exists - update last login and push token
+      user = users[0];
       
-      // Verify email matches
-      if (googleUser.email !== user.email) {
-        return res.status(401).json({ 
-          success: false, 
-          message: 'Email mismatch in token verification' 
-        });
+      const updateFields = [];
+      const updateValues = [];
+      
+      if (expoPushToken) {
+        updateFields.push('expo_push_token = ?');
+        updateValues.push(expoPushToken);
       }
-    } catch (verifyError) {
-      console.error('Google token verification failed:', verifyError.message);
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid Google token' 
-      });
-    }
-
-    // Check if user exists by email or Google ID
-    const [existingUsers] = await db.query(
-      'SELECT * FROM users WHERE email = ? OR google_id = ?',
-      [user.email, user.googleId || googleUser.sub]
-    );
-
-    let userId;
-    let isNewUser = false;
-    let userData;
-
-    if (existingUsers.length > 0) {
-      // User exists
-      userId = existingUsers[0].id;
       
-      // Update Google ID and profile if not set or changed
-      await db.query(
-        `UPDATE users 
-         SET google_id = ?, 
-             name = COALESCE(NULLIF(name, ''), ?),
-             profile_picture = COALESCE(NULLIF(profile_picture, ''), ?)
-         WHERE id = ?`,
-        [user.googleId || googleUser.sub, user.name, user.photo, userId]
-      );
-      
-      console.log(`Existing user logged in via Google: ${userId}`);
+      if (updateFields.length > 0) {
+        updateValues.push(user.id);
+        await pool.query(
+          `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`,
+          updateValues
+        );
+      }
+
+      console.log(`Google Sign-In: Existing user ${user.email}`);
     } else {
-      // Create new user
-      const [result] = await db.query(
-        `INSERT INTO users (
-          email, 
-          name, 
-          google_id, 
-          profile_picture, 
-          password, 
-          created_at,
-          email_verified
-        ) VALUES (?, ?, ?, ?, ?, NOW(), 1)`,
-        [
-          user.email, 
-          user.name || googleUser.name, 
-          user.googleId || googleUser.sub, 
-          user.photo || googleUser.picture, 
-          'GOOGLE_AUTH' // Placeholder password for Google users
-        ]
+      // Check if email already exists (user might have signed up with email/password)
+      [users] = await pool.query(
+        'SELECT * FROM users WHERE email = ?',
+        [googleUser.email]
       );
-      
-      userId = result.insertId;
-      isNewUser = true;
-      
-      console.log(`New user created via Google: ${userId}`);
+
+      if (users.length > 0) {
+        // Link Google account to existing email account
+        user = users[0];
+        
+        await pool.query(
+          'UPDATE users SET google_id = ?, img = ?, expo_push_token = ? WHERE id = ?',
+          [googleUser.googleId, googleUser.picture || user.img, expoPushToken || user.expo_push_token, user.id]
+        );
+
+        console.log(`Google Sign-In: Linked Google account to existing user ${user.email}`);
+      } else {
+        // Create new user
+        const [result] = await pool.query(
+          `INSERT INTO users (name, email, password, google_id, img, expo_push_token) 
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            googleUser.name,
+            googleUser.email,
+            await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
+            googleUser.googleId,
+            googleUser.picture || null,
+            expoPushToken || null,
+          ]
+        );
+
+        user = {
+          id: result.insertId,
+          name: googleUser.name,
+          email: googleUser.email,
+          google_id: googleUser.googleId,
+          img: googleUser.picture,
+          phone: null,
+          address: null,
+          store_credits: 0,
+          latitude: null,
+          longitude: null,
+        };
+
+        console.log(`Google Sign-In: New user created ${user.email}`);
+      }
     }
 
-    // Fetch complete user data
-    const [userDataResult] = await db.query(
-      `SELECT 
-        id, 
-        email, 
-        name, 
-        phone, 
-        profile_picture,
-        address,
-        city,
-        state,
-        pincode,
-        created_at
-      FROM users 
-      WHERE id = ?`,
-      [userId]
+    // Generate tokens
+    const accessToken = createAccessToken(user.id, 'user');
+    const refreshToken = createRefreshToken(user.id, 'user');
+
+    // Save refresh token
+    await pool.query(
+      'UPDATE users SET refresh_token = ? WHERE id = ?',
+      [refreshToken, user.id]
     );
 
-    if (userDataResult.length === 0) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Failed to retrieve user data' 
-      });
-    }
-
-    userData = userDataResult[0];
-
-    // Generate JWE token (encrypted JWT)
-    const token = await createJWEToken(
-      { 
-        id: userData.id, 
-        email: userData.email,
-        authMethod: 'google'
-      },
-      '30d' // 30 days expiration
-    );
-
-    // Log successful authentication
-    console.log(`Google sign-in successful for user ${userId} (${userData.email})`);
-
-    // Return success response
+    // Return user data and tokens
     res.json({
       success: true,
-      token,
-      tokenType: 'JWE',
+      message: 'Google Sign-In successful',
       user: {
-        id: userData.id,
-        email: userData.email,
-        name: userData.name,
-        phone: userData.phone,
-        profile_picture: userData.profile_picture,
-        address: userData.address,
-        city: userData.city,
-        state: userData.state,
-        pincode: userData.pincode,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        img: user.img,
+        store_credits: user.store_credits,
+        latitude: user.latitude,
+        longitude: user.longitude,
       },
-      isNewUser,
-      message: isNewUser ? 'Account created successfully' : 'Welcome back!',
+      accessToken,
+      refreshToken,
     });
-
   } catch (error) {
-    console.error('Google sign-in error:', error);
-    
-    // Handle specific errors
-    if (error.message.includes('GOOGLE_CLIENT_ID')) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Google authentication not configured on server' 
-      });
-    }
-    
-    if (error.message.includes('JWT_SECRET')) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Authentication system not configured' 
-      });
-    }
-
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during Google sign-in',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    console.error('Google Sign-In error (users):', error);
+    res.status(500).json({
+      success: false,
+      message: 'An error occurred during Google Sign-In',
     });
   }
 });
 
 /**
- * @route   POST /api/user/google-signout
- * @desc    Sign out Google user (optional - mainly client-side)
- * @access  Private
+ * @route   POST /api/auth/google/shopkeepers
+ * @desc    Google Sign-In for Shopkeepers
+ * @access  Public
  */
-router.post('/google-signout', async (req, res) => {
+router.post('/shopkeepers', async (req, res) => {
   try {
-    // Optional: Add any server-side cleanup here
-    // (e.g., invalidate refresh tokens, log signout event)
-    
+    const { idToken, expoPushToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google ID token is required',
+      });
+    }
+
+    // Verify Google token
+    let googleUser;
+    try {
+      googleUser = await verifyGoogleToken(idToken);
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Google token',
+      });
+    }
+
+    // Check if shopkeeper exists with this Google ID
+    let [shopkeepers] = await pool.query(
+      'SELECT * FROM shopkeepers WHERE google_id = ?',
+      [googleUser.googleId]
+    );
+
+    let shopkeeper;
+
+    if (shopkeepers.length > 0) {
+      // Shopkeeper exists - update push token
+      shopkeeper = shopkeepers[0];
+      
+      if (expoPushToken) {
+        await pool.query(
+          'UPDATE shopkeepers SET expo_push_token = ? WHERE id = ?',
+          [expoPushToken, shopkeeper.id]
+        );
+      }
+
+      console.log(`Google Sign-In: Existing shopkeeper ${shopkeeper.email}`);
+    } else {
+      // Check if email already exists
+      [shopkeepers] = await pool.query(
+        'SELECT * FROM shopkeepers WHERE email = ?',
+        [googleUser.email]
+      );
+
+      if (shopkeepers.length > 0) {
+        // Link Google account to existing email account
+        shopkeeper = shopkeepers[0];
+        
+        await pool.query(
+          'UPDATE shopkeepers SET google_id = ?, img = ?, expo_push_token = ? WHERE id = ?',
+          [googleUser.googleId, googleUser.picture || shopkeeper.img, expoPushToken || shopkeeper.expo_push_token, shopkeeper.id]
+        );
+
+        console.log(`Google Sign-In: Linked Google account to existing shopkeeper ${shopkeeper.email}`);
+      } else {
+        // For shopkeepers, we require additional info (shop_name, phone, etc.)
+        // So we don't auto-create - return a special response
+        return res.status(202).json({
+          success: false,
+          code: 'REGISTRATION_REQUIRED',
+          message: 'Please complete your shopkeeper registration',
+          googleUser: {
+            googleId: googleUser.googleId,
+            email: googleUser.email,
+            name: googleUser.name,
+            picture: googleUser.picture,
+          },
+        });
+      }
+    }
+
+    // Generate tokens
+    const accessToken = createAccessToken(shopkeeper.id, 'shopkeeper');
+    const refreshToken = createRefreshToken(shopkeeper.id, 'shopkeeper');
+
+    // Save refresh token
+    await pool.query(
+      'UPDATE shopkeepers SET refresh_token = ? WHERE id = ?',
+      [refreshToken, shopkeeper.id]
+    );
+
+    // Return shopkeeper data and tokens
     res.json({
       success: true,
-      message: 'Signed out successfully',
+      message: 'Google Sign-In successful',
+      shopkeeper: {
+        id: shopkeeper.id,
+        name: shopkeeper.name,
+        shop_name: shopkeeper.shop_name,
+        email: shopkeeper.email,
+        phone: shopkeeper.phone,
+        address: shopkeeper.address,
+        img: shopkeeper.img,
+        latitude: shopkeeper.latitude,
+        longitude: shopkeeper.longitude,
+        is_online: shopkeeper.is_online,
+        subscription_status: shopkeeper.subscription_status,
+      },
+      accessToken,
+      refreshToken,
     });
   } catch (error) {
-    console.error('Google sign-out error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error during sign-out' 
+    console.error('Google Sign-In error (shopkeepers):', error);
+    res.status(500).json({
+      success: false,
+      message: 'An error occurred during Google Sign-In',
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/google/shopkeepers/register
+ * @desc    Complete shopkeeper registration with Google
+ * @access  Public
+ */
+router.post('/shopkeepers/register', async (req, res) => {
+  try {
+    const { idToken, shopName, phone, address, latitude, longitude, expoPushToken } = req.body;
+
+    if (!idToken || !shopName || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google token, shop name, and phone are required',
+      });
+    }
+
+    // Verify Google token
+    let googleUser;
+    try {
+      googleUser = await verifyGoogleToken(idToken);
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Google token',
+      });
+    }
+
+    // Check if shopkeeper already exists
+    const [existing] = await pool.query(
+      'SELECT id FROM shopkeepers WHERE google_id = ? OR email = ?',
+      [googleUser.googleId, googleUser.email]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'Account already exists. Please sign in instead.',
+      });
+    }
+
+    // Create new shopkeeper
+    const [result] = await pool.query(
+      `INSERT INTO shopkeepers 
+       (name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        googleUser.name,
+        shopName,
+        googleUser.email,
+        await bcrypt.hash(Math.random().toString(36), 10), // Random password
+        phone,
+        address || null,
+        googleUser.googleId,
+        googleUser.picture || null,
+        latitude || null,
+        longitude || null,
+        expoPushToken || null,
+      ]
+    );
+
+    const shopkeeper = {
+      id: result.insertId,
+      name: googleUser.name,
+      shop_name: shopName,
+      email: googleUser.email,
+      phone,
+      address,
+      img: googleUser.picture,
+      latitude,
+      longitude,
+      is_online: 0,
+      subscription_status: 'trial',
+    };
+
+    // Generate tokens
+    const accessToken = createAccessToken(shopkeeper.id, 'shopkeeper');
+    const refreshToken = createRefreshToken(shopkeeper.id, 'shopkeeper');
+
+    // Save refresh token
+    await pool.query(
+      'UPDATE shopkeepers SET refresh_token = ? WHERE id = ?',
+      [refreshToken, shopkeeper.id]
+    );
+
+    console.log(`Google Sign-Up: New shopkeeper created ${shopkeeper.email}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Shopkeeper registration successful',
+      shopkeeper,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error('Google shopkeeper registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'An error occurred during registration',
     });
   }
 });
