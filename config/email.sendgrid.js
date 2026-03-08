@@ -34,7 +34,7 @@ export const sendPasswordResetEmailSendGrid = async (to, resetToken, userName) =
     
     // Use HTTPS link that redirects to deep link (works better in emails)
     const backendUrl = process.env.RESET_REDIRECT_URL || process.env.RENDER_EXTERNAL_URL || 'https://nexbackend.onrender.com';
-    const resetLink = `${backendUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+    const resetLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
     
     const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || 'resetnexkirana@gmail.com';
     const fromName = process.env.SENDGRID_FROM_NAME || 'NexKirana';
