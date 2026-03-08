@@ -546,6 +546,9 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop ID is required. Orders must be placed with a single shop." });
     }
 
+    // Extract product IDs for validation
+    const productIds = products.map(p => p.product_id);
+
     // Verify the shop exists and is verified + Get product details in parallel
     const [shopResult, prodRows] = await Promise.all([
       pool.query(
