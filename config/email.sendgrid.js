@@ -35,6 +35,41 @@ export const sendPasswordResetEmailSendGrid = async (to, resetToken, userName) =
     const resetLink = `nexkirana://reset-password?token=${resetToken}`;
     const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || 'resetnexkirana@gmail.com';
     const fromName = process.env.SENDGRID_FROM_NAME || 'NexKirana';
+    const templateId = process.env.SENDGRID_TEMPLATE_ID;
+    
+    // If template ID is provided, use dynamic template
+    if (templateId) {
+      console.log(`[SENDGRID] Using template: ${templateId}`);
+      
+      const msg = {
+        to,
+        from: {
+          email: fromEmail,
+          name: fromName
+        },
+        templateId: templateId,
+        dynamicTemplateData: {
+          RESET_LINK: resetLink,
+          USER_NAME: userName || 'Customer',
+          EXPIRY_MINUTES: '60'
+        }
+      };
+
+      const startTime = Date.now();
+      await sgMail.send(msg);
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      console.log(`[SENDGRID] ✅ Password reset email sent successfully in ${duration}s (using template)`);
+      
+      return {
+        success: true,
+        provider: 'sendgrid',
+        method: 'template'
+      };
+    }
+    
+    // Otherwise, use inline HTML (fallback)
+    console.log(`[SENDGRID] Using inline HTML (no template ID configured)`);
     
     const msg = {
       to,
