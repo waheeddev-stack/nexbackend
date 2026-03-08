@@ -546,22 +546,18 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop ID is required. Orders must be placed with a single shop." });
     }
 
-    // Extract product IDs for validation
-    const productIds = products.map(p => p.product_id);
-
-    // Verify the shop exists and is verified + Get product details in parallel
-    const [shopResult, prodRows] = await Promise.all([
-      pool.query(
-        "SELECT id, name, shop_name, expo_push_token, latitude, longitude FROM shopkeepers WHERE id = ? AND is_verified = 1",
-        [shopId]
-      ),
-      pool.query("SELECT id, shop_id, name, stock FROM products WHERE id IN (?)", [productIds])
-    ]);
-    
-    const [[shop]] = shopResult;
+    // Verify the shop exists and is verified
+    const [[shop]] = await pool.query(
+      "SELECT id, name, shop_name, expo_push_token, latitude, longitude FROM shopkeepers WHERE id = ? AND is_verified = 1",
+      [shopId]
+    );
     if (!shop) {
       return res.status(400).json({ success: false, message: "Shop not found or not verified" });
     }
+
+    // Verify all products belong to this shop AND have sufficient stock
+    const productIds = products.map(p => p.product_id);
+    const [prodRows] = await pool.query("SELECT id, shop_id, name, stock FROM products WHERE id IN (?)", [productIds]);
     
     // Create a map for quick lookup
     const productMap = new Map(prodRows.map(p => [p.id, p]));
@@ -629,65 +625,159 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     // Calculate final total after discount
     const finalTotal = total - pointsDiscount;
 
-    // Get next order ID and insert order + timer in parallel
-    const [maxOrderIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
-    const orderId = maxOrderIdResult[0].nextId;
+    // Get next order ID (TiDB doesn't support auto-increment reliably)
+    const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
+    const orderId = maxOrderId[0].nextId;
     
     // Generate 6-digit pickup code for timer verification
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     // ⏱️ TIMER STARTS NOW - Customer must reach shop within 7 minutes
+    // Timer starts automatically when order is placed (FIT INDIA challenge)
     const timerDuration = 420; // 7 minutes in seconds
     const timerStartedAt = new Date();
     const timerExpiresAt = new Date(timerStartedAt.getTime() + (timerDuration * 1000));
     
     console.log(`⏱️ Timer started for order ${orderId}: ${timerStartedAt.toISOString()} -> expires: ${timerExpiresAt.toISOString()}`);
 
-    // OPTIMIZATION: Insert order and timer record in parallel
+    // Insert single order for the selected shop with timer info
+    console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
     const orderTypeValue = order_type || "pickup";
-    const deliveryModeValue = order_type || "pickup";
+    const deliveryModeValue = order_type || "pickup"; // delivery_mode should match order_type
     const scheduledTimeValue = scheduled_time || null;
-    
-    await Promise.all([
-      pool.query(
-        `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, delivery_mode, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [orderId, user_id, shopId, finalTotal, address, orderTypeValue, deliveryModeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
-      ),
-      pool.query(`
+    await pool.query(
+      `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, delivery_mode, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, deliveryModeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
+    );
+
+    // Create timer record in order_timers table
+    try {
+      await pool.query(`
         INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
         VALUES (?, ?, ?, ?, ?, TRUE)
-      `, [orderId, pickupCode, timerDuration, timerStartedAt, timerExpiresAt]).catch(err => {
-        console.warn("Timer record creation failed (table may not exist):", err.message);
-      })
-    ]);
+      `, [orderId, pickupCode, timerDuration, timerStartedAt, timerExpiresAt]);
+    } catch (timerError) {
+      console.warn("Timer record creation failed (table may not exist):", timerError.message);
+    }
 
-    // OPTIMIZATION: Insert all order items and update stock in parallel using batch operations
-    const [maxItemIdResult] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
-    let nextItemId = maxItemIdResult[0].nextId;
-    
-    // Prepare batch insert for order items
-    const itemInserts = products.map((item, index) => {
-      const itemId = nextItemId + index;
-      return pool.query(
+    // Insert order items and deduct stock
+    for (const item of products) {
+      const [maxItemId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
+      const itemId = maxItemId[0].nextId;
+      await pool.query(
         "INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES (?, ?, ?, ?, ?)",
         [itemId, orderId, item.product_id, item.quantity, item.price]
       );
-    });
-    
-    // Prepare batch stock updates
-    const stockUpdates = products.map(item => 
-      pool.query(
+      
+      // Deduct stock from inventory
+      await pool.query(
         "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
         [item.quantity, item.product_id, item.quantity]
-      )
-    );
-    
-    // Execute all inserts and updates in parallel
-    await Promise.all([...itemInserts, ...stockUpdates]);
+      );
+    }
 
-    // CRITICAL OPTIMIZATION: Send response immediately, then handle notifications asynchronously
-    // This ensures the client gets a fast response without waiting for notifications
+    // Notify shopkeeper and send real-time updates
+    try {
+      // Get product details for notification
+      const itemIds = products.map(i => i.product_id);
+      const [productDetails] = await pool.query("SELECT id, name, image FROM products WHERE id IN (?)", [itemIds]);
+      const productMap = new Map(productDetails.map(p => [p.id, p]));
+      
+      const enrichedItems = products.map(item => ({
+        ...item,
+        name: productMap.get(item.product_id)?.name || 'Unknown Product',
+        image: productMap.get(item.product_id)?.image || null
+      }));
+
+      // Build payload for real-time updates
+      const orderPayload = {
+        orderId,
+        total: finalTotal,
+        status: "Pending",
+        address,
+        order_type: orderTypeValue,
+        scheduled_time: scheduledTimeValue,
+        items: enrichedItems,
+        user_id,
+        shop_id: shopId,
+        created_at: new Date().toISOString(),
+      };
+
+      // Emit socket events
+      try {
+        if (req.io) {
+          const shopRoom = `shop_${Number(shopId)}`;
+          const customerRoom = `customer_${Number(user_id)}`;
+          console.log(`Emitting newOrder to ${shopRoom} and ${customerRoom} for order ${orderId}`);
+          req.io.to(shopRoom).emit("newOrder", orderPayload);
+          req.io.to(customerRoom).emit("newOrder", orderPayload);
+        } else {
+          console.warn("req.io not available for socket emission");
+        }
+      } catch (emitErr) {
+        console.warn("Socket emit failed for shop", shopId, emitErr);
+      }
+
+      // Send push notification to shopkeeper (supports both FCM and Expo tokens)
+      try {
+        const token = shop?.expo_push_token;
+        console.log(`\n📱 Push Notification Check for Order #${orderId}:`);
+        console.log(`Shop ID: ${shopId}`);
+        console.log(`Shop Name: ${shop.shop_name}`);
+        console.log(`Token exists: ${!!token}`);
+        
+        if (token) {
+          console.log(`Token type: ${isFCMToken(token) ? 'FCM' : 'Expo'}`);
+          console.log(`Token preview: ${token.substring(0, 30)}...`);
+          
+          let result;
+          // Check if it's an FCM token or Expo token
+          if (isFCMToken(token)) {
+            console.log(`📤 Sending FCM notification...`);
+            result = await sendFCMPush(
+              token,
+              "📦 New Order Received!",
+              `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
+              { orderId: String(orderId), shopId: String(shopId) }
+            );
+            console.log(`FCM Result:`, JSON.stringify(result, null, 2));
+          } else {
+            console.log(`📤 Sending Expo notification...`);
+            result = await sendExpoPush(
+              token,
+              "📦 New Order Received!",
+              `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
+              { orderId, shopId }
+            );
+            console.log(`Expo Result:`, JSON.stringify(result, null, 2));
+          }
+
+          if (result?.success) {
+            console.log(`✅ Notification sent successfully!`);
+          } else {
+            console.error(`❌ Notification failed:`, result?.message || 'Unknown error');
+          }
+
+          if (result?.invalidTokens?.length) {
+            console.warn(`⚠️ Clearing ${result.invalidTokens.length} invalid token(s)`);
+            await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
+            console.warn("Cleared invalid shopkeeper tokens:", result.invalidTokens);
+          }
+        } else {
+          console.warn(`⚠️ No push token found for shopkeeper ${shopId}`);
+          console.warn(`Shopkeeper will not receive push notification`);
+          console.warn(`Token should be saved when shopkeeper logs in`);
+        }
+      } catch (pushErr) {
+        console.error("❌ Error sending push to shopkeeper", shopId, pushErr);
+        console.error("Push error details:", pushErr.message);
+        console.error("Push error stack:", pushErr.stack);
+      }
+    } catch (notifyErr) {
+      console.error("Error notifying shopkeeper:", notifyErr);
+    }
+
     res.json({ 
       success: true, 
       order: { 
@@ -707,83 +797,6 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       pointsDiscount: pointsDiscount,
       finalTotal: finalTotal
     });
-
-    // OPTIMIZATION: Handle notifications and socket events asynchronously (non-blocking)
-    // This happens AFTER the response is sent, so it doesn't slow down the API
-    setImmediate(async () => {
-      try {
-        // Get product details for notification
-        const itemIds = products.map(i => i.product_id);
-        const [productDetails] = await pool.query("SELECT id, name, image FROM products WHERE id IN (?)", [itemIds]);
-        const productMap = new Map(productDetails.map(p => [p.id, p]));
-        
-        const enrichedItems = products.map(item => ({
-          ...item,
-          name: productMap.get(item.product_id)?.name || 'Unknown Product',
-          image: productMap.get(item.product_id)?.image || null
-        }));
-
-        // Build payload for real-time updates
-        const orderPayload = {
-          orderId,
-          total: finalTotal,
-          status: "Pending",
-          address,
-          order_type: orderTypeValue,
-          scheduled_time: scheduledTimeValue,
-          items: enrichedItems,
-          user_id,
-          shop_id: shopId,
-          created_at: new Date().toISOString(),
-        };
-
-        // Emit socket events
-        try {
-          if (req.io) {
-            const shopRoom = `shop_${Number(shopId)}`;
-            const customerRoom = `customer_${Number(user_id)}`;
-            console.log(`Emitting newOrder to ${shopRoom} and ${customerRoom} for order ${orderId}`);
-            req.io.to(shopRoom).emit("newOrder", orderPayload);
-            req.io.to(customerRoom).emit("newOrder", orderPayload);
-          }
-        } catch (emitErr) {
-          console.warn("Socket emit failed for shop", shopId, emitErr);
-        }
-
-        // Send push notification to shopkeeper (supports both FCM and Expo tokens)
-        try {
-          const token = shop?.expo_push_token;
-          
-          if (token) {
-            let result;
-            if (isFCMToken(token)) {
-              result = await sendFCMPush(
-                token,
-                "📦 New Order Received!",
-                `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
-                { orderId: String(orderId), shopId: String(shopId) }
-              );
-            } else {
-              result = await sendExpoPush(
-                token,
-                "📦 New Order Received!",
-                `You have a new order (#${orderId}) worth ₹${finalTotal}.`,
-                { orderId, shopId }
-              );
-            }
-
-            if (result?.invalidTokens?.length) {
-              await pool.query("UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token IN (?)", [result.invalidTokens]);
-            }
-          }
-        } catch (pushErr) {
-          console.error("Error sending push to shopkeeper", shopId, pushErr);
-        }
-      } catch (notifyErr) {
-        console.error("Error in async notification handler:", notifyErr);
-      }
-    });
-
   } catch (err) {
     console.error('❌ Order creation error:', err);
     console.error('Error stack:', err.stack);
