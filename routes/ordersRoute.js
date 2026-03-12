@@ -442,9 +442,9 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Socket broadcast to shopkeeper and customer rooms
     try {
-      // Get shopkeeper details for the payload
+      // Get shopkeeper details for the payload (including coordinates)
       const [shopkeeperDetails] = await connection.execute(
-        "SELECT shop_name, name, phone, address FROM shopkeepers WHERE id = ?",
+        "SELECT shop_name, name, phone, address, latitude, longitude FROM shopkeepers WHERE id = ?",
         [shopkeeperId]
       );
 
@@ -512,6 +512,10 @@ router.post("/", verifyToken, async (req, res) => {
         shopkeeper_phone: shopkeeper.phone, // Add for compatibility
         shopAddress: shopkeeper.address,
         shop_address: shopkeeper.address, // Add for compatibility
+        shopLatitude: shopkeeper.latitude,
+        shop_latitude: shopkeeper.latitude, // Add for compatibility
+        shopLongitude: shopkeeper.longitude,
+        shop_longitude: shopkeeper.longitude, // Add for compatibility
         items: itemsWithDetails,
         // Add timer info for click & collect
         timerInfo: hasTimer === 1 ? {
@@ -563,16 +567,36 @@ router.post("/", verifyToken, async (req, res) => {
       order: {
         id: orderId,
         orderId: orderId,
+        order_id: orderId,
         userId,
+        user_id: userId,
+        shopkeeperId,
+        shopkeeper_id: shopkeeperId,
         deliveryType,
+        delivery_type: deliveryType,
         status: 'pending',
         totalAmount: parseFloat(totalAmount),
+        total_amount: parseFloat(totalAmount),
         creditsEarned,
+        credits_earned: creditsEarned,
         pickupCode,
+        pickup_code: pickupCode,
         hasTimer: hasTimer === 1,
+        has_timer: hasTimer === 1,
         timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
+        timer_started_at: timerStartedAt ? timerStartedAt.toISOString() : null,
         timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-        deliverySlot
+        timer_expires_at: timerExpiresAt ? timerExpiresAt.toISOString() : null,
+        deliverySlot,
+        delivery_slot: deliverySlot,
+        shopName: shopkeeper.shop_name,
+        shop_name: shopkeeper.shop_name,
+        shopAddress: shopkeeper.address,
+        shop_address: shopkeeper.address,
+        shopLatitude: shopkeeper.latitude,
+        shop_latitude: shopkeeper.latitude,
+        shopLongitude: shopkeeper.longitude,
+        shop_longitude: shopkeeper.longitude
       }
     });
 

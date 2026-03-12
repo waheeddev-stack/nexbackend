@@ -629,36 +629,43 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
     const orderId = maxOrderId[0].nextId;
     
-    // Generate 6-digit pickup code for timer verification
-    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 6-digit pickup code for timer verification (only for pickup orders)
+    const pickupCode = order_type === 'pickup' ? Math.floor(100000 + Math.random() * 900000).toString() : null;
     
-    // ⏱️ TIMER STARTS NOW - Customer must reach shop within 7 minutes
-    // Timer starts automatically when order is placed (FIT INDIA challenge)
-    const timerDuration = 420; // 7 minutes in seconds
-    const timerStartedAt = new Date();
-    const timerExpiresAt = new Date(timerStartedAt.getTime() + (timerDuration * 1000));
+    // ⏱️ TIMER - Only for pickup orders (FIT INDIA challenge)
+    // Timer starts automatically when pickup order is placed - customer must reach shop within 7 minutes
+    const hasTimer = order_type === 'pickup';
+    const timerDuration = hasTimer ? 420 : null; // 7 minutes in seconds for pickup, null for delivery
+    const timerStartedAt = hasTimer ? new Date() : null;
+    const timerExpiresAt = hasTimer ? new Date(timerStartedAt.getTime() + (timerDuration * 1000)) : null;
     
-    console.log(`⏱️ Timer started for order ${orderId}: ${timerStartedAt.toISOString()} -> expires: ${timerExpiresAt.toISOString()}`);
+    if (hasTimer) {
+      console.log(`⏱️ Timer started for pickup order ${orderId}: ${timerStartedAt.toISOString()} -> expires: ${timerExpiresAt.toISOString()}`);
+    } else {
+      console.log(`📦 Home delivery order ${orderId} created (no timer)`);
+    }
 
     // Insert single order for the selected shop with timer info
-    console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${typeof shopId})`);
+    console.log(`Creating order ${orderId} for user ${user_id} with shopkeeper ${shopId} (type: ${order_type})`);
     const orderTypeValue = order_type || "pickup";
     const deliveryModeValue = order_type || "pickup"; // delivery_mode should match order_type
     const scheduledTimeValue = scheduled_time || null;
     await pool.query(
       `INSERT INTO orders (id, user_id, shopkeeper_id, total_amount, delivery_address, order_type, delivery_mode, scheduled_time, status, credits_used, latitude, longitude, has_timer, pickup_code, timer_started_at, timer_expires_at, created_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, deliveryModeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, true, pickupCode, timerStartedAt, timerExpiresAt]
+      [orderId, user_id, shopId, finalTotal, address, orderTypeValue, deliveryModeValue, scheduledTimeValue, "Pending", pointsToRedeem, latitude || null, longitude || null, hasTimer, pickupCode, timerStartedAt, timerExpiresAt]
     );
 
-    // Create timer record in order_timers table
-    try {
-      await pool.query(`
-        INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
-        VALUES (?, ?, ?, ?, ?, TRUE)
-      `, [orderId, pickupCode, timerDuration, timerStartedAt, timerExpiresAt]);
-    } catch (timerError) {
-      console.warn("Timer record creation failed (table may not exist):", timerError.message);
+    // Create timer record in order_timers table (only for pickup orders)
+    if (hasTimer) {
+      try {
+        await pool.query(`
+          INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
+          VALUES (?, ?, ?, ?, ?, TRUE)
+        `, [orderId, pickupCode, timerDuration, timerStartedAt, timerExpiresAt]);
+      } catch (timerError) {
+        console.warn("Timer record creation failed (table may not exist):", timerError.message);
+      }
     }
 
     // Insert order items and deduct stock
