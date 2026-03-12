@@ -28,7 +28,10 @@
     "init-inventory": "node scripts/init-inventory-system.js",
     "init-schema": "node scripts/init-complete-schema.js",
     "migrate-google-oauth": "node scripts/migrate-google-oauth.js",
-    "diagnose-nodemailer": "node scripts/diagnose-nodemailer.js"
+    "diagnose-nodemailer": "node scripts/diagnose-nodemailer.js",
+    "cleanup-invalid-users": "node scripts/cleanup-invalid-users.js",
+    "delete-invalid-customers": "node scripts/delete-invalid-userid-customers.js",
+    "delete-invalid-customers-dry": "node scripts/delete-invalid-userid-customers.js --dry-run"
   },
   "keywords": [],
   "author": "",

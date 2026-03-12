@@ -6,6 +6,16 @@ import { OAuth2Client } from 'google-auth-library';
 
 const router = express.Router();
 
+// Test endpoint to verify new code is active
+router.get('/google/test', async (req, res) => {
+  res.json({
+    success: true,
+    message: 'New Google auth code is active!',
+    timestamp: new Date().toISOString(),
+    version: '2.0'
+  });
+});
+
 // Initialize Google OAuth client
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -66,10 +76,13 @@ router.post('/google/users', async (req, res) => {
       [googleUser.googleId]
     );
 
+    console.log('🔍 Checking for existing Google user:', { googleId: googleUser.googleId, found: users.length });
+
     let user;
 
     if (users.length > 0) {
       // User exists - update last login and push token
+      console.log('👤 Found existing Google user');
       user = users[0];
       
       const updateFields = [];
@@ -107,11 +120,24 @@ router.post('/google/users', async (req, res) => {
 
         console.log(`Google Sign-In: Linked Google account to existing user ${user.email}`);
       } else {
-        // Create new user
+        // Create new user with ID starting from 9999999999 for Google users
+        console.log('🔄 Creating new Google user...');
+        
+        // First, get the next available Google user ID
+        const [maxGoogleUser] = await pool.query(
+          'SELECT MAX(id) as max_id FROM users WHERE id >= 9999999999'
+        );
+        
+        console.log('📊 Max Google user query result:', maxGoogleUser[0]);
+        
+        const nextGoogleUserId = maxGoogleUser[0].max_id ? maxGoogleUser[0].max_id + 1 : 9999999999;
+        console.log('🆔 Next Google user ID will be:', nextGoogleUserId);
+        
         const [result] = await pool.query(
-          `INSERT INTO users (name, email, password, google_id, img, expo_push_token) 
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
+            nextGoogleUserId,
             googleUser.name,
             googleUser.email,
             await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
@@ -121,8 +147,10 @@ router.post('/google/users', async (req, res) => {
           ]
         );
 
+        console.log('✅ INSERT result:', result);
+
         user = {
-          id: result.insertId,
+          id: nextGoogleUserId,
           name: googleUser.name,
           email: googleUser.email,
           google_id: googleUser.googleId,
@@ -134,7 +162,7 @@ router.post('/google/users', async (req, res) => {
           longitude: null,
         };
 
-        console.log(`Google Sign-In: New user created ${user.email}`);
+        console.log(`🎉 Google Sign-In: New user created ${user.email} with ID ${nextGoogleUserId}`);
       }
     }
 

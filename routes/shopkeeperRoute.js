@@ -1238,12 +1238,15 @@ shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, check
       values.push(formattedPrice); 
     }
     if (stock != null) { const s = Number(stock); if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); fields.push("stock = ?"); values.push(s); }
-    // ✅ FIX: Add baselineQty handling
+    // ✅ FIX: Add baselineQty handling - also set stock to match baseline
     if (baselineQty != null) { 
       const b = Number(baselineQty); 
       if (Number.isNaN(b) || b < 0) return res.status(400).json({ success: false, message: "Invalid baseline quantity" }); 
       fields.push("baselineQty = ?"); 
-      values.push(b); 
+      values.push(b);
+      // When baseline is set, also set stock to that value
+      fields.push("stock = ?");
+      values.push(b);
     }
     if (imageUrl !== existing[0].image) { fields.push("image = ?"); values.push(imageUrl); }
 
@@ -1350,21 +1353,21 @@ shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, as
 });
 
 // Add a product into shopkeeper's catalog from global_products
-// body: { global_product_id, price (optional override), stock (required) }
+// body: { global_product_id, price (optional override), baselineQty (required) }
 shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { global_product_id, price, stock } = req.body;
+    const { global_product_id, price, baselineQty } = req.body;
 
     if (!global_product_id) {
       return res.status(400).json({ success: false, message: "global_product_id is required" });
     }
-    if (stock === undefined || stock === null) {
-      return res.status(400).json({ success: false, message: "stock is required" });
+    if (baselineQty === undefined || baselineQty === null) {
+      return res.status(400).json({ success: false, message: "baselineQty is required" });
     }
-    const parsedStock = Number(stock);
-    if (Number.isNaN(parsedStock) || parsedStock < 0) {
-      return res.status(400).json({ success: false, message: "Invalid stock" });
+    const parsedBaselineQty = Number(baselineQty);
+    if (Number.isNaN(parsedBaselineQty) || parsedBaselineQty < 0) {
+      return res.status(400).json({ success: false, message: "Invalid baseline quantity" });
     }
 
     // Verify global product exists
@@ -1388,10 +1391,11 @@ shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStat
       return res.status(400).json({ success: false, message: "Invalid price" });
     }
 
+    // Set both stock and baselineQty to the same value
     const [result] = await pool.query(
-      `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, global_product_id, gp.name, gp.description || null, gp.category || null, priceToUse, parsedStock, gp.image || null]
+      `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, baselineQty, image)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [shop_id, global_product_id, gp.name, gp.description || null, gp.category || null, priceToUse, parsedBaselineQty, parsedBaselineQty, gp.image || null]
     );
 
     const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
