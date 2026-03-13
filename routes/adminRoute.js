@@ -2338,3 +2338,124 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
 
 
 export default adminRouter;
+
+
+// ============================================================================
+// PUSH NOTIFICATIONS TO ALL USERS
+// ============================================================================
+// POST /api/admin/notifications/broadcast - Send push notification to all NexKirana users
+adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) => {
+  try {
+    const { title, body, data } = req.body;
+
+    // Validate input
+    if (!title || !body) {
+      return res.status(400).json({
+        success: false,
+        message: "Title and body are required"
+      });
+    }
+
+    console.log(`📢 Admin broadcasting notification to all users: "${title}"`);
+
+    // Get all user FCM tokens from database
+    const [users] = await pool.query(
+      "SELECT id, name, fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''"
+    );
+
+    if (users.length === 0) {
+      return res.json({
+        success: true,
+        message: "No users with FCM tokens found",
+        stats: {
+          totalUsers: 0,
+          successCount: 0,
+          failureCount: 0
+        }
+      });
+    }
+
+    console.log(`📱 Found ${users.length} users with FCM tokens`);
+
+    // Import FCM push utility
+    const { sendFCMPush } = await import('../utils/fcmPush.js');
+
+    // Extract tokens
+    const tokens = users.map(u => u.fcm_token);
+
+    // Send notification to all users
+    const result = await sendFCMPush(tokens, title, body, data || {});
+
+    // Clean up invalid tokens from database
+    if (result.invalidTokens && result.invalidTokens.length > 0) {
+      console.log(`🧹 Cleaning up ${result.invalidTokens.length} invalid tokens`);
+      
+      for (const invalidToken of result.invalidTokens) {
+        await pool.query(
+          "UPDATE users SET fcm_token = NULL WHERE fcm_token = ?",
+          [invalidToken]
+        );
+      }
+    }
+
+    console.log(`✅ Broadcast complete: ${result.successCount} sent, ${result.failureCount} failed`);
+
+    res.json({
+      success: true,
+      message: `Notification sent to ${result.successCount} users`,
+      stats: {
+        totalUsers: users.length,
+        successCount: result.successCount,
+        failureCount: result.failureCount,
+        invalidTokensRemoved: result.invalidTokens?.length || 0
+      },
+      details: result
+    });
+
+  } catch (err) {
+    console.error("Broadcast notification error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send broadcast notification",
+      error: err.message
+    });
+  }
+});
+
+// GET /api/admin/notifications/stats - Get notification statistics
+adminRouter.get("/notifications/stats", verifyAdminToken, async (req, res) => {
+  try {
+    // Get user statistics
+    const [userStats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total_users,
+        COUNT(CASE WHEN fcm_token IS NOT NULL AND fcm_token != '' THEN 1 END) as users_with_tokens,
+        COUNT(CASE WHEN fcm_token IS NULL OR fcm_token = '' THEN 1 END) as users_without_tokens
+      FROM users
+    `);
+
+    // Get shopkeeper statistics (optional, for future use)
+    const [shopkeeperStats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total_shopkeepers,
+        COUNT(CASE WHEN fcm_token IS NOT NULL AND fcm_token != '' THEN 1 END) as shopkeepers_with_tokens
+      FROM shopkeepers
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        users: userStats[0],
+        shopkeepers: shopkeeperStats[0]
+      }
+    });
+
+  } catch (err) {
+    console.error("Get notification stats error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get notification statistics",
+      error: err.message
+    });
+  }
+});

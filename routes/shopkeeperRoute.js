@@ -2026,6 +2026,10 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     }
 
     // Broadcast events via socket
+    console.log(`📡 Socket: Checking req.io availability...`);
+    console.log(`📡 Socket: req.io exists: ${!!req.io}`);
+    console.log(`📡 Socket: req.io type: ${typeof req.io}`);
+    
     if (req.io) {
       // Convert to numbers to ensure consistent room names
       const shopRoom = `shop_${Number(shopkeeper_id)}`;
