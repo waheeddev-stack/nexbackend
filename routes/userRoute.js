@@ -629,8 +629,10 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
     const [maxOrderId] = await pool.query("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
     const orderId = maxOrderId[0].nextId;
     
-    // Generate 6-digit pickup code for timer verification (only for pickup orders)
-    const pickupCode = order_type === 'pickup' ? Math.floor(100000 + Math.random() * 900000).toString() : null;
+    // Generate 6-digit verification code for ALL orders (pickup and delivery)
+    // For pickup: used for timer verification
+    // For delivery: used by shopkeeper to verify delivery completion
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     // ⏱️ TIMER - Only for pickup orders (FIT INDIA challenge)
     // Timer starts automatically when pickup order is placed - customer must reach shop within 7 minutes
