@@ -494,6 +494,36 @@ server.listen(PORT, '0.0.0.0', async () => {
   
   // Initialize timer tables
   try {
+    console.log('🔧 Initializing service status tables...');
+    const serviceStatusSchemaPath = join(__dirname, 'migrations', '001_create_service_status_tables.sql');
+    
+    if (fs.existsSync(serviceStatusSchemaPath)) {
+      const schema = fs.readFileSync(serviceStatusSchemaPath, 'utf8');
+      const statements = schema
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+
+      for (const statement of statements) {
+        try {
+          await db.execute(statement);
+        } catch (error) {
+          if (!error.message.includes('already exists') && 
+              !error.message.includes('Duplicate')) {
+            console.warn('Service status table setup warning:', error.message);
+          }
+        }
+      }
+      console.log('✅ Service status tables initialized');
+    } else {
+      console.warn('⚠️ Service status schema file not found, skipping initialization');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize service status tables:', error);
+  }
+  
+  // Initialize timer tables
+  try {
     console.log('🔧 Initializing timer tables...');
     const schemaPath = join(__dirname, 'schema', 'order_timers.sql');
     
