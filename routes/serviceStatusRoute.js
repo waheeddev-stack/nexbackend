@@ -1,8 +1,68 @@
 import express from "express";
 import db from "../config/db.js";
-import verifyAdminToken from "../middleware/adminAuth.js";
+import jwt from "jsonwebtoken";
 
 const serviceStatusRouter = express.Router();
+
+/**
+ * Simple admin verification middleware for service status endpoints
+ * Accepts both JWE and JWT tokens
+ */
+const verifyServiceStatusAdmin = async (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, message: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    // Try simple JWT verification first (most reliable)
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      // Check if it's an admin token
+      if (decoded.role === 'admin' || decoded.id === 1) {
+        req.admin = decoded;
+        return next();
+      }
+      
+      return res.status(403).json({ 
+        success: false, 
+        message: "Admin privileges required" 
+      });
+    } catch (jwtError) {
+      // If JWT fails, try JWE
+      try {
+        const { verifyJWEToken } = await import("../utils/jweToken.js");
+        const decoded = await verifyJWEToken(token);
+        
+        if (decoded.role === 'admin' || decoded.id === 1) {
+          req.admin = decoded;
+          return next();
+        }
+        
+        return res.status(403).json({ 
+          success: false, 
+          message: "Admin privileges required" 
+        });
+      } catch (jweError) {
+        console.error('Token verification failed:', { jwtError: jwtError.message, jweError: jweError.message });
+        return res.status(403).json({ 
+          success: false, 
+          message: "Invalid token" 
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Auth error:', error.message);
+    return res.status(403).json({ 
+      success: false, 
+      message: "Invalid token" 
+    });
+  }
+};
 
 /**
  * GET /api/service/status
@@ -61,7 +121,7 @@ serviceStatusRouter.get("/status", async (req, res) => {
  * 
  * Toggle service status (Admin only)
  */
-serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
+serviceStatusRouter.post("/toggle", verifyServiceStatusAdmin, async (req, res) => {
   try {
     const { status, message } = req.body;
     const adminId = req.admin.id; // Get admin ID from authenticated token
@@ -146,7 +206,7 @@ serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
  * 
  * Get service status history (Admin only)
  */
-serviceStatusRouter.get("/history", verifyAdminToken, async (req, res) => {
+serviceStatusRouter.get("/history", verifyServiceStatusAdmin, async (req, res) => {
   try {
     let limit = parseInt(req.query.limit) || 50;
     let offset = parseInt(req.query.offset) || 0;
