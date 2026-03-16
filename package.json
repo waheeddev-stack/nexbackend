@@ -37,7 +37,8 @@
     "delete-invalid-customers-dry": "node scripts/delete-invalid-userid-customers.js --dry-run",
     "setup-service-status": "node scripts/setup-service-status.js",
     "verify-service-status": "node scripts/verify-service-status-tables.js",
-    "migrate-service-status": "node scripts/run-service-status-migration.js"
+    "migrate-service-status": "node scripts/run-service-status-migration.js",
+    "test-service-status": "node scripts/test-service-status-endpoints.js"
   },
   "keywords": [],
   "author": "",
