@@ -57,12 +57,11 @@ serviceStatusRouter.get("/status", async (req, res) => {
     console.error('Error fetching service status:', error);
     
     // On error, return default status (online) to allow app to function
-    res.status(500).json({
+    res.json({
       status: 'online',
       message: null,
       lastUpdated: new Date().toISOString(),
-      updatedBy: 'system',
-      error: 'Failed to fetch status, defaulting to online'
+      updatedBy: 'system'
     });
   }
 });
@@ -90,6 +89,14 @@ serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
   try {
     const { status, message } = req.body;
     const adminId = req.admin?.id;
+
+    // Validate admin is authenticated
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Admin authentication required'
+      });
+    }
 
     // Validate status
     if (!status || !['online', 'offline'].includes(status)) {
