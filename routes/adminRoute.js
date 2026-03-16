@@ -2362,7 +2362,7 @@ adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) 
     let users;
     try {
       const [result] = await pool.query(
-        "SELECT id, name, fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''"
+        "SELECT id, name, expo_push_token as fcm_token FROM users WHERE expo_push_token IS NOT NULL AND expo_push_token != ''"
       );
       users = result;
     } catch (dbError) {
@@ -2421,10 +2421,14 @@ adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) 
       console.log(`🧹 Cleaning up ${result.invalidTokens.length} invalid tokens`);
       
       for (const invalidToken of result.invalidTokens) {
-        await pool.query(
-          "UPDATE users SET fcm_token = NULL WHERE fcm_token = ?",
-          [invalidToken]
-        );
+        try {
+          await pool.query(
+            "UPDATE users SET expo_push_token = NULL WHERE expo_push_token = ?",
+            [invalidToken]
+          );
+        } catch (updateError) {
+          console.error(`Failed to clean up token: ${invalidToken}`, updateError);
+        }
       }
     }
 
