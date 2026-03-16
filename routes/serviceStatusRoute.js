@@ -68,7 +68,114 @@ serviceStatusRouter.get("/status", async (req, res) => {
 });
 
 /**
- * GET /api/admin/service/history
+ * POST /api/service/toggle
+ * 
+ * Admin-only endpoint to toggle service status
+ * Requires valid JWT token with admin role
+ * 
+ * Request Body:
+ * {
+ *   status: 'online' | 'offline' (required),
+ *   message: string (optional, max 500 chars)
+ * }
+ * 
+ * Response:
+ * {
+ *   success: boolean,
+ *   status: 'online' | 'offline',
+ *   timestamp: ISO8601 timestamp
+ * }
+ */
+serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
+  try {
+    const { status, message } = req.body;
+    const adminId = req.admin?.id;
+
+    // Validate status
+    if (!status || !['online', 'offline'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be "online" or "offline"'
+      });
+    }
+
+    // Validate message length
+    if (message && message.length > 500) {
+      return res.status(400).json({
+        success: false,
+        error: 'Message exceeds 500 character limit'
+      });
+    }
+
+    // Get current status
+    const [currentRows] = await db.execute(`
+      SELECT status FROM service_status WHERE is_active = TRUE LIMIT 1
+    `);
+    const currentStatus = currentRows[0]?.status || 'online';
+
+    // Check if status is already the same
+    if (currentStatus === status) {
+      return res.status(400).json({
+        success: false,
+        error: `Service is already ${status}`
+      });
+    }
+
+    // Begin transaction
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // Deactivate current status
+      await connection.execute(`
+        UPDATE service_status SET is_active = FALSE WHERE is_active = TRUE
+      `);
+
+      // Insert new status
+      await connection.execute(`
+        INSERT INTO service_status (status, message, updated_by, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, TRUE, NOW(), NOW())
+      `, [status, message || null, adminId]);
+
+      // Log to history
+      await connection.execute(`
+        INSERT INTO service_status_history (previous_status, new_status, message, changed_by, changed_at, ip_address, user_agent)
+        VALUES (?, ?, ?, ?, NOW(), ?, ?)
+      `, [
+        currentStatus,
+        status,
+        message || null,
+        adminId,
+        req.ip || req.connection.remoteAddress || 'unknown',
+        req.get('user-agent') || 'unknown'
+      ]);
+
+      await connection.commit();
+      connection.release();
+
+      res.json({
+        success: true,
+        status: status,
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      throw error;
+    }
+
+  } catch (error) {
+    console.error('Error toggling service status:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to toggle service status'
+    });
+  }
+});
+
+/**
+ * GET /api/service/history
  * 
  * Admin-only endpoint to get service status history
  * Requires valid JWT token with admin role
