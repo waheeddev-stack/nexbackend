@@ -24,7 +24,10 @@ serviceStatusRouter.get("/status", async (req, res) => {
       LIMIT 1
     `);
 
+    console.log('Service status query result:', rows);
+
     if (!rows || rows.length === 0) {
+      console.log('No active status found, returning default online');
       return res.json({
         status: 'online',
         message: null,
@@ -34,6 +37,7 @@ serviceStatusRouter.get("/status", async (req, res) => {
     }
 
     const statusRecord = rows[0];
+    console.log('Returning status:', statusRecord.status);
     res.json({
       status: statusRecord.status,
       message: statusRecord.message,
