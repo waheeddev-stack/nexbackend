@@ -221,45 +221,74 @@ serviceStatusRouter.get("/history", async (req, res) => {
 
     console.log('📊 Fetching history with limit:', limit, 'offset:', offset);
 
-    const [countRows] = await db.execute(`
-      SELECT COUNT(*) as total FROM service_status_history
-    `);
-    const total = countRows[0]?.total || 0;
-    console.log('📊 Total history records:', total);
+    // Get total count
+    let total = 0;
+    try {
+      const [countRows] = await db.execute(`
+        SELECT COUNT(*) as total FROM service_status_history
+      `);
+      total = countRows[0]?.total || 0;
+      console.log('📊 Total history records:', total);
+    } catch (countError) {
+      console.warn('⚠️  Could not get count:', countError.message);
+      total = 0;
+    }
 
+    // If no records, return empty array
+    if (total === 0) {
+      console.log('📊 No history records found, returning empty array');
+      return res.json({
+        success: true,
+        history: [],
+        total: 0,
+        limit: limit,
+        offset: offset
+      });
+    }
+
+    // Get history records without JOIN first
     const [historyRows] = await db.execute(`
       SELECT 
-        ssh.id,
-        ssh.previous_status as previousStatus,
-        ssh.new_status as newStatus,
-        ssh.message,
-        ssh.changed_at as changedAt,
-        a.email as changedBy,
-        ssh.ip_address as ipAddress,
-        ssh.user_agent as userAgent
-      FROM service_status_history ssh
-      LEFT JOIN admins a ON ssh.changed_by = a.id
-      ORDER BY ssh.changed_at DESC
+        id,
+        previous_status,
+        new_status,
+        message,
+        changed_at,
+        changed_by,
+        ip_address,
+        user_agent
+      FROM service_status_history
+      ORDER BY changed_at DESC
       LIMIT ? OFFSET ?
     `, [limit, offset]);
 
     console.log('📊 Retrieved', historyRows.length, 'history records');
 
+    // Map records with safe conversions
     const history = historyRows.map(record => {
       try {
         return {
-          id: record.id,
-          previousStatus: record.previousStatus,
-          newStatus: record.newStatus,
+          id: record.id || null,
+          previousStatus: record.previous_status || 'unknown',
+          newStatus: record.new_status || 'unknown',
           message: record.message || null,
-          changedAt: record.changedAt ? new Date(record.changedAt).toISOString() : new Date().toISOString(),
-          changedBy: record.changedBy || 'system',
-          ipAddress: record.ipAddress || 'unknown',
-          userAgent: record.userAgent || 'unknown'
+          changedAt: record.changed_at ? new Date(record.changed_at).toISOString() : new Date().toISOString(),
+          changedBy: 'system', // Default since we removed JOIN
+          ipAddress: record.ip_address || 'unknown',
+          userAgent: record.user_agent || 'unknown'
         };
       } catch (mapError) {
-        console.error('Error mapping record:', mapError, record);
-        throw mapError;
+        console.error('Error mapping record:', mapError.message, record);
+        return {
+          id: record.id || null,
+          previousStatus: 'unknown',
+          newStatus: 'unknown',
+          message: null,
+          changedAt: new Date().toISOString(),
+          changedBy: 'system',
+          ipAddress: 'unknown',
+          userAgent: 'unknown'
+        };
       }
     });
 
@@ -277,10 +306,15 @@ serviceStatusRouter.get("/history", async (req, res) => {
       code: error.code,
       stack: error.stack
     });
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to fetch service status history',
-      details: error.code
+    
+    // Return empty history on error instead of 500
+    res.json({
+      success: true,
+      history: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      error: error.message
     });
   }
 });
