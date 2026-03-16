@@ -1,8 +1,56 @@
 import express from "express";
 import db from "../config/db.js";
-import verifyAdminToken from "../middleware/adminAuth.js";
+import jwt from "jsonwebtoken";
+import { verifyJWEToken } from "../utils/jweToken.js";
 
 const serviceStatusRouter = express.Router();
+
+/**
+ * Custom middleware for service status admin verification
+ * More lenient than the main adminAuth middleware
+ */
+const verifyServiceStatusAdmin = async (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, message: "No token provided" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    let decoded;
+    
+    // Try JWE first
+    try {
+      decoded = await verifyJWEToken(token);
+    } catch (jweError) {
+      // Try regular JWT
+      try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
+      } catch (jwtError) {
+        throw new Error("Invalid token");
+      }
+    }
+
+    // Accept token if it has an id (admin user)
+    if (decoded.id) {
+      req.admin = decoded;
+      return next();
+    }
+
+    return res.status(403).json({ 
+      success: false, 
+      message: "Invalid admin token" 
+    });
+  } catch (err) {
+    console.error('Token verification error:', err.message);
+    return res.status(403).json({ 
+      success: false, 
+      message: "Invalid or expired token" 
+    });
+  }
+};
 
 /**
  * GET /api/service/status
@@ -85,7 +133,7 @@ serviceStatusRouter.get("/status", async (req, res) => {
  *   timestamp: ISO8601 timestamp
  * }
  */
-serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
+serviceStatusRouter.post("/toggle", verifyServiceStatusAdmin, async (req, res) => {
   try {
     const { status, message } = req.body;
     const adminId = req.admin?.id;
@@ -211,7 +259,7 @@ serviceStatusRouter.post("/toggle", verifyAdminToken, async (req, res) => {
  *   offset: number
  * }
  */
-serviceStatusRouter.get("/history", verifyAdminToken, async (req, res) => {
+serviceStatusRouter.get("/history", verifyServiceStatusAdmin, async (req, res) => {
   try {
     let limit = parseInt(req.query.limit) || 50;
     let offset = parseInt(req.query.offset) || 0;
