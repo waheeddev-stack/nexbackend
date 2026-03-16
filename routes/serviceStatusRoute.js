@@ -219,10 +219,13 @@ serviceStatusRouter.get("/history", async (req, res) => {
       offset = 0;
     }
 
+    console.log('📊 Fetching history with limit:', limit, 'offset:', offset);
+
     const [countRows] = await db.execute(`
       SELECT COUNT(*) as total FROM service_status_history
     `);
-    const total = countRows[0].total;
+    const total = countRows[0]?.total || 0;
+    console.log('📊 Total history records:', total);
 
     const [historyRows] = await db.execute(`
       SELECT 
@@ -240,16 +243,25 @@ serviceStatusRouter.get("/history", async (req, res) => {
       LIMIT ? OFFSET ?
     `, [limit, offset]);
 
-    const history = historyRows.map(record => ({
-      id: record.id,
-      previousStatus: record.previousStatus,
-      newStatus: record.newStatus,
-      message: record.message,
-      changedAt: record.changedAt.toISOString(),
-      changedBy: record.changedBy || 'system',
-      ipAddress: record.ipAddress,
-      userAgent: record.userAgent
-    }));
+    console.log('📊 Retrieved', historyRows.length, 'history records');
+
+    const history = historyRows.map(record => {
+      try {
+        return {
+          id: record.id,
+          previousStatus: record.previousStatus,
+          newStatus: record.newStatus,
+          message: record.message || null,
+          changedAt: record.changedAt ? new Date(record.changedAt).toISOString() : new Date().toISOString(),
+          changedBy: record.changedBy || 'system',
+          ipAddress: record.ipAddress || 'unknown',
+          userAgent: record.userAgent || 'unknown'
+        };
+      } catch (mapError) {
+        console.error('Error mapping record:', mapError, record);
+        throw mapError;
+      }
+    });
 
     res.json({
       success: true,
@@ -260,10 +272,15 @@ serviceStatusRouter.get("/history", async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching service status history:', error);
+    console.error('❌ Error fetching service status history:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch service status history'
+      error: error.message || 'Failed to fetch service status history',
+      details: error.code
     });
   }
 });
