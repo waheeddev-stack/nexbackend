@@ -1914,7 +1914,7 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
     let orderInfo;
     try {
       [orderInfo] = await pool.query(`
-        SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at, o.total_amount
+        SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at, o.total_amount, o.order_type, o.delivery_mode
         FROM orders o
         WHERE o.id = ? AND o.shopkeeper_id = ?
       `, [orderIdNum, shopkeeper_id]);
@@ -2008,18 +2008,29 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       // Continue - this is not critical for order completion
     }
 
-    // Award wellness points based on timing
+    // Award wellness points based on timing (ONLY for pickup orders, NOT home delivery)
     let pointsAwarded = 0;
     try {
-      const pointsData = await awardWellnessPoints(
-        pool, 
-        order.user_id, 
-        now, // completion time
-        order.timer_started_at || order.created_at, // timer start time
-        order.total_amount // ✅ NEW: Pass order amount for minimum check
-      );
-      pointsAwarded = pointsData.points;
-      console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for order ${orderIdNum}`);
+      // Check if this is a pickup order (only pickup orders earn credits)
+      const orderType = order.order_type || order.delivery_mode || 'pickup';
+      const isHomeDelivery = orderType === 'delivery' || orderType === 'home_delivery';
+      
+      if (isHomeDelivery) {
+        // Home delivery: NO credits awarded
+        console.log(`Order ${orderIdNum} is home delivery - no credits awarded (credits only for pickup orders)`);
+        pointsAwarded = 0;
+      } else {
+        // Store pickup: Award timer-based wellness points
+        const pointsData = await awardWellnessPoints(
+          pool, 
+          order.user_id, 
+          now, // completion time
+          order.timer_started_at || order.created_at, // timer start time
+          order.total_amount // Pass order amount for minimum check
+        );
+        pointsAwarded = pointsData.points;
+        console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for pickup order ${orderIdNum}`);
+      }
     } catch (pointsError) {
       console.error("Error awarding wellness points:", pointsError);
       // Continue - points are not critical

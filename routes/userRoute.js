@@ -1024,7 +1024,8 @@ userrouter.get("/orders/:orderId/timer", verifyToken, async (req, res) => {
     const [timerInfo] = await pool.query(`
       SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
              ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
-             s.shop_name, s.name as shopkeeper_name, s.phone as shopkeeper_phone
+             s.shop_name, s.name as shopkeeper_name, s.phone as shopkeeper_phone, 
+             s.address as shop_address, s.latitude as shop_latitude, s.longitude as shop_longitude
       FROM orders o
       LEFT JOIN order_timers ot ON o.id = ot.order_id
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
@@ -1064,7 +1065,10 @@ userrouter.get("/orders/:orderId/timer", verifyToken, async (req, res) => {
         shop_info: {
           shop_name: timer.shop_name,
           shopkeeper_name: timer.shopkeeper_name,
-          shopkeeper_phone: timer.shopkeeper_phone
+          shopkeeper_phone: timer.shopkeeper_phone,
+          shop_address: timer.shop_address,
+          shop_latitude: timer.shop_latitude,
+          shop_longitude: timer.shop_longitude
         }
       }
     });
