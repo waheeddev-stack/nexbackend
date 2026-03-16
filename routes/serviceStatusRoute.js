@@ -17,7 +17,7 @@ serviceStatusRouter.get("/status", async (req, res) => {
         ss.status,
         ss.message,
         ss.updated_at as lastUpdated,
-        a.username as updatedBy
+        a.email as updatedBy
       FROM service_status ss
       LEFT JOIN admins a ON ss.updated_by = a.id
       WHERE ss.is_active = TRUE
@@ -171,7 +171,7 @@ serviceStatusRouter.get("/history", verifyAdminToken, async (req, res) => {
         ssh.new_status as newStatus,
         ssh.message,
         ssh.changed_at as changedAt,
-        a.username as changedBy,
+        a.email as changedBy,
         ssh.ip_address as ipAddress,
         ssh.user_agent as userAgent
       FROM service_status_history ssh
