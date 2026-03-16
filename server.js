@@ -13,6 +13,7 @@ import googleAuthRouter from "./routes/googleAuthRoute.js";
 import inventoryRouter from "./routes/inventoryRoute.js";
 import passwordResetRouter from "./routes/passwordResetRoute.js";
 import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
+import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -442,6 +443,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/auth", googleAuthRouter); // Google OAuth routes
 app.use("/api/password-reset", passwordResetRouter); // Password reset routes
 app.use("/reset-password", deepLinkRedirectRouter); // Deep link redirect for emails
+app.use("/api/service", serviceStatusRouter); // Service status endpoint (public)
 app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);

@@ -541,6 +541,14 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       });
     }
 
+    // MINIMUM ORDER VALIDATION: Home delivery requires minimum order of ₹70
+    if (order_type === 'delivery' && total < 70) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Home delivery requires a minimum order value of ₹70. Your current order is ₹" + total.toFixed(2) + ". Please add more items or switch to pickup." 
+      });
+    }
+
     // Validate that shopId is provided - orders must go to a single shop
     if (!shopId) {
       return res.status(400).json({ success: false, message: "Shop ID is required. Orders must be placed with a single shop." });

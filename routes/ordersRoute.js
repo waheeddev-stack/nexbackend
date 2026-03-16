@@ -656,9 +656,34 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
       WHERE id = ? AND user_id = ?
     `, [dbStatus, orderId, userId]);
 
-    // Restore inventory stock if order is cancelled
+    // Handle order cancellation: restore stock and refund credits
     if (dbStatus === 'Cancelled') {
+      // Restore inventory stock
       await onOrderCancelled(orderId, 'USER_CANCELLED');
+      
+      // Refund any credits that were used in this order
+      try {
+        const [orderData] = await pool.execute(
+          "SELECT credits_used FROM orders WHERE id = ? AND user_id = ?",
+          [orderId, userId]
+        );
+        
+        if (orderData.length > 0 && orderData[0].credits_used > 0) {
+          const creditsUsed = orderData[0].credits_used;
+          console.log(`Refunding ${creditsUsed} credits to user ${userId} for cancelled order ${orderId}`);
+          
+          // Refund the credits back to user
+          await pool.execute(
+            'UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?',
+            [creditsUsed, userId]
+          );
+          
+          console.log(`Credits refunded successfully for order ${orderId}`);
+        }
+      } catch (refundError) {
+        console.error("Error refunding credits:", refundError);
+        // Don't fail the cancellation if refund fails
+      }
     }
 
     // Socket broadcast status update

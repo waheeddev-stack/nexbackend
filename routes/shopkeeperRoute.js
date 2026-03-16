@@ -961,6 +961,31 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
           cancellation_reason || 'Shopkeeper cancellation'
         );
         
+        // Refund any credits that were used in this order
+        try {
+          const [[orderData]] = await pool.query(
+            "SELECT user_id, credits_used FROM orders WHERE id = ?",
+            [orderIdNum]
+          );
+          
+          if (orderData && orderData.credits_used > 0) {
+            const creditsUsed = orderData.credits_used;
+            const userId = orderData.user_id;
+            console.log(`Refunding ${creditsUsed} credits to user ${userId} for cancelled order ${orderIdNum}`);
+            
+            // Refund the credits back to user
+            await pool.query(
+              'UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?',
+              [creditsUsed, userId]
+            );
+            
+            console.log(`Credits refunded successfully for order ${orderIdNum}`);
+          }
+        } catch (refundError) {
+          console.error("Error refunding credits:", refundError);
+          // Don't fail the cancellation if refund fails
+        }
+        
         // Commit transaction
         await pool.query("COMMIT");
         
@@ -991,7 +1016,8 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
     }
 
     // Award wellness points if order is completed
-    // Note: Credits are ONLY awarded for PICKUP orders, NOT for home delivery
+    // Pickup orders: Timer-based credits (40, 30, 10, or 5 points)
+    // Home delivery orders: Fixed 40 points maximum
     if (status === "Completed") {
       try {
         const [[orderDetails]] = await pool.query(
@@ -1000,25 +1026,20 @@ shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperS
         );
         
         if (orderDetails) {
-          // Check if this is a pickup order (only pickup orders earn credits)
           const orderType = orderDetails.order_type || orderDetails.delivery_mode || 'pickup';
           const isHomeDelivery = orderType === 'delivery' || orderType === 'home_delivery';
           
-          if (isHomeDelivery) {
-            // Home delivery: NO credits awarded
-            console.log(`Order ${orderIdNum} is home delivery - no credits awarded (credits only for pickup orders)`);
-          } else {
-            // Store pickup: Use timer-based wellness points
-            const pointsData = await awardWellnessPoints(
-              pool, 
-              orderDetails.user_id, 
-              new Date(), // completion time (now)
-              orderDetails.timer_started_at || orderDetails.created_at, // timer start or order creation time
-              orderDetails.total_amount // Pass order amount for minimum check
-            );
-            
-            console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for pickup order ${orderIdNum}`);
-          }
+          // Award credits for both pickup and home delivery
+          const pointsData = await awardWellnessPoints(
+            pool, 
+            orderDetails.user_id, 
+            new Date(), // completion time (now)
+            orderDetails.timer_started_at || orderDetails.created_at, // timer start or order creation time
+            orderDetails.total_amount, // Pass order amount for minimum check
+            orderType // Pass delivery type for home delivery capping
+          );
+          
+          console.log(`Awarded ${pointsData.points} wellness points to user ${orderDetails.user_id} for ${isHomeDelivery ? 'home delivery' : 'pickup'} order ${orderIdNum}`);
         }
       } catch (pointsError) {
         console.error("Error awarding wellness points:", pointsError);
@@ -2008,29 +2029,25 @@ shopkeeperRouter.post("/orders/:orderId/verify-pickup", verifyToken, verifyShopk
       // Continue - this is not critical for order completion
     }
 
-    // Award wellness points based on timing (ONLY for pickup orders, NOT home delivery)
+    // Award wellness points based on timing
+    // Pickup orders: Timer-based credits (40, 30, 10, or 5 points)
+    // Home delivery orders: Fixed 40 points maximum
     let pointsAwarded = 0;
     try {
-      // Check if this is a pickup order (only pickup orders earn credits)
       const orderType = order.order_type || order.delivery_mode || 'pickup';
       const isHomeDelivery = orderType === 'delivery' || orderType === 'home_delivery';
       
-      if (isHomeDelivery) {
-        // Home delivery: NO credits awarded
-        console.log(`Order ${orderIdNum} is home delivery - no credits awarded (credits only for pickup orders)`);
-        pointsAwarded = 0;
-      } else {
-        // Store pickup: Award timer-based wellness points
-        const pointsData = await awardWellnessPoints(
-          pool, 
-          order.user_id, 
-          now, // completion time
-          order.timer_started_at || order.created_at, // timer start time
-          order.total_amount // Pass order amount for minimum check
-        );
-        pointsAwarded = pointsData.points;
-        console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for pickup order ${orderIdNum}`);
-      }
+      // Award credits for both pickup and home delivery
+      const pointsData = await awardWellnessPoints(
+        pool, 
+        order.user_id, 
+        now, // completion time
+        order.timer_started_at || order.created_at, // timer start time
+        order.total_amount, // Pass order amount for minimum check
+        orderType // Pass delivery type for home delivery capping
+      );
+      pointsAwarded = pointsData.points;
+      console.log(`Awarded ${pointsAwarded} wellness points to user ${order.user_id} for ${isHomeDelivery ? 'home delivery' : 'pickup'} order ${orderIdNum}`);
     } catch (pointsError) {
       console.error("Error awarding wellness points:", pointsError);
       // Continue - points are not critical

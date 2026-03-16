@@ -2359,11 +2359,22 @@ adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) 
     console.log(`📢 Admin broadcasting notification to all users: "${title}"`);
 
     // Get all user FCM tokens from database
-    const [users] = await pool.query(
-      "SELECT id, name, fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''"
-    );
+    let users;
+    try {
+      const [result] = await pool.query(
+        "SELECT id, name, fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''"
+      );
+      users = result;
+    } catch (dbError) {
+      console.error('Database query error:', dbError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch users from database",
+        error: dbError.message
+      });
+    }
 
-    if (users.length === 0) {
+    if (!users || users.length === 0) {
       return res.json({
         success: true,
         message: "No users with FCM tokens found",
@@ -2384,7 +2395,26 @@ adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) 
     const tokens = users.map(u => u.fcm_token);
 
     // Send notification to all users
-    const result = await sendFCMPush(tokens, title, body, data || {});
+    let result;
+    try {
+      result = await sendFCMPush(tokens, title, body, data || {});
+    } catch (fcmError) {
+      console.error('FCM Push error:', fcmError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send FCM notifications",
+        error: fcmError.message
+      });
+    }
+
+    // Ensure result has required properties
+    if (!result || typeof result !== 'object') {
+      console.error('Invalid result from sendFCMPush:', result);
+      return res.status(500).json({
+        success: false,
+        message: "Invalid response from FCM service"
+      });
+    }
 
     // Clean up invalid tokens from database
     if (result.invalidTokens && result.invalidTokens.length > 0) {
@@ -2414,10 +2444,12 @@ adminRouter.post("/notifications/broadcast", verifyAdminToken, async (req, res) 
 
   } catch (err) {
     console.error("Broadcast notification error:", err);
+    console.error("Error stack:", err.stack);
     res.status(500).json({
       success: false,
       message: "Failed to send broadcast notification",
-      error: err.message
+      error: err.message,
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });

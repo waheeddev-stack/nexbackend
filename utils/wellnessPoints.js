@@ -77,7 +77,7 @@ const calculateDiscount = (points) => {
 };
 
 // Award wellness points for order completion
-const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, orderAmount = 0) => {
+const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, orderAmount = 0, deliveryType = 'pickup') => {
   try {
     // ✅ NEW: Check if order amount is at least ₹40
     const MINIMUM_ORDER_AMOUNT = 40;
@@ -90,6 +90,10 @@ const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, o
       };
     }
 
+    // ✅ NEW: For home delivery, cap credits at 40 points (₹2)
+    const MAX_HOME_DELIVERY_CREDITS = 40;
+    const isHomeDelivery = deliveryType === 'delivery' || deliveryType === 'home_delivery';
+
     // Calculate time remaining based on timer
     const timerStart = new Date(timerStartedAt);
     const deliveredTime = new Date(deliveryTime);
@@ -100,7 +104,17 @@ const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, o
     // Positive = on time, Negative = late
     const timeRemaining = timerExpires - deliveredTime;
     
-    const pointsData = calculateWellnessPoints(timeRemaining, timerDuration);
+    let pointsData = calculateWellnessPoints(timeRemaining, timerDuration);
+    
+    // Cap home delivery credits at 40 points
+    if (isHomeDelivery && pointsData.points > MAX_HOME_DELIVERY_CREDITS) {
+      pointsData = {
+        ...pointsData,
+        points: MAX_HOME_DELIVERY_CREDITS,
+        tier: "Home Delivery (Capped)",
+        description: `Home delivery maximum credits: ${MAX_HOME_DELIVERY_CREDITS} points`
+      };
+    }
     
     console.log(`Wellness Points Calculation:
       - Timer Started: ${timerStart.toISOString()}
@@ -108,6 +122,7 @@ const awardWellnessPoints = async (pool, userId, deliveryTime, timerStartedAt, o
       - Delivered At: ${deliveredTime.toISOString()}
       - Time Remaining: ${Math.floor(timeRemaining / 1000)}s (${Math.floor(timeRemaining / 60000)} min)
       - Order Amount: ₹${orderAmount}
+      - Delivery Type: ${deliveryType}
       - Points Awarded: ${pointsData.points} (${pointsData.tier})`);
     
     // Update user's store credits

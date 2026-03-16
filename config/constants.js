@@ -9,6 +9,12 @@ export const TIMER_DURATION_SECONDS = 420; // 7 minutes
 // Minimum order amount to earn wellness points (in rupees)
 export const MINIMUM_ORDER_AMOUNT = 40;
 
+// Minimum order amount for home delivery (in rupees)
+export const MINIMUM_HOME_DELIVERY_AMOUNT = 70;
+
+// Maximum store credits awarded for home delivery orders
+export const MAX_HOME_DELIVERY_CREDITS = 40;
+
 // Pickup code length (digits)
 export const PICKUP_CODE_LENGTH = 6;
 

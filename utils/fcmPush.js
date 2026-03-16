@@ -13,29 +13,39 @@ function initializeFirebase() {
     // Check if already initialized
     if (admin.apps.length > 0) {
       firebaseInitialized = true;
+      console.log('✅ Firebase Admin SDK already initialized');
       return;
     }
 
     // Initialize with service account or default credentials
     // Check both FIREBASE_SERVICE_ACCOUNT and FIREBASE_SERVICE_ACCOUNT_KEY
     const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    
+    if (!serviceAccountJson) {
+      console.warn('⚠️ FIREBASE_SERVICE_ACCOUNT environment variable not set');
+      console.warn('⚠️ Attempting to use application default credentials');
+    }
+    
     const serviceAccount = serviceAccountJson ? JSON.parse(serviceAccountJson) : null;
 
     if (serviceAccount) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
+      console.log('✅ Firebase Admin SDK initialized with service account');
     } else {
       // Use application default credentials
       admin.initializeApp({
         credential: admin.credential.applicationDefault(),
       });
+      console.log('✅ Firebase Admin SDK initialized with application default credentials');
     }
     
     firebaseInitialized = true;
-    console.log('✅ Firebase Admin SDK initialized successfully');
   } catch (error) {
     console.error('❌ Failed to initialize Firebase Admin SDK:', error.message);
+    console.error('Error details:', error);
+    firebaseInitialized = false;
   }
 }
 
@@ -50,7 +60,7 @@ function initializeFirebase() {
 export async function sendFCMPush(tokens, title, body, data = {}) {
   if (!tokens) {
     console.warn('FCM: No tokens provided');
-    return { success: false, message: 'No tokens provided' };
+    return { success: false, message: 'No tokens provided', successCount: 0, failureCount: 0, invalidTokens: [], errors: [] };
   }
 
   initializeFirebase();
@@ -58,7 +68,7 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
   if (!firebaseInitialized) {
     console.warn('Firebase not initialized, skipping FCM push');
     console.warn('Make sure FIREBASE_SERVICE_ACCOUNT environment variable is set');
-    return { success: false, message: 'Firebase not initialized' };
+    return { success: false, message: 'Firebase not initialized', successCount: 0, failureCount: 0, invalidTokens: [], errors: [] };
   }
 
   const tokenList = Array.isArray(tokens) ? tokens : [tokens];
@@ -66,7 +76,7 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
 
   if (validTokens.length === 0) {
     console.warn('FCM: No valid tokens after filtering');
-    return { success: false, message: 'No valid tokens provided' };
+    return { success: false, message: 'No valid tokens provided', successCount: 0, failureCount: 0, invalidTokens: [], errors: [] };
   }
 
   console.log(`📤 FCM: Sending notification to ${validTokens.length} token(s)`);
@@ -158,6 +168,9 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
     return {
       success: false,
       message: error.message,
+      successCount: 0,
+      failureCount: validTokens.length,
+      invalidTokens: [],
       errors: [error],
     };
   }
