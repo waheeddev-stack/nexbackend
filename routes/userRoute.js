@@ -19,12 +19,15 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
-    const { latitude, longitude, radiusKm = 1.25 } = req.query;
+    // FORCE radiusKm to 1.25 regardless of frontend input, as requested by user
+    const { latitude, longitude } = req.query;
+    const radiusKm = 1.25;
+    
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
-    console.log(`🔍 Nearby shops request: lat=${latitude}, lng=${longitude}, radius=${radiusKm}km`);
+    console.log(`🔍 Nearby shops request (FORCED): lat=${latitude}, lng=${longitude}, radius=${radiusKm}km`);
 
     // Find nearby ONLINE shops using Haversine formula
     // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates AND is_online = 1
