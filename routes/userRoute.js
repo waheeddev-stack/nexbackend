@@ -19,17 +19,21 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
-    // FORCE radiusKm to 1.25 regardless of frontend input, as requested by user
     const { latitude, longitude } = req.query;
-    const radiusKm = 1.25;
+    // Default search radius to 1.0 Km, accept dynamic adjustments via radiusKm parameter
+    const radiusKm = parseFloat(req.query.radiusKm) || 1.0;
     
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
     }
 
-    console.log(`🔍 Nearby shops request (FORCED): lat=${latitude}, lng=${longitude}, radius=${radiusKm}km`);
+    // Handle coordinates with high precision (at least 6 decimal places)
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
 
-    // Find nearby ONLINE shops using Haversine formula
+    console.log(`🔍 Nearby shops request: lat=${lat.toFixed(6)}, lng=${lng.toFixed(6)}, radius=${radiusKm}km`);
+
+    // Find nearby ONLINE shops using robust geospatial query (Law of Cosines)
     // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates AND is_online = 1
     const [onlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
@@ -49,7 +53,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND (is_online = 1 OR is_online IS NULL)
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [latitude, longitude, latitude, radiusKm]
+      [lat, lng, lat, radiusKm]
     );
 
     console.log(`✅ Found ${onlineShops.length} online verified shops within ${radiusKm}km`);
@@ -73,7 +77,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_online = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [latitude, longitude, latitude, radiusKm]
+      [lat, lng, lat, radiusKm]
     );
     
     console.log(`📴 Found ${offlineShops.length} offline shops within ${radiusKm}km`);
@@ -96,7 +100,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [latitude, longitude, latitude, radiusKm]
+      [lat, lng, lat, radiusKm]
     );
     
     if (unverifiedShops.length > 0) {
