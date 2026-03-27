@@ -175,13 +175,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each online shop directly from products table (products.shop_id)
-    // Only include products with stock > 0 AND baselineQty > 0
-    // baselineQty > 0 ensures shopkeeper has set up the product for auto-restock (product is actively managed)
+    // Only include products with stock > 0
+    // baselineQty check removed to ensure all available products are shown, even if not yet configured for auto-restock
     const shopIds = onlineShops.map(s => s.id);
     const [products] = await pool.query(
       `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
        FROM products
-       WHERE shop_id IN (?) AND stock > 0 AND baselineQty > 0
+       WHERE shop_id IN (?) AND stock > 0
        ORDER BY created_at DESC`,
       [shopIds]
     );
