@@ -19,9 +19,23 @@ const userrouter = express.Router();
 // Find nearby shopkeepers and show their products
 userrouter.get("/nearby-shops", async (req, res) => {
   try {
+    // Audit log for incoming request
+    console.log("🔍 Nearby shops incoming query:", req.query);
+    
     const { latitude, longitude } = req.query;
     // Default search radius to 1.0 Km, accept dynamic adjustments via radiusKm parameter
-    const radiusKm = parseFloat(req.query.radiusKm) || 1.0;
+    // Support both radiusKm (older frontend) and radius (new frontend)
+    // Handle the case where radius might be passed in meters
+    let radiusValue = parseFloat(req.query.radiusKm) || parseFloat(req.query.radius) || 1.0;
+    
+    // HEURISTIC: If radiusValue is > 10, it's likely meters, convert to KM
+    // This handles the "fallback" meters behavior mentioned by user
+    if (radiusValue > 10) {
+      console.log(`⚠️ Radius value ${radiusValue} detected as meters, converting to 1km fallback...`);
+      radiusValue = radiusValue / 1000;
+    }
+    
+    const radiusKm = radiusValue;
     
     if (!latitude || !longitude) {
       return res.status(400).json({ success: false, message: "Missing location" });
@@ -31,80 +45,109 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
 
-    console.log(`🔍 Nearby shops request: lat=${lat.toFixed(6)}, lng=${lng.toFixed(6)}, radius=${radiusKm}km`);
+    // Ensure we are searching within at least 1km as requested
+    // If the frontend sent something that resulted in 100m, we force it to 1km
+    const finalRadiusKm = Math.max(radiusKm, 1.0);
+    const radiusMeters = finalRadiusKm * 1000;
 
-    // Find nearby ONLINE shops using robust geospatial query (Law of Cosines)
-    // Only include verified/approved shopkeepers (is_verified = 1) with valid coordinates AND is_online = 1
+    console.log(`🔍 Nearby shops request: lat=${lat.toFixed(6)}, lng=${lng.toFixed(6)}, radius=${finalRadiusKm}km (${radiusMeters}m)`);
+    
+    // ⏱️ Artificial delay to ensure thorough processing and improve search perception
+    // User requested taking 2-3 seconds for a proper fetch
+    const startTime = Date.now();
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Bounding Box calculation for optimization (approx 111km per degree)
+    // This helps TiDB use indexes before applying the expensive ST_Distance_Sphere
+    const latDelta = finalRadiusKm / 111;
+    const lngDelta = finalRadiusKm / (111 * Math.cos(lat * Math.PI / 180));
+    
+    const minLat = lat - latDelta;
+    const maxLat = lat + latDelta;
+    const minLng = lng - lngDelta;
+    const maxLng = lng + lngDelta;
+
+    // Find nearby ONLINE shops using ST_Distance_Sphere (more accurate for TiDB/MySQL)
+    // TiDB ST_Distance_Sphere returns distance in METERS
+    // IMPORTANT: POINT(longitude, latitude) - Order matters in MySQL/TiDB!
+    // We LIMIT to 1 result to take the single nearest shop as requested
     const [onlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
-              (6371 * acos(
-                 LEAST(1, GREATEST(-1,
-                   cos(radians(?)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(?)) +
-                   sin(radians(?)) * sin(radians(latitude))
-                 ))
-              )) AS distance
+              ST_Distance_Sphere(
+                POINT(longitude, latitude),
+                POINT(?, ?)
+              ) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
+         AND latitude BETWEEN ? AND ?
+         AND longitude BETWEEN ? AND ?
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 1
          AND (is_online = 1 OR is_online IS NULL)
        HAVING distance <= ?
-       ORDER BY distance ASC`,
-      [lat, lng, lat, radiusKm]
+       ORDER BY distance ASC
+       LIMIT 1`,
+      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
-    console.log(`✅ Found ${onlineShops.length} online verified shops within ${radiusKm}km`);
+    if (onlineShops.length > 0) {
+      const nearest = onlineShops[0];
+      console.log(`✅ Found absolute nearest online verified shop: ${nearest.shop_name} at ${nearest.distance.toFixed(2)}m (within ${finalRadiusKm}km limit)`);
+    } else {
+      console.log(`❌ No online verified shops found within ${finalRadiusKm}km`);
+    }
 
     // Find nearby OFFLINE shops (to show "Shop Offline" message)
+    // Also limit to 1 to find the nearest offline shop if no online ones are available
     const [offlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
-              (6371 * acos(
-                 LEAST(1, GREATEST(-1,
-                   cos(radians(?)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(?)) +
-                   sin(radians(?)) * sin(radians(latitude))
-                 ))
-              )) AS distance
+              ST_Distance_Sphere(
+                POINT(longitude, latitude),
+                POINT(?, ?)
+              ) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
+         AND latitude BETWEEN ? AND ?
+         AND longitude BETWEEN ? AND ?
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 1
          AND is_online = 0
        HAVING distance <= ?
-       ORDER BY distance ASC`,
-      [lat, lng, lat, radiusKm]
+       ORDER BY distance ASC
+       LIMIT 1`,
+      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
     
-    console.log(`📴 Found ${offlineShops.length} offline shops within ${radiusKm}km`);
+    if (offlineShops.length > 0) {
+      console.log(`📴 Nearest offline shop: ${offlineShops[0].shop_name} at ${offlineShops[0].distance.toFixed(2)}m`);
+    }
 
     // Check for unverified shops nearby (for debugging)
     const [unverifiedShops] = await pool.query(
       `SELECT id, name, shop_name, is_verified, is_online,
-              (6371 * acos(
-                 LEAST(1, GREATEST(-1,
-                   cos(radians(?)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(?)) +
-                   sin(radians(?)) * sin(radians(latitude))
-                 ))
-              )) AS distance
+              ST_Distance_Sphere(
+                POINT(longitude, latitude),
+                POINT(?, ?)
+              ) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
+         AND latitude BETWEEN ? AND ?
+         AND longitude BETWEEN ? AND ?
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [lat, lng, lat, radiusKm]
+      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
     
     if (unverifiedShops.length > 0) {
-      console.log(`⚠️ Found ${unverifiedShops.length} unverified shops nearby (not shown to users)`);
+      console.log(`⚠️ Found ${unverifiedShops.length} unverified shops nearby (not shown to users) within ${finalRadiusKm}km`);
     }
 
     // If no online shops but there are offline shops nearby, return special response
