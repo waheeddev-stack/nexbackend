@@ -67,16 +67,19 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const minLng = lng - lngDelta;
     const maxLng = lng + lngDelta;
 
-    // Find nearby ONLINE shops using ST_Distance_Sphere (more accurate for TiDB/MySQL)
-    // TiDB ST_Distance_Sphere returns distance in METERS
-    // IMPORTANT: POINT(longitude, latitude) - Order matters in MySQL/TiDB!
+    // Find nearby ONLINE shops using robust geospatial query (Law of Cosines)
+    // This formula is highly compatible across all MySQL/TiDB versions
+    // We multiply by 1000 to get the distance in METERS
     // We LIMIT to 1 result to take the single nearest shop as requested
     const [onlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
-              ST_Distance_Sphere(
-                POINT(longitude, latitude),
-                POINT(?, ?)
-              ) AS distance
+              (6371 * acos(
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
+              )) * 1000 AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -89,7 +92,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
        HAVING distance <= ?
        ORDER BY distance ASC
        LIMIT 1`,
-      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
     if (onlineShops.length > 0) {
@@ -103,10 +106,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Also limit to 1 to find the nearest offline shop if no online ones are available
     const [offlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
-              ST_Distance_Sphere(
-                POINT(longitude, latitude),
-                POINT(?, ?)
-              ) AS distance
+              (6371 * acos(
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
+              )) * 1000 AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -119,7 +125,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
        HAVING distance <= ?
        ORDER BY distance ASC
        LIMIT 1`,
-      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
     
     if (offlineShops.length > 0) {
@@ -129,10 +135,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Check for unverified shops nearby (for debugging)
     const [unverifiedShops] = await pool.query(
       `SELECT id, name, shop_name, is_verified, is_online,
-              ST_Distance_Sphere(
-                POINT(longitude, latitude),
-                POINT(?, ?)
-              ) AS distance
+              (6371 * acos(
+                 LEAST(1, GREATEST(-1,
+                   cos(radians(?)) * cos(radians(latitude)) *
+                   cos(radians(longitude) - radians(?)) +
+                   sin(radians(?)) * sin(radians(latitude))
+                 ))
+              )) * 1000 AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -143,7 +152,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
     
     if (unverifiedShops.length > 0) {
