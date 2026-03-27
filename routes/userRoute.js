@@ -96,25 +96,62 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops within ${radiusMeters}m`);
     
-    // Log all found shops for deep diagnostics
-    if (allPotentialOnlineShops.length > 0) {
-      allPotentialOnlineShops.forEach((s, i) => {
-        console.log(`   [${i+1}] Shop: ${s.shop_name} (ID: ${s.id}) - Distance: ${s.distance.toFixed(2)}m - Coords: (${s.latitude}, ${s.longitude})`);
-      });
-    }
-
-    // 🎯 2nd CHECK: Re-verify and strictly allot the single nearest shop
+    // 🎯 2nd CHECK: Strict re-verification phase
     let onlineShops = [];
     if (allPotentialOnlineShops.length > 0) {
-      // Pick the shop with the absolute minimum distance
-      const nearest = allPotentialOnlineShops[0];
-      console.log(`🎯 2nd Check (Verification): Allotting absolute nearest shop: ${nearest.shop_name} at ${nearest.distance.toFixed(2)}m`);
-      onlineShops = [nearest];
+      console.log("🕵️ Starting strict re-verification for potential shops...");
+      
+      for (const shop of allPotentialOnlineShops) {
+        // Re-verify distance in Node.js for absolute precision (Double verification)
+        const R = 6371; // Earth's radius in km
+        const dLat = (shop.latitude - lat) * Math.PI / 180;
+        const dLon = (shop.longitude - lng) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat * Math.PI / 180) * Math.cos(shop.latitude * Math.PI / 180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        const verifiedDistance = R * c * 1000; // Meters
+
+        console.log(`   - Verifying ${shop.shop_name}: SQL dist=${shop.distance.toFixed(2)}m, Node dist=${verifiedDistance.toFixed(2)}m`);
+
+        if (verifiedDistance > radiusMeters) {
+          console.log(`     ❌ Rejected: Distance ${verifiedDistance.toFixed(2)}m exceeds 1km limit.`);
+          continue;
+        }
+
+        // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0)
+        // A nearby shop with no stock is not useful to the user.
+        const [[productCount]] = await pool.query(
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0",
+          [shop.id]
+        );
+
+        if (productCount.count === 0) {
+          console.log(`     ⚠️ Skipped ${shop.shop_name}: No products currently in stock. Searching for next nearest...`);
+          continue;
+        }
+
+        // Fresh status check: Re-verify online and verified status one last time
+        const [[freshStatus]] = await pool.query(
+          "SELECT is_online, is_verified FROM shopkeepers WHERE id = ?",
+          [shop.id]
+        );
+
+        if (freshStatus.is_verified !== 1 || (freshStatus.is_online !== 1 && freshStatus.is_online !== null)) {
+          console.log(`     ❌ Rejected ${shop.shop_name}: Status changed during processing.`);
+          continue;
+        }
+
+        // All checks passed! This is our best candidate.
+        console.log(`🎯 3rd Check (FINAL ALLOTMENT): ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m with ${productCount.count} products.`);
+        onlineShops = [shop];
+        break; // Stop at the absolute best match that is fully verified.
+      }
     } else {
       console.log(`❌ 2nd Check: No online verified shops found within ${finalRadiusKm}km`);
     }
 
-    // 🔍 1st CHECK: Scan for all potential OFFLINE shops in the radius
+    // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
     const [allPotentialOfflineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
@@ -138,13 +175,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
-    console.log(`📴 1st Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`);
+    console.log(`📴 Offline Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`);
 
-    // 🎯 2nd CHECK: Allot the nearest offline shop for fallback
+    // Only allot nearest offline shop if no online shop was allotted
     let offlineShops = [];
-    if (allPotentialOfflineShops.length > 0) {
+    if (onlineShops.length === 0 && allPotentialOfflineShops.length > 0) {
       const nearestOffline = allPotentialOfflineShops[0];
-      console.log(`📴 2nd Check (Verification): Nearest offline shop identified: ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`);
+      console.log(`📴 Final Allotment (Offline Fallback): ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`);
       offlineShops = [nearestOffline];
     }
 
