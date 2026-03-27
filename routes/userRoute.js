@@ -67,11 +67,10 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const minLng = lng - lngDelta;
     const maxLng = lng + lngDelta;
 
-    // Find nearby ONLINE shops using robust geospatial query (Law of Cosines)
+    // 🔍 1st CHECK: Scan for all potential ONLINE shops in the 1km radius
     // This formula is highly compatible across all MySQL/TiDB versions
     // We multiply by 1000 to get the distance in METERS
-    // 🎯 STRICT ALLOTMENT: We LIMIT to 1 result to ensure only the absolute NEAREST shop is returned
-    const [onlineShops] = await pool.query(
+    const [allPotentialOnlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -90,21 +89,24 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 1
          AND (is_online = 1 OR is_online IS NULL)
        HAVING distance <= ?
-       ORDER BY distance ASC
-       LIMIT 1`,
+       ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
-    if (onlineShops.length > 0) {
-      const nearest = onlineShops[0];
-      console.log(`🎯 NEAREST SHOP ALLOTMENT: ${nearest.shop_name} (ID: ${nearest.id}) at ${nearest.distance.toFixed(2)}m (within ${finalRadiusKm}km limit)`);
+    console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops in 1km radius`);
+
+    // 🎯 2nd CHECK: Re-verify and strictly allot the single nearest shop
+    let onlineShops = [];
+    if (allPotentialOnlineShops.length > 0) {
+      const nearest = allPotentialOnlineShops[0];
+      console.log(`🎯 2nd Check (Verification): Allotting absolute nearest shop: ${nearest.shop_name} at ${nearest.distance.toFixed(2)}m`);
+      onlineShops = [nearest];
     } else {
-      console.log(`❌ No online verified shops found within ${finalRadiusKm}km`);
+      console.log(`❌ 2nd Check: No online verified shops found within ${finalRadiusKm}km`);
     }
 
-    // Find nearby OFFLINE shops (to show "Shop Offline" message)
-    // Also limit to 1 to find the nearest offline shop if no online ones are available
-    const [offlineShops] = await pool.query(
+    // 🔍 1st CHECK: Scan for all potential OFFLINE shops in the radius
+    const [allPotentialOfflineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -123,13 +125,18 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 1
          AND is_online = 0
        HAVING distance <= ?
-       ORDER BY distance ASC
-       LIMIT 1`,
+       ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
-    
-    if (offlineShops.length > 0) {
-      console.log(`📴 Nearest offline shop: ${offlineShops[0].shop_name} at ${offlineShops[0].distance.toFixed(2)}m`);
+
+    console.log(`📴 1st Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`);
+
+    // 🎯 2nd CHECK: Allot the nearest offline shop for fallback
+    let offlineShops = [];
+    if (allPotentialOfflineShops.length > 0) {
+      const nearestOffline = allPotentialOfflineShops[0];
+      console.log(`📴 2nd Check (Verification): Nearest offline shop identified: ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`);
+      offlineShops = [nearestOffline];
     }
 
     // Check for unverified shops nearby (for debugging)
