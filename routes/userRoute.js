@@ -58,18 +58,19 @@ userrouter.get("/nearby-shops", async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Bounding Box calculation for optimization (approx 111km per degree)
-    // This helps TiDB use indexes before applying the expensive ST_Distance_Sphere
-    const latDelta = finalRadiusKm / 111;
-    const lngDelta = finalRadiusKm / (111 * Math.cos(lat * Math.PI / 180));
+    // 🛡️ INCREASED SAFETY MARGIN: Using 1.5x the radius for the bounding box
+    // to ensure no edge-case shop is missed before applying precise distance check
+    const safetyFactor = 1.5;
+    const latDelta = (finalRadiusKm * safetyFactor) / 111;
+    const lngDelta = (finalRadiusKm * safetyFactor) / (111 * Math.cos(lat * Math.PI / 180));
     
     const minLat = lat - latDelta;
     const maxLat = lat + latDelta;
     const minLng = lng - lngDelta;
     const maxLng = lng + lngDelta;
 
-    // 🔍 1st CHECK: Scan for all potential ONLINE shops in the 1km radius
-    // This formula is highly compatible across all MySQL/TiDB versions
-    // We multiply by 1000 to get the distance in METERS
+    // 🔍 1st CHECK: Scan for all potential ONLINE shops in the expanded bounding box
+    // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     const [allPotentialOnlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
@@ -93,11 +94,19 @@ userrouter.get("/nearby-shops", async (req, res) => {
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
-    console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops in 1km radius`);
+    console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops within ${radiusMeters}m`);
+    
+    // Log all found shops for deep diagnostics
+    if (allPotentialOnlineShops.length > 0) {
+      allPotentialOnlineShops.forEach((s, i) => {
+        console.log(`   [${i+1}] Shop: ${s.shop_name} (ID: ${s.id}) - Distance: ${s.distance.toFixed(2)}m - Coords: (${s.latitude}, ${s.longitude})`);
+      });
+    }
 
     // 🎯 2nd CHECK: Re-verify and strictly allot the single nearest shop
     let onlineShops = [];
     if (allPotentialOnlineShops.length > 0) {
+      // Pick the shop with the absolute minimum distance
       const nearest = allPotentialOnlineShops[0];
       console.log(`🎯 2nd Check (Verification): Allotting absolute nearest shop: ${nearest.shop_name} at ${nearest.distance.toFixed(2)}m`);
       onlineShops = [nearest];
