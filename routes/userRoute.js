@@ -70,7 +70,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Find nearby ONLINE shops using robust geospatial query (Law of Cosines)
     // This formula is highly compatible across all MySQL/TiDB versions
     // We multiply by 1000 to get the distance in METERS
-    // We LIMIT to 1 result to take the single nearest shop as requested
+    // 🎯 STRICT ALLOTMENT: We LIMIT to 1 result to ensure only the absolute NEAREST shop is returned
     const [onlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
@@ -97,7 +97,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     if (onlineShops.length > 0) {
       const nearest = onlineShops[0];
-      console.log(`✅ Found absolute nearest online verified shop: ${nearest.shop_name} at ${nearest.distance.toFixed(2)}m (within ${finalRadiusKm}km limit)`);
+      console.log(`🎯 NEAREST SHOP ALLOTMENT: ${nearest.shop_name} (ID: ${nearest.id}) at ${nearest.distance.toFixed(2)}m (within ${finalRadiusKm}km limit)`);
     } else {
       console.log(`❌ No online verified shops found within ${finalRadiusKm}km`);
     }
