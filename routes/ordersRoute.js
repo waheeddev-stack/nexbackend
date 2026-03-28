@@ -9,6 +9,8 @@ import {
   onOrderCancelled
 } from '../middleware/inventory.order.hooks.js';
 import { TIMER_DURATION_SECONDS, TIME_SLOT_CONFIG, ORDER_STATUS } from '../config/constants.js';
+import { validatePointsUsage, deductWellnessPoints } from '../utils/wellnessPoints.js';
+import { sendExpoPush, sendFCMPush, isFCMToken } from '../utils/expoPush.js';
 
 const router = express.Router();
 
@@ -283,6 +285,179 @@ router.get("/status/:status", verifyToken, async (req, res) => {
 });
 
 // ============================================================================
+// GET SINGLE ORDER DETAILS
+// ============================================================================
+// GET /api/orders/:orderId
+router.get("/:orderId", verifyToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user.id;
+
+    const [orders] = await pool.execute(`
+      SELECT 
+        o.id,
+        o.id as orderId,
+        o.id as order_id,
+        o.user_id as userId,
+        o.user_id as user_id,
+        o.shopkeeper_id as shopkeeperId,
+        o.shopkeeper_id as shopkeeper_id,
+        CASE 
+          WHEN o.has_timer = 1 THEN 'store_pickup'
+          ELSE 'home_delivery'
+        END as deliveryType,
+        CASE 
+          WHEN o.status = 'Completed' THEN 'completed'
+          WHEN o.status = 'Cancelled' THEN 'cancelled'
+          WHEN o.status = 'Paid' THEN 'paid'
+          ELSE 'pending'
+        END as status,
+        o.status as originalStatus,
+        o.total_amount as totalAmount,
+        o.total_amount as total_amount,
+        o.payment_status,
+        o.payment_method,
+        o.delivery_address,
+        o.pickup_code,
+        o.created_at as createdAt,
+        o.created_at as created_at,
+        s.shop_name as shopName,
+        s.shop_name as shop_name,
+        s.name as shopkeeperName,
+        s.upi_id as shop_upi
+      FROM orders o
+      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+      WHERE o.id = ? AND (o.user_id = ? OR ? IN (SELECT id FROM admins))
+    `, [orderId, userId, userId]);
+
+    if (orders.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found"
+      });
+    }
+
+    const order = orders[0];
+
+    // Get items for this order
+    const [items] = await pool.execute(`
+      SELECT 
+        oi.product_id as productId,
+        oi.product_id as product_id,
+        oi.quantity,
+        oi.price,
+        p.name as productName,
+        p.name as name
+      FROM order_items oi
+      LEFT JOIN products p ON oi.product_id = p.id
+      WHERE oi.order_id = ?
+    `, [orderId]);
+
+    res.json({
+      success: true,
+      order: {
+        ...order,
+        items,
+        totalAmount: parseFloat(order.totalAmount)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get order details error:', error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch order details",
+      error: error.message
+    });
+  }
+});
+
+// GET /api/orders/:orderId/timer
+router.get("/:orderId/timer", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { orderId } = req.params;
+
+    const [timerInfo] = await pool.query(`
+      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
+             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
+             s.shop_name, s.name as shopkeeperName, s.phone as shopkeeperPhone, 
+             s.address as shopAddress, s.latitude as shopLatitude, s.longitude as shopLongitude
+      FROM orders o
+      LEFT JOIN order_timers ot ON o.id = ot.order_id
+      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
+      WHERE o.id = ? AND o.user_id = ?
+    `, [orderId, userId]);
+
+    if (timerInfo.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const timer = timerInfo[0];
+    let timeLeft = 0;
+
+    if (timer.is_active && timer.timer_expires_at) {
+      const now = new Date();
+      const expiresAt = new Date(timer.timer_expires_at);
+      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    }
+
+    res.json({ 
+      success: true, 
+      timer: {
+        order_id: timer.id,
+        orderId: timer.id,
+        status: timer.status,
+        has_timer: timer.has_timer,
+        pickup_code: timer.pickup_code,
+        is_active: timer.is_active,
+        is_expired: timer.is_expired,
+        time_left: timeLeft,
+        timer_duration: timer.timer_duration,
+        started_at: timer.timer_started_at,
+        expires_at: timer.timer_expires_at,
+        stopped_at: timer.stopped_at,
+        shop_info: {
+          shopName: timer.shop_name,
+          shopkeeperName: timer.shopkeeperName,
+          shopkeeperPhone: timer.shopkeeperPhone,
+          shopAddress: timer.shopAddress,
+          shopLatitude: timer.shopLatitude,
+          shopLongitude: timer.shopLongitude
+        }
+      }
+    });
+  } catch (err) {
+    console.error("Get order timer error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// GET /api/orders/:orderId/status
+router.get("/:orderId/status", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { orderId } = req.params;
+
+    const [orderInfo] = await pool.query(`
+      SELECT id, id as orderId, status, has_timer, pickup_code, timer_started_at, timer_expires_at,
+             total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
+      FROM orders 
+      WHERE id = ? AND user_id = ?
+    `, [orderId, userId]);
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    res.json({ success: true, order: orderInfo[0] });
+  } catch (err) {
+    console.error("Get order status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ============================================================================
 // CREATE NEW ORDER
 // ============================================================================
 // POST /api/orders
@@ -344,10 +519,40 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Determine if this is a store pickup order
     const hasTimer = deliveryType === 'store_pickup' ? 1 : 0;
-    const pickupCode = hasTimer ? Math.floor(100000 + Math.random() * 900000).toString() : null;
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Handle wellness points redemption if requested
+    let pointsDiscount = 0;
+    if (creditsUsed > 0) {
+      try {
+        const [[user]] = await connection.execute('SELECT store_credits FROM users WHERE id = ?', [userId]);
+        if (!user) {
+          await connection.rollback();
+          return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        const validation = validatePointsUsage(creditsUsed, user.store_credits || 0, totalAmount);
+        if (!validation.valid) {
+          await connection.rollback();
+          return res.status(400).json({ success: false, message: validation.message });
+        }
+
+        const pointsResult = await deductWellnessPoints(connection, userId, creditsUsed);
+        pointsDiscount = pointsResult.discountAmount;
+      } catch (pointsError) {
+        await connection.rollback();
+        return res.status(400).json({ success: false, message: pointsError.message });
+      }
+    }
+
+    const finalTotal = totalAmount - pointsDiscount;
+
+    // Get next order ID (TiDB doesn't support auto-increment reliably)
+    const [maxOrderId] = await connection.execute("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
+    const orderId = maxOrderId[0].nextId;
 
     // Calculate credits earned (1% of total amount)
-    const creditsEarned = Math.floor(totalAmount * 0.01);
+    const creditsEarned = Math.floor(finalTotal * 0.01);
 
     // Precompute timer timestamps for click & collect
     const now = new Date();
@@ -355,8 +560,9 @@ router.post("/", verifyToken, async (req, res) => {
     const timerExpiresAt = hasTimer ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000) : null;
 
     // Insert order
-    const [orderResult] = await connection.execute(`
+    await connection.execute(`
       INSERT INTO orders (
+        id,
         user_id, 
         shopkeeper_id, 
         status, 
@@ -368,43 +574,49 @@ router.post("/", verifyToken, async (req, res) => {
         latitude,
         longitude,
         has_timer,
-        pickup_code
-      ) VALUES (?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pickup_code,
+        timer_started_at,
+        timer_expires_at,
+        created_at
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `, [
+      orderId,
       userId, 
       shopkeeperId, 
       paymentMethod,
-      totalAmount, 
+      finalTotal, 
       creditsEarned,
       creditsUsed,
       deliveryAddress,
       latitude,
       longitude,
       hasTimer,
-      pickupCode
+      pickupCode,
+      timerStartedAt,
+      timerExpiresAt
     ]);
 
-    const orderId = orderResult.insertId;
-
-    // Persist timer fields if supported by schema
+    // Create timer record in order_timers table (only for pickup orders)
     if (hasTimer) {
       try {
         await connection.execute(`
-          UPDATE orders 
-          SET timer_started_at = ?, timer_expires_at = ?
-          WHERE id = ?
-        `, [timerStartedAt, timerExpiresAt, orderId]);
-      } catch (_e) {
-        // If columns are absent, skip silently
+          INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
+          VALUES (?, ?, ?, ?, ?, TRUE)
+        `, [orderId, pickupCode, TIMER_DURATION_SECONDS, timerStartedAt, timerExpiresAt]);
+      } catch (timerError) {
+        console.warn("Timer record creation failed:", timerError.message);
       }
     }
 
     // Insert order items
     for (const item of items) {
+      const [maxItemId] = await connection.execute("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
+      const itemId = maxItemId[0].nextId;
+      
       await connection.execute(`
-        INSERT INTO order_items (order_id, product_id, quantity, price)
-        VALUES (?, ?, ?, ?)
-      `, [orderId, item.productId, item.quantity, item.price]);
+        INSERT INTO order_items (id, order_id, product_id, quantity, price)
+        VALUES (?, ?, ?, ?, ?)
+      `, [itemId, orderId, item.productId, item.quantity, item.price]);
 
       // Reduce stock
       await connection.execute(`
@@ -442,9 +654,9 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Socket broadcast to shopkeeper and customer rooms
     try {
-      // Get shopkeeper details for the payload (including coordinates)
+      // Get shopkeeper details for the payload (including coordinates and push token)
       const [shopkeeperDetails] = await connection.execute(
-        "SELECT shop_name, name, phone, address, latitude, longitude FROM shopkeepers WHERE id = ?",
+        "SELECT shop_name, name, phone, address, latitude, longitude, expo_push_token FROM shopkeepers WHERE id = ?",
         [shopkeeperId]
       );
 
@@ -480,8 +692,8 @@ router.post("/", verifyToken, async (req, res) => {
         delivery_type: deliveryType, // Add for compatibility
         status: 'pending',
         originalStatus: 'Pending',
-        totalAmount: parseFloat(totalAmount),
-        total_amount: parseFloat(totalAmount), // Add for compatibility
+        totalAmount: parseFloat(finalTotal),
+        total_amount: parseFloat(finalTotal), // Add for compatibility
         creditsEarned,
         credits_earned: creditsEarned, // Add for compatibility
         creditsUsed,
@@ -528,75 +740,41 @@ router.post("/", verifyToken, async (req, res) => {
       };
 
       console.log(`📡 Socket: Broadcasting new order ${orderId} to shopkeeper ${shopkeeperId} and customer ${userId}`);
-      console.log(`📡 Socket: Order type: ${deliveryType}, hasTimer: ${hasTimer === 1}`);
       
       // Emit events used by clients
       if (req.io) {
         const shopRoom = `shop_${Number(shopkeeperId)}`;
         const customerRoom = `customer_${Number(userId)}`;
         
-        console.log(`📡 Socket: Emitting newOrder to ${shopRoom}`);
         req.io.to(shopRoom).emit('newOrder', payload);
-        console.log(`📡 Socket: Emitting orderCreated to ${shopRoom} (compat)`);
         req.io.to(shopRoom).emit('orderCreated', payload);
-        
-        console.log(`📡 Socket: Emitting newOrder to ${customerRoom}`);
         req.io.to(customerRoom).emit('newOrder', payload);
-        console.log(`📡 Socket: Emitting orderCreated to ${customerRoom} (compat)`);
         req.io.to(customerRoom).emit('orderCreated', payload);
-        
-        // Also emit to admin room for monitoring
-        console.log(`📡 Socket: Emitting newOrder to admin room`);
         req.io.to('admin').emit('newOrder', payload);
-        console.log(`📡 Socket: Emitting orderCreated to admin room (compat)`);
-        req.io.to('admin').emit('orderCreated', payload);
-        
-        console.log(`📡 Socket: New order broadcast completed successfully`);
-      } else {
-        console.warn('📡 Socket: req.io not available - orders will not sync in real-time!');
       }
-    } catch (_socketErr) {
-      console.error('📡 Socket: Error broadcasting new order:', _socketErr);
-      console.error('📡 Socket: Stack trace:', _socketErr.stack);
-      // Non-fatal if sockets not available
+
+      // Send push notification to shopkeeper
+      if (shopkeeper.expo_push_token) {
+        const token = shopkeeper.expo_push_token;
+        if (isFCMToken(token)) {
+          await sendFCMPush(token, "📦 New Order Received!", `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`, { orderId: String(orderId), shopId: String(shopkeeperId) });
+        } else {
+          await sendExpoPush(token, "📦 New Order Received!", `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`, { orderId, shopId: shopkeeperId });
+        }
+      }
+
+    } catch (notifyErr) {
+      console.error("Error notifying shopkeeper:", notifyErr);
     }
 
-    res.status(201).json({
+    res.json({
       success: true,
-      message: "Order created successfully",
+      message: "Order placed successfully",
       order: {
         id: orderId,
-        orderId: orderId,
-        order_id: orderId,
-        userId,
-        user_id: userId,
-        shopkeeperId,
-        shopkeeper_id: shopkeeperId,
-        deliveryType,
-        delivery_type: deliveryType,
-        status: 'pending',
-        totalAmount: parseFloat(totalAmount),
-        total_amount: parseFloat(totalAmount),
-        creditsEarned,
-        credits_earned: creditsEarned,
-        pickupCode,
-        pickup_code: pickupCode,
-        hasTimer: hasTimer === 1,
-        has_timer: hasTimer === 1,
-        timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
-        timer_started_at: timerStartedAt ? timerStartedAt.toISOString() : null,
-        timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-        timer_expires_at: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-        deliverySlot,
-        delivery_slot: deliverySlot,
-        shopName: shopkeeper.shop_name,
-        shop_name: shopkeeper.shop_name,
-        shopAddress: shopkeeper.address,
-        shop_address: shopkeeper.address,
-        shopLatitude: shopkeeper.latitude,
-        shop_latitude: shopkeeper.latitude,
-        shopLongitude: shopkeeper.longitude,
-        shop_longitude: shopkeeper.longitude
+        orderId,
+        totalAmount: finalTotal,
+        pickupCode
       }
     });
 

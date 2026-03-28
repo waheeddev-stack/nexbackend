@@ -121,7 +121,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         // A nearby shop with no stock is not useful to the user.
         // Products without baselineQty are not considered "live" in the new system.
         const [[productCount]] = await pool.query(
-          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND baselineQty > 0",
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND COALESCE(baselineQty, 0) > 0",
           [shop.id]
         );
 
@@ -227,13 +227,15 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each online shop directly from products table (products.shop_id)
-    // Only include products with stock > 0 and a set baselineQty
+    // Only include products with stock > 0 and a set baselineQty > 0
     // Products without baselineQty are not considered "live" in the new system
     const shopIds = onlineShops.map(s => s.id);
     const [products] = await pool.query(
-      `SELECT id AS product_id, shop_id, name, description, image, category, price, created_at
+      `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
        FROM products
-       WHERE shop_id IN (?) AND stock > 0 AND baselineQty > 0
+       WHERE shop_id IN (?) 
+         AND stock > 0 
+         AND COALESCE(baselineQty, 0) > 0
        ORDER BY created_at DESC`,
       [shopIds]
     );
@@ -700,7 +702,8 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       }
 
       // Check if product is live (baselineQty > 0)
-      if (product.baselineQty <= 0) {
+      const baseline = product.baselineQty != null ? Number(product.baselineQty) : 0;
+      if (baseline <= 0) {
         return res.status(400).json({ 
           success: false, 
           message: `"${product.name}" is no longer available. Please remove it from your cart.` 

@@ -1169,18 +1169,23 @@ shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkSub
     const shop_id = req.user.id;
     const { name, description, category, price, stock, baselineQty } = req.body;
 
-    // Check for required fields (allow either stock or baselineQty)
-    if (!name || price == null || (stock == null && baselineQty == null)) {
-      return res.status(400).json({ success: false, message: "Name, price, and stock/baselineQty are required" });
+    if (!name || price == null) {
+      return res.status(400).json({ success: false, message: "Name and price are required" });
     }
 
     const parsedPrice = Number(price);
-    const parsedStock = stock != null ? Number(stock) : Number(baselineQty);
-    const parsedBaselineQty = baselineQty != null ? Number(baselineQty) : parsedStock;
-
     if (Number.isNaN(parsedPrice) || parsedPrice < 0) return res.status(400).json({ success: false, message: "Invalid price" });
-    if (Number.isNaN(parsedStock) || parsedStock < 0) return res.status(400).json({ success: false, message: "Invalid stock" });
-    if (Number.isNaN(parsedBaselineQty) || parsedBaselineQty < 0) return res.status(400).json({ success: false, message: "Invalid baseline quantity" });
+
+    // Handle baselineQty and stock logic:
+    // 1. If baselineQty is provided, use it for both stock and baselineQty
+    // 2. If baselineQty is not provided, use stock for both
+    // 3. Default to 0 if neither provided
+    let finalBaselineQty = baselineQty != null ? Number(baselineQty) : (stock != null ? Number(stock) : 0);
+    let finalStock = finalBaselineQty; // Always sync stock to baseline on creation
+
+    if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) {
+      return res.status(400).json({ success: false, message: "Invalid stock or baseline quantity" });
+    }
 
     // ✅ FIX: Ensure price is stored with exactly 2 decimal places
     const formattedPrice = parseFloat(parsedPrice.toFixed(2));
@@ -1206,7 +1211,7 @@ shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkSub
 
     const [result] = await pool.query(
       `INSERT INTO products (shop_id, name, description, category, price, stock, baselineQty, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, name.trim(), description || null, category || null, formattedPrice, parsedStock, parsedBaselineQty, imageUrl]
+      [shop_id, name.trim(), description || null, category || null, formattedPrice, finalStock, finalBaselineQty, imageUrl]
     );
 
     const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
@@ -1262,14 +1267,20 @@ shopkeeperRouter.put("/products/:id", verifyToken, verifyShopkeeperStatus, check
       fields.push("price = ?"); 
       values.push(formattedPrice); 
     }
-    if (stock != null) { const s = Number(stock); if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); fields.push("stock = ?"); values.push(s); }
+    if (stock != null && baselineQty == null) { 
+      const s = Number(stock); 
+      if (Number.isNaN(s) || s < 0) return res.status(400).json({ success: false, message: "Invalid stock" }); 
+      fields.push("stock = ?"); 
+      values.push(s); 
+    }
+    
     // ✅ FIX: Add baselineQty handling - also set stock to match baseline
     if (baselineQty != null) { 
       const b = Number(baselineQty); 
       if (Number.isNaN(b) || b < 0) return res.status(400).json({ success: false, message: "Invalid baseline quantity" }); 
       fields.push("baselineQty = ?"); 
       values.push(b);
-      // When baseline is set, also set stock to that value
+      // When baseline is set or updated, always sync stock to it as per user requirement
       fields.push("stock = ?");
       values.push(b);
     }
@@ -1382,19 +1393,21 @@ shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, as
 shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStatus, async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { global_product_id, price, baselineQty } = req.body;
+    const { global_product_id, price, baselineQty, stock } = req.body;
 
     if (!global_product_id) {
       return res.status(400).json({ success: false, message: "global_product_id is required" });
     }
-    
-    // Handle optional baselineQty (default to 10 if not provided)
-    let parsedBaselineQty = 10; 
-    if (baselineQty != null) {
-      const b = Number(baselineQty);
-      if (!Number.isNaN(b) && b >= 0) {
-        parsedBaselineQty = b;
-      }
+
+    // Handle baselineQty and stock logic:
+    // 1. If baselineQty is provided, use it for both stock and baselineQty
+    // 2. If baselineQty is not provided, use stock for both
+    // 3. Default to 0 if neither provided
+    let finalBaselineQty = baselineQty != null ? Number(baselineQty) : (stock != null ? Number(stock) : 0);
+    let finalStock = finalBaselineQty; // Always sync stock to baseline on creation
+
+    if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) {
+      return res.status(400).json({ success: false, message: "Invalid stock or baseline quantity" });
     }
 
     // Verify global product exists
@@ -1422,7 +1435,7 @@ shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStat
     const [result] = await pool.query(
       `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, baselineQty, image)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shop_id, global_product_id, gp.name, gp.description || null, gp.category || null, priceToUse, parsedBaselineQty, parsedBaselineQty, gp.image || null]
+      [shop_id, global_product_id, gp.name, gp.description || null, gp.category || null, priceToUse, finalStock, finalBaselineQty, gp.image || null]
     );
 
     const [created] = await pool.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
@@ -1448,24 +1461,12 @@ shopkeeperRouter.patch("/products/:id/stock", verifyToken, verifyShopkeeperStatu
       return res.status(400).json({ success: false, message: "Invalid stock value" });
     }
 
-    const [existing] = await pool.query("SELECT id, baselineQty FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+    const [existing] = await pool.query("SELECT id FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
     if (existing.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
 
-    // If baselineQty is 0 or null, set it to the new stock value to make the product "live"
-    if (!existing[0].baselineQty || existing[0].baselineQty === 0) {
-      await pool.query(
-        "UPDATE products SET stock = ?, baselineQty = ? WHERE id = ? AND shop_id = ?",
-        [parsedStock, parsedStock, productId, shop_id]
-      );
-    } else {
-      await pool.query(
-        "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
-        [parsedStock, productId, shop_id]
-      );
-    }
-
+    await pool.query("UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?", [parsedStock, productId, shop_id]);
     const [updated] = await pool.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
 
     res.json({ success: true, message: "Stock updated", product: updated[0] });
