@@ -348,7 +348,6 @@ router.get("/", verifyToken, async (req, res) => {
         o.created_at,
         o.scheduled_time,
         o.cancellation_reason,
-        o.cancelled_by,
         s.shop_name,
         s.name as shopkeeper_name,
         s.phone as shopkeeper_phone,
@@ -747,7 +746,6 @@ router.get("/:orderId", verifyToken, async (req, res) => {
         o.created_at,
         o.scheduled_time,
         o.cancellation_reason,
-        o.cancelled_by,
         s.shop_name,
         s.name as shopkeeper_name,
         s.upi_id as shop_upi
