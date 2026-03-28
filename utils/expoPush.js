@@ -1,5 +1,5 @@
 import { Expo } from "expo-server-sdk";
-import pool from '../config/db.js'; // Import the database pool
+import pool from "../config/db.js"; // Import the database pool
 
 // Replaces previous implementation with full expo-server-sdk usage
 
@@ -70,7 +70,8 @@ export async function sendExpoPush(tokens, title, body, data = {}) {
       const receiptIdChunks = expo.chunkPushNotificationReceiptIds(receiptIds);
       for (const receiptIdChunk of receiptIdChunks) {
         try {
-          const chunkReceipts = await expo.getPushNotificationReceiptsAsync(receiptIdChunk);
+          const chunkReceipts =
+            await expo.getPushNotificationReceiptsAsync(receiptIdChunk);
           Object.assign(receipts, chunkReceipts);
         } catch (receiptErr) {
           console.error("getPushNotificationReceiptsAsync error:", receiptErr);
@@ -87,16 +88,27 @@ export async function sendExpoPush(tokens, title, body, data = {}) {
         const detail = receipt.details || {};
         // common errors: "DeviceNotRegistered", "InvalidCredentials", etc.
         if (receipt.message) {
-          errors.push({ token, ticketId, message: receipt.message, details: detail });
+          errors.push({
+            token,
+            ticketId,
+            message: receipt.message,
+            details: detail,
+          });
         }
         if (detail && detail.error) {
           // mark token for removal if device not registered or invalid
           const errCode = detail.error;
-          if (errCode === "DeviceNotRegistered" || errCode === "InvalidCredentials") {
+          if (
+            errCode === "DeviceNotRegistered" ||
+            errCode === "InvalidCredentials"
+          ) {
             invalidTokens.add(token);
             // Asynchronously remove the invalid token
-            removeInvalidToken(token).catch(removeError => {
-              console.error('❌ Failed to remove invalid Expo token:', removeError);
+            removeInvalidToken(token).catch((removeError) => {
+              console.error(
+                "❌ Failed to remove invalid Expo token:",
+                removeError
+              );
             });
           }
         }
@@ -114,7 +126,11 @@ export async function sendExpoPush(tokens, title, body, data = {}) {
     };
   } catch (err) {
     console.error("sendExpoPush fatal error:", err);
-    return { success: false, message: err?.message || "Unknown error", errors: [err] };
+    return {
+      success: false,
+      message: err?.message || "Unknown error",
+      errors: [err],
+    };
   }
 }
 
@@ -141,7 +157,9 @@ async function removeInvalidToken(token) {
       [token]
     );
     if (userResult.affectedRows > 0) {
-      console.log(`✅ Removed invalid Expo token from ${userResult.affectedRows} user(s)`);
+      console.log(
+        `✅ Removed invalid Expo token from ${userResult.affectedRows} user(s)`
+      );
     }
 
     // Remove from shopkeepers table
@@ -150,9 +168,13 @@ async function removeInvalidToken(token) {
       [token]
     );
     if (shopkeeperResult.affectedRows > 0) {
-      console.log(`✅ Removed invalid Expo token from ${shopkeeperResult.affectedRows} shopkeeper(s)`);
+      console.log(
+        `✅ Removed invalid Expo token from ${shopkeeperResult.affectedRows} shopkeeper(s)`
+      );
     }
   } catch (dbError) {
-    console.error(`Database error while removing invalid Expo token: ${dbError.message}`);
+    console.error(
+      `Database error while removing invalid Expo token: ${dbError.message}`
+    );
   }
 }

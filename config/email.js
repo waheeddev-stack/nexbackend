@@ -1,9 +1,9 @@
-import nodemailer from 'nodemailer';
-import { getConfig } from './environment.js';
-import { 
-  sendPasswordResetEmailSendGrid, 
-  sendPasswordResetConfirmationSendGrid 
-} from './email.sendgrid.js';
+import nodemailer from "nodemailer";
+
+import {
+  sendPasswordResetEmailSendGrid,
+  sendPasswordResetConfirmationSendGrid,
+} from "./email.sendgrid.js";
 
 /**
  * Check if SendGrid is configured
@@ -18,23 +18,25 @@ const isSendGridConfigured = () => {
  */
 const getCreateTransport = () => {
   // Try different ways nodemailer might be exported
-  if (typeof nodemailer?.createTransport === 'function') {
+  if (typeof nodemailer?.createTransport === "function") {
     return nodemailer.createTransport.bind(nodemailer);
   }
-  if (typeof nodemailer?.default?.createTransport === 'function') {
+  if (typeof nodemailer?.default?.createTransport === "function") {
     return nodemailer.default.createTransport.bind(nodemailer.default);
   }
-  
+
   // Log what we actually got
-  console.error('[EMAIL] nodemailer object:', {
+  console.error("[EMAIL] nodemailer object:", {
     hasCreateTransport: !!nodemailer?.createTransport,
     hasDefault: !!nodemailer?.default,
     hasDefaultCreateTransport: !!nodemailer?.default?.createTransport,
     type: typeof nodemailer,
-    keys: Object.keys(nodemailer || {})
+    keys: Object.keys(nodemailer || {}),
   });
-  
-  throw new Error('nodemailer.createTransport is not available. Module may not be installed correctly.');
+
+  throw new Error(
+    "nodemailer.createTransport is not available. Module may not be installed correctly."
+  );
 };
 
 /**
@@ -43,33 +45,35 @@ const getCreateTransport = () => {
 const createTransporter = () => {
   try {
     const createTransport = getCreateTransport();
-    
+
     // Gmail configuration with timeouts and IPv4 enforcement
     // Try port 465 (SSL) as port 587 may be blocked on Render
     const transporter = createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,               // Use port 465 (SSL) - more likely to work on restricted networks
-      secure: true,            // Use SSL
+      host: "smtp.gmail.com",
+      port: 465, // Use port 465 (SSL) - more likely to work on restricted networks
+      secure: true, // Use SSL
       auth: {
-        user: process.env.EMAIL_USER || 'resetnexkirana@gmail.com',
+        user: process.env.EMAIL_USER || "resetnexkirana@gmail.com",
         pass: process.env.EMAIL_PASSWORD, // App-specific password
       },
       tls: {
         rejectUnauthorized: false,
-        minVersion: 'TLSv1.2'
+        minVersion: "TLSv1.2",
       },
       // Add connection timeouts to prevent hanging
       connectionTimeout: 15000, // 15 seconds (increased for slower connections)
-      greetingTimeout: 15000,   // 15 seconds
-      socketTimeout: 20000,     // 20 seconds
+      greetingTimeout: 15000, // 15 seconds
+      socketTimeout: 20000, // 20 seconds
       // Force IPv4 to avoid IPv6 connectivity issues on some servers
       family: 4,
     });
 
     return transporter;
   } catch (error) {
-    console.error('[EMAIL] Error creating transporter:', error.message);
-    throw error;
+    console.error("[EMAIL] Error creating transporter:", error.message);
+    throw new Error(`Failed to create email transporter: ${error.message}`, {
+      cause: error,
+    });
   }
 };
 
@@ -84,12 +88,12 @@ const createTransporter = () => {
 export const sendPasswordResetEmail = async (to, resetToken, userName) => {
   // Use SendGrid if configured (production on Render)
   if (isSendGridConfigured()) {
-    console.log('[EMAIL] Using SendGrid for email delivery');
+    console.log("[EMAIL] Using SendGrid for email delivery");
     return await sendPasswordResetEmailSendGrid(to, resetToken, userName);
   }
-  
+
   // Fall back to Gmail SMTP (local development)
-  console.log('[EMAIL] Using Gmail SMTP for email delivery');
+  console.log("[EMAIL] Using Gmail SMTP for email delivery");
   return await sendPasswordResetEmailGmail(to, resetToken, userName);
 };
 
@@ -101,20 +105,20 @@ const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
   try {
     console.log(`[EMAIL] Attempting to send password reset email to: ${to}`);
     const transporter = createTransporter();
-    
+
     // Skip verify() as it can hang - we'll catch errors during send instead
-    console.log('[EMAIL] Transporter created, proceeding to send email...');
-    
+    console.log("[EMAIL] Transporter created, proceeding to send email...");
+
     // Create reset link (adjust URL based on your app's deep linking setup)
     const resetLink = `nexkirana://reset-password?token=${resetToken}`;
-    
+
     const mailOptions = {
       from: {
-        name: 'NexKirana',
-        address: process.env.EMAIL_USER || 'resetnexkirana@gmail.com'
+        name: "NexKirana",
+        address: process.env.EMAIL_USER || "resetnexkirana@gmail.com",
       },
       to,
-      subject: 'Password Reset Request - NexKirana Account',
+      subject: "Password Reset Request - NexKirana Account",
       html: `
         <!DOCTYPE html>
         <html lang="en">
@@ -149,7 +153,7 @@ const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
                       <h2 style="color: #111111; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; line-height: 1.3;">Password Reset Request</h2>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 10px 0;">
-                        Hello ${userName || 'Customer'},
+                        Hello ${userName || "Customer"},
                       </p>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
@@ -277,7 +281,7 @@ const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
                         NEXKIRANA - PASSWORD RESET REQUEST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Dear ${userName || 'Valued Customer'},
+Dear ${userName || "Valued Customer"},
 
 We have received a request to reset the password for your NexKirana account.
 
@@ -313,46 +317,66 @@ You're receiving this email because you have a NexKirana account.
 This email was sent to: ${to}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      `
+      `,
     };
 
-    console.log('[EMAIL] Sending email...');
-    
+    console.log("[EMAIL] Sending email...");
+
     // Wrap sendMail in a timeout promise to prevent hanging
     const sendEmailPromise = transporter.sendMail(mailOptions);
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Email send timeout after 20 seconds')), 20000);
+      setTimeout(
+        () => reject(new Error("Email send timeout after 20 seconds")),
+        20000
+      );
     });
-    
+
     const info = await Promise.race([sendEmailPromise, timeoutPromise]);
-    
-    console.log(`[EMAIL] ✅ Password reset email sent successfully! Message ID: ${info.messageId}`);
-    
+
+    console.log(
+      `[EMAIL] ✅ Password reset email sent successfully! Message ID: ${info.messageId}`
+    );
+
     return {
       success: true,
-      messageId: info.messageId
+      messageId: info.messageId,
     };
   } catch (error) {
-    console.error('[EMAIL] ❌ Error sending password reset email:', error.message);
-    console.error('[EMAIL] Error details:', {
+    console.error(
+      "[EMAIL] ❌ Error sending password reset email:",
+      error.message
+    );
+    console.error("[EMAIL] Error details:", {
       code: error.code,
       command: error.command,
       response: error.response,
-      responseCode: error.responseCode
+      responseCode: error.responseCode,
     });
-    
+
     // Provide more specific error messages
-    if (error.code === 'EAUTH') {
-      throw new Error('Email authentication failed. Please check EMAIL_USER and EMAIL_PASSWORD in .env');
-    } else if (error.code === 'ECONNECTION' || error.code === 'ETIMEDOUT') {
-      throw new Error('Unable to connect to email server. Please check your internet connection');
+    if (error.code === "EAUTH") {
+      throw new Error(
+        "Email authentication failed. Please check EMAIL_USER and EMAIL_PASSWORD in .env",
+        { cause: error }
+      );
+    } else if (error.code === "ECONNECTION" || error.code === "ETIMEDOUT") {
+      throw new Error(
+        "Unable to connect to email server. Please check your internet connection",
+        { cause: error }
+      );
     } else if (error.responseCode === 550) {
-      throw new Error('Email address not found or rejected by server');
+      throw new Error("Email address not found or rejected by server", {
+        cause: error,
+      });
     } else if (error.responseCode === 554) {
-      throw new Error('Email rejected due to spam or policy violation');
+      throw new Error("Email rejected due to spam or policy violation", {
+        cause: error,
+      });
     }
-    
-    throw new Error(`Failed to send password reset email: ${error.message}`);
+
+    throw new Error(`Failed to send password reset email: ${error.message}`, {
+      cause: error,
+    });
   }
 };
 
@@ -368,7 +392,7 @@ export const sendPasswordResetConfirmation = async (to, userName) => {
   if (isSendGridConfigured()) {
     return await sendPasswordResetConfirmationSendGrid(to, userName);
   }
-  
+
   // Fall back to Gmail SMTP
   return await sendPasswordResetConfirmationGmail(to, userName);
 };
@@ -379,14 +403,14 @@ export const sendPasswordResetConfirmation = async (to, userName) => {
 const sendPasswordResetConfirmationGmail = async (to, userName) => {
   try {
     const transporter = createTransporter();
-    
+
     const mailOptions = {
       from: {
-        name: 'NexKirana',
-        address: process.env.EMAIL_USER || 'resetnexkirana@gmail.com'
+        name: "NexKirana",
+        address: process.env.EMAIL_USER || "resetnexkirana@gmail.com",
       },
       to,
-      subject: 'Security Alert: Password Successfully Changed - NexKirana',
+      subject: "Security Alert: Password Successfully Changed - NexKirana",
       html: `
         <!DOCTYPE html>
         <html lang="en">
@@ -421,7 +445,7 @@ const sendPasswordResetConfirmationGmail = async (to, userName) => {
                       <h2 style="color: #111111; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; line-height: 1.3;">Password Successfully Changed</h2>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 10px 0;">
-                        Hello ${userName || 'Customer'},
+                        Hello ${userName || "Customer"},
                       </p>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
@@ -444,7 +468,7 @@ const sendPasswordResetConfirmationGmail = async (to, userName) => {
                               <tr>
                                 <td style="padding: 8px 0; border-top: 1px solid #ddd;">
                                   <p style="color: #555555; font-size: 12px; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">Changed On</p>
-                                  <p style="color: #111111; font-size: 14px; margin: 5px 0 0 0; font-weight: 700;">${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}</p>
+                                  <p style="color: #111111; font-size: 14px; margin: 5px 0 0 0; font-weight: 700;">${new Date().toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" })}</p>
                                 </td>
                               </tr>
                             </table>
@@ -541,7 +565,7 @@ const sendPasswordResetConfirmationGmail = async (to, userName) => {
               NEXKIRANA - PASSWORD SUCCESSFULLY CHANGED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Dear ${userName || 'Valued Customer'},
+Dear ${userName || "Valued Customer"},
 
 This email confirms that your NexKirana account password has been 
 successfully changed. You can now sign in to your account using your 
@@ -552,7 +576,7 @@ ACCOUNT DETAILS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Account Email: ${to}
-Changed On: ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}
+Changed On: ${new Date().toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" })}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ DIDN'T MAKE THIS CHANGE?
@@ -592,23 +616,23 @@ You're receiving this security notification because your password was changed.
 This email was sent to: ${to}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      `
+      `,
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log('Password reset confirmation email sent:', info.messageId);
-    
+    console.log("Password reset confirmation email sent:", info.messageId);
+
     return {
       success: true,
-      messageId: info.messageId
+      messageId: info.messageId,
     };
   } catch (error) {
-    console.error('Error sending confirmation email:', error);
-    throw new Error('Failed to send confirmation email');
+    console.error("Error sending confirmation email:", error);
+    throw new Error("Failed to send confirmation email", { cause: error });
   }
 };
 
 export default {
   sendPasswordResetEmail,
-  sendPasswordResetConfirmation
+  sendPasswordResetConfirmation,
 };

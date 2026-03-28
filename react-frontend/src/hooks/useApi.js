@@ -1,58 +1,56 @@
-import { useState, useEffect, useCallback } from 'react';
-import { apiService, apiUtils } from '../services/api';
+import { useState, useEffect, useCallback } from "react";
+import { apiService, apiUtils } from "../services/api";
 
 // Custom hook for API calls with loading, error, and data state management
-export const useApi = (apiCall, dependencies = [], options = {}) => {
+export const useApi = (apiCall, options = {}) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
-  const {
-    immediate = true,
-    onSuccess,
-    onError,
-    transform,
-  } = options;
 
-  const execute = useCallback(async (...args) => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const response = await apiCall(...args);
-      let responseData = response.data;
-      
-      // Transform data if transform function provided
-      if (transform && typeof transform === 'function') {
-        responseData = transform(responseData);
+  const { immediate = true, onSuccess, onError, transform } = options;
+
+  const execute = useCallback(
+    async (...args) => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const response = await apiCall(...args);
+        let responseData = response.data;
+
+        // Transform data if transform function provided
+        if (transform && typeof transform === "function") {
+          responseData = transform(responseData);
+        }
+
+        setData(responseData);
+
+        if (onSuccess) {
+          onSuccess(responseData);
+        }
+
+        return responseData;
+      } catch (err) {
+        const errorMessage = apiUtils.handleError(err);
+        setError(errorMessage);
+
+        if (onError) {
+          onError(errorMessage, err);
+        }
+
+        throw err;
+      } finally {
+        setLoading(false);
       }
-      
-      setData(responseData);
-      
-      if (onSuccess) {
-        onSuccess(responseData);
-      }
-      
-      return responseData;
-    } catch (err) {
-      const errorMessage = apiUtils.handleError(err);
-      setError(errorMessage);
-      
-      if (onError) {
-        onError(errorMessage, err);
-      }
-      
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [apiCall, transform, onSuccess, onError]);
+    },
+    [apiCall, transform, onSuccess, onError]
+  );
 
   useEffect(() => {
     if (immediate) {
       execute();
     }
-  }, dependencies);
+  }, [execute, immediate]);
 
   return {
     data,
@@ -100,25 +98,17 @@ export const useUserOrders = (userId, params = {}) => {
 
 // Hook for user profile
 export const useUserProfile = (userId) => {
-  return useApi(
-    () => apiService.users.getProfile(userId),
-    [userId],
-    {
-      immediate: !!userId,
-      transform: (data) => data.user || data,
-    }
-  );
+  return useApi(() => apiService.users.getProfile(userId), [userId], {
+    immediate: !!userId,
+    transform: (data) => data.user || data,
+  });
 };
 
 // Hook for admin dashboard
 export const useAdminDashboard = () => {
-  return useApi(
-    () => apiService.admin.getDashboard(),
-    [],
-    {
-      transform: (data) => data.dashboard || data,
-    }
-  );
+  return useApi(() => apiService.admin.getDashboard(), [], {
+    transform: (data) => data.dashboard || data,
+  });
 };
 
 // Hook for shopkeepers list (admin)
@@ -142,7 +132,7 @@ export const useApiConnection = () => {
     try {
       const connected = await apiUtils.checkConnection();
       setIsConnected(connected);
-    } catch (error) {
+    } catch (e) {
       setIsConnected(false);
     } finally {
       setChecking(false);
@@ -151,10 +141,10 @@ export const useApiConnection = () => {
 
   useEffect(() => {
     checkConnection();
-    
+
     // Check connection every 30 seconds
     const interval = setInterval(checkConnection, 30000);
-    
+
     return () => clearInterval(interval);
   }, [checkConnection]);
 
@@ -173,39 +163,39 @@ export const useAuth = () => {
 
   useEffect(() => {
     // Check for existing auth token on mount
-    const token = localStorage.getItem('authToken');
-    const type = localStorage.getItem('userType');
-    
+    const token = localStorage.getItem("authToken");
+    const type = localStorage.getItem("userType");
+
     if (token && type) {
       setUserType(type);
       // You might want to validate the token here
     }
   }, []);
 
-  const login = useCallback(async (credentials, type = 'user') => {
+  const login = useCallback(async (credentials, type = "user") => {
     setLoading(true);
     try {
       let response;
-      
+
       switch (type) {
-        case 'admin':
+        case "admin":
           response = await apiService.auth.adminLogin(credentials);
           break;
-        case 'shopkeeper':
+        case "shopkeeper":
           response = await apiService.auth.shopkeeperSignin(credentials);
           break;
         default:
           response = await apiService.auth.userSignin(credentials);
       }
-      
+
       const { token, user: userData } = response.data;
-      
+
       apiUtils.setAuthToken(token);
-      localStorage.setItem('userType', type);
-      
+      localStorage.setItem("userType", type);
+
       setUser(userData);
       setUserType(type);
-      
+
       return { success: true, user: userData };
     } catch (error) {
       const errorMessage = apiUtils.handleError(error);
@@ -221,19 +211,19 @@ export const useAuth = () => {
     setUserType(null);
   }, []);
 
-  const signup = useCallback(async (userData, type = 'user') => {
+  const signup = useCallback(async (userData, type = "user") => {
     setLoading(true);
     try {
       let response;
-      
+
       switch (type) {
-        case 'shopkeeper':
+        case "shopkeeper":
           response = await apiService.auth.shopkeeperSignup(userData);
           break;
         default:
           response = await apiService.auth.userSignup(userData);
       }
-      
+
       return { success: true, data: response.data };
     } catch (error) {
       const errorMessage = apiUtils.handleError(error);
@@ -250,7 +240,7 @@ export const useAuth = () => {
     login,
     logout,
     signup,
-    isAuthenticated: !!user || !!localStorage.getItem('authToken'),
+    isAuthenticated: !!user || !!localStorage.getItem("authToken"),
   };
 };
 

@@ -1,9 +1,12 @@
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import pool from '../config/db.js';
-import { createJWEToken, verifyJWEToken } from '../utils/jweToken.js';
-import { sendPasswordResetEmail, sendPasswordResetConfirmation } from '../config/email.js';
-import { validateEmail, validatePassword } from '../middleware/validation.js';
+import express from "express";
+import bcrypt from "bcryptjs";
+import pool from "../config/db.js";
+import { createJWEToken, verifyJWEToken } from "../utils/jweToken.js";
+import {
+  sendPasswordResetEmail,
+  sendPasswordResetConfirmation,
+} from "../config/email.js";
+import { validateEmail, validatePassword } from "../middleware/validation.js";
 
 const router = express.Router();
 
@@ -15,20 +18,23 @@ const ATTEMPT_WINDOW = 15 * 60 * 1000; // 15 minutes
 const checkRateLimit = (email) => {
   const now = Date.now();
   const attempts = resetAttempts.get(email) || { count: 0, firstAttempt: now };
-  
+
   // Reset if window expired
   if (now - attempts.firstAttempt > ATTEMPT_WINDOW) {
     resetAttempts.set(email, { count: 1, firstAttempt: now });
     return true;
   }
-  
+
   // Check if exceeded
   if (attempts.count >= MAX_ATTEMPTS) {
     return false;
   }
-  
+
   // Increment
-  resetAttempts.set(email, { count: attempts.count + 1, firstAttempt: attempts.firstAttempt });
+  resetAttempts.set(email, {
+    count: attempts.count + 1,
+    firstAttempt: attempts.firstAttempt,
+  });
   return true;
 };
 
@@ -37,7 +43,7 @@ const checkRateLimit = (email) => {
  * @desc    Request password reset email
  * @access  Public
  */
-router.post('/request', async (req, res) => {
+router.post("/request", async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -45,7 +51,7 @@ router.post('/request', async (req, res) => {
     if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Email is required'
+        message: "Email is required",
       });
     }
 
@@ -55,7 +61,7 @@ router.post('/request', async (req, res) => {
     } catch (error) {
       return res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
 
@@ -63,13 +69,14 @@ router.post('/request', async (req, res) => {
     if (!checkRateLimit(validatedEmail)) {
       return res.status(429).json({
         success: false,
-        message: 'Too many password reset attempts. Please try again in 15 minutes.'
+        message:
+          "Too many password reset attempts. Please try again in 15 minutes.",
       });
     }
 
     // Check if user exists
     const [users] = await pool.query(
-      'SELECT id, name, email FROM users WHERE email = ?',
+      "SELECT id, name, email FROM users WHERE email = ?",
       [validatedEmail]
     );
 
@@ -83,56 +90,70 @@ router.post('/request', async (req, res) => {
         {
           id: user.id,
           email: user.email,
-          type: 'password_reset'
+          type: "password_reset",
         },
-        '1h'
+        "1h"
       );
 
       // Send password reset email
       try {
         console.log(`[PASSWORD-RESET] Sending reset email to: ${user.email}`);
-        
+
         // Add timeout wrapper for the entire email operation
-        const emailPromise = sendPasswordResetEmail(user.email, resetToken, user.name);
+        const emailPromise = sendPasswordResetEmail(
+          user.email,
+          resetToken,
+          user.name
+        );
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Email operation timeout')), 25000); // 25 second timeout
+          setTimeout(() => reject(new Error("Email operation timeout")), 25000); // 25 second timeout
         });
-        
+
         await Promise.race([emailPromise, timeoutPromise]);
-        
-        console.log(`[PASSWORD-RESET] ✅ Password reset email sent successfully to: ${user.email}`);
+
+        console.log(
+          `[PASSWORD-RESET] ✅ Password reset email sent successfully to: ${user.email}`
+        );
       } catch (emailError) {
-        console.error('[PASSWORD-RESET] ❌ Failed to send password reset email:', emailError.message);
-        console.error('[PASSWORD-RESET] Error details:', emailError);
-        
+        console.error(
+          "[PASSWORD-RESET] ❌ Failed to send password reset email:",
+          emailError.message
+        );
+        console.error("[PASSWORD-RESET] Error details:", emailError);
+
         // Return more specific error message
-        let errorMessage = 'Failed to send password reset email. Please try again later.';
-        if (emailError.message.includes('authentication')) {
-          errorMessage = 'Email service is temporarily unavailable. Please contact support.';
-        } else if (emailError.message.includes('connect')) {
-          errorMessage = 'Unable to reach email service. Please try again in a few minutes.';
+        let errorMessage =
+          "Failed to send password reset email. Please try again later.";
+        if (emailError.message.includes("authentication")) {
+          errorMessage =
+            "Email service is temporarily unavailable. Please contact support.";
+        } else if (emailError.message.includes("connect")) {
+          errorMessage =
+            "Unable to reach email service. Please try again in a few minutes.";
         }
-        
+
         return res.status(500).json({
           success: false,
-          message: errorMessage
+          message: errorMessage,
         });
       }
     } else {
-      console.log(`Password reset requested for non-existent email: ${validatedEmail}`);
+      console.log(
+        `Password reset requested for non-existent email: ${validatedEmail}`
+      );
     }
 
     // Always return success message
     res.json({
       success: true,
-      message: 'If an account exists with this email, you will receive a password reset link shortly.'
+      message:
+        "If an account exists with this email, you will receive a password reset link shortly.",
     });
-
   } catch (error) {
-    console.error('Password reset request error:', error);
+    console.error("Password reset request error:", error);
     res.status(500).json({
       success: false,
-      message: 'An error occurred while processing your request'
+      message: "An error occurred while processing your request",
     });
   }
 });
@@ -142,14 +163,14 @@ router.post('/request', async (req, res) => {
  * @desc    Verify reset token validity
  * @access  Public
  */
-router.post('/verify', async (req, res) => {
+router.post("/verify", async (req, res) => {
   try {
     const { token } = req.body;
 
     if (!token) {
       return res.status(400).json({
         success: false,
-        message: 'Reset token is required'
+        message: "Reset token is required",
       });
     }
 
@@ -158,52 +179,50 @@ router.post('/verify', async (req, res) => {
       const payload = await verifyJWEToken(token);
 
       // Check token type
-      if (payload.type !== 'password_reset') {
+      if (payload.type !== "password_reset") {
         return res.status(400).json({
           success: false,
-          message: 'Invalid reset token'
+          message: "Invalid reset token",
         });
       }
 
       // Check if user still exists
       const [users] = await pool.query(
-        'SELECT id, email FROM users WHERE id = ? AND email = ?',
+        "SELECT id, email FROM users WHERE id = ? AND email = ?",
         [payload.id, payload.email]
       );
 
       if (users.length === 0) {
         return res.status(404).json({
           success: false,
-          message: 'User not found'
+          message: "User not found",
         });
       }
 
       res.json({
         success: true,
-        message: 'Token is valid',
-        email: payload.email
+        message: "Token is valid",
+        email: payload.email,
       });
-
     } catch (verifyError) {
-      if (verifyError.message === 'TOKEN_EXPIRED') {
+      if (verifyError.message === "TOKEN_EXPIRED") {
         return res.status(401).json({
           success: false,
-          message: 'Reset link has expired. Please request a new one.',
-          code: 'TOKEN_EXPIRED'
+          message: "Reset link has expired. Please request a new one.",
+          code: "TOKEN_EXPIRED",
         });
       }
 
       return res.status(401).json({
         success: false,
-        message: 'Invalid or expired reset token'
+        message: "Invalid or expired reset token",
       });
     }
-
   } catch (error) {
-    console.error('Token verification error:', error);
+    console.error("Token verification error:", error);
     res.status(500).json({
       success: false,
-      message: 'An error occurred while verifying the token'
+      message: "An error occurred while verifying the token",
     });
   }
 });
@@ -213,7 +232,7 @@ router.post('/verify', async (req, res) => {
  * @desc    Reset password with token
  * @access  Public
  */
-router.post('/reset', async (req, res) => {
+router.post("/reset", async (req, res) => {
   try {
     const { token, newPassword } = req.body;
 
@@ -221,7 +240,7 @@ router.post('/reset', async (req, res) => {
     if (!token || !newPassword) {
       return res.status(400).json({
         success: false,
-        message: 'Token and new password are required'
+        message: "Token and new password are required",
       });
     }
 
@@ -231,7 +250,7 @@ router.post('/reset', async (req, res) => {
     } catch (error) {
       return res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
 
@@ -241,37 +260,37 @@ router.post('/reset', async (req, res) => {
       payload = await verifyJWEToken(token);
 
       // Check token type
-      if (payload.type !== 'password_reset') {
+      if (payload.type !== "password_reset") {
         return res.status(400).json({
           success: false,
-          message: 'Invalid reset token'
+          message: "Invalid reset token",
         });
       }
     } catch (verifyError) {
-      if (verifyError.message === 'TOKEN_EXPIRED') {
+      if (verifyError.message === "TOKEN_EXPIRED") {
         return res.status(401).json({
           success: false,
-          message: 'Reset link has expired. Please request a new one.',
-          code: 'TOKEN_EXPIRED'
+          message: "Reset link has expired. Please request a new one.",
+          code: "TOKEN_EXPIRED",
         });
       }
 
       return res.status(401).json({
         success: false,
-        message: 'Invalid or expired reset token'
+        message: "Invalid or expired reset token",
       });
     }
 
     // Get user
     const [users] = await pool.query(
-      'SELECT id, email, name, password FROM users WHERE id = ? AND email = ?',
+      "SELECT id, email, name, password FROM users WHERE id = ? AND email = ?",
       [payload.id, payload.email]
     );
 
     if (users.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
@@ -282,7 +301,7 @@ router.post('/reset', async (req, res) => {
     if (isSamePassword) {
       return res.status(400).json({
         success: false,
-        message: 'New password must be different from your current password'
+        message: "New password must be different from your current password",
       });
     }
 
@@ -290,16 +309,16 @@ router.post('/reset', async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // Update password
-    await pool.query(
-      'UPDATE users SET password = ? WHERE id = ?',
-      [hashedPassword, user.id]
-    );
+    await pool.query("UPDATE users SET password = ? WHERE id = ?", [
+      hashedPassword,
+      user.id,
+    ]);
 
     // Send confirmation email
     try {
       await sendPasswordResetConfirmation(user.email, user.name);
     } catch (emailError) {
-      console.error('Failed to send confirmation email:', emailError);
+      console.error("Failed to send confirmation email:", emailError);
       // Don't fail the request if confirmation email fails
     }
 
@@ -307,14 +326,14 @@ router.post('/reset', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Password has been reset successfully. You can now sign in with your new password.'
+      message:
+        "Password has been reset successfully. You can now sign in with your new password.",
     });
-
   } catch (error) {
-    console.error('Password reset error:', error);
+    console.error("Password reset error:", error);
     res.status(500).json({
       success: false,
-      message: 'An error occurred while resetting your password'
+      message: "An error occurred while resetting your password",
     });
   }
 });
@@ -326,7 +345,7 @@ export default router;
  * @desc    Redirect to app deep link for password reset (email link handler)
  * @access  Public
  */
-router.get('/redirect', (req, res) => {
+router.get("/redirect", (req, res) => {
   const { token } = req.query;
 
   if (!token) {

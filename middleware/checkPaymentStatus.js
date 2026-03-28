@@ -24,20 +24,19 @@ const checkPaymentStatus = async (req, res, next) => {
     const earnings = earningsRows[0];
 
     // Block access if payment is overdue
-    if (earnings.payment_status === 'blocked') {
+    if (earnings.payment_status === "blocked") {
       return res.status(403).json({
         success: false,
         message: `Payment overdue! Please pay ₹${earnings.pending_amount} to continue using the app.`,
         isBlocked: true,
         pendingAmount: earnings.pending_amount,
         nextPaymentDate: earnings.next_payment_date,
-        errorCode: 'PAYMENT_OVERDUE'
+        errorCode: "PAYMENT_OVERDUE",
       });
     }
 
     // Allow access for other statuses
     next();
-
   } catch (err) {
     console.error("Payment status check error:", err);
     // Don't block on error, just log and continue

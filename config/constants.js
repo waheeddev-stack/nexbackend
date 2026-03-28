@@ -31,7 +31,11 @@ export const WELLNESS_TIERS = {
   SUPER_FAST: { minMinutes: 5, points: 40, label: "Super Fast" },
   GOOD_PACE: { minMinutes: 2, points: 30, label: "Good Pace" },
   ON_TIME: { minMinutes: 0, points: 10, label: "On Time" },
-  LATE_BUT_ACTIVE: { minMinutes: -Infinity, points: 5, label: "Late but Active" }
+  LATE_BUT_ACTIVE: {
+    minMinutes: -Infinity,
+    points: 5,
+    label: "Late but Active",
+  },
 };
 
 // ==================== DELIVERY CONSTANTS ====================
@@ -43,9 +47,9 @@ export const DELIVERY_FEE = 0;
 // Operating hours: 8 AM to 8 PM (12 hours)
 // Excluded: 8 PM to 8 AM (12 hours)
 export const TIME_SLOT_CONFIG = {
-  START_HOUR: 8,  // 8 AM
-  END_HOUR: 20,   // 8 PM (20:00 in 24-hour format)
-  INTERVAL_MINUTES: 30
+  START_HOUR: 8, // 8 AM
+  END_HOUR: 20, // 8 PM (20:00 in 24-hour format)
+  INTERVAL_MINUTES: 30,
 };
 
 // ==================== ORDER STATUS CONSTANTS ====================
@@ -54,7 +58,7 @@ export const ORDER_STATUS = {
   PENDING: "Pending",
   PROCESSING: "Processing",
   COMPLETED: "Completed",
-  CANCELLED: "Cancelled"
+  CANCELLED: "Cancelled",
 };
 
 export const VALID_ORDER_STATUSES = Object.values(ORDER_STATUS);
@@ -75,7 +79,7 @@ export const PICKUP_CODE_REGEX = /^\d{6}$/;
 // Verification endpoint rate limiting
 export const VERIFICATION_RATE_LIMIT = {
   WINDOW_MS: 15 * 60 * 1000, // 15 minutes
-  MAX_ATTEMPTS: 10 // 10 attempts per window
+  MAX_ATTEMPTS: 10, // 10 attempts per window
 };
 
 // ==================== NOTIFICATION CONSTANTS ====================
@@ -83,7 +87,7 @@ export const VERIFICATION_RATE_LIMIT = {
 // Push notification retry configuration
 export const PUSH_NOTIFICATION_CONFIG = {
   MAX_RETRIES: 3,
-  RETRY_DELAY_MS: 1000
+  RETRY_DELAY_MS: 1000,
 };
 
 // ==================== DATABASE CONSTANTS ====================
@@ -109,5 +113,5 @@ export default {
   PICKUP_CODE_REGEX,
   VERIFICATION_RATE_LIMIT,
   PUSH_NOTIFICATION_CONFIG,
-  DB_QUERY_TIMEOUT
+  DB_QUERY_TIMEOUT,
 };

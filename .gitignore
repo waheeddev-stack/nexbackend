@@ -57,3 +57,8 @@ credentials.json
 # OS
 .DS_Store
 Thumbs.db
+
+
+.eslintrc.json
+.prettierrc
+eslint.config.js

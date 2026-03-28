@@ -1,17 +1,27 @@
 import express from "express";
 import verifyToken from "../middleware/auth.js";
-import { handleOrderTokenExpiration, handleCartTokenExpiration, orderErrorHandler } from "../middleware/orderErrorHandler.js";
+import {
+  handleOrderTokenExpiration,
+  handleCartTokenExpiration,
+  orderErrorHandler,
+} from "../middleware/orderErrorHandler.js";
 import { refreshTokenIfNeeded } from "../middleware/tokenRefresh.js";
 import pool from "../config/db.js";
-import { 
+import {
   validateStockAvailability,
   onOrderCreated,
-  onOrderCancelled
-} from '../middleware/inventory.order.hooks.js';
-import { TIMER_DURATION_SECONDS, TIME_SLOT_CONFIG, ORDER_STATUS } from '../config/constants.js';
-import { validatePointsUsage, deductWellnessPoints, awardWellnessPoints } from '../utils/wellnessPoints.js';
-import { sendExpoPush } from '../utils/expoPush.js';
-import { sendFCMPush, isFCMToken } from '../utils/fcmPush.js';
+} from "../middleware/inventory.order.hooks.js";
+import {
+  TIMER_DURATION_SECONDS,
+  TIME_SLOT_CONFIG,
+} from "../config/constants.js";
+import {
+  validatePointsUsage,
+  deductWellnessPoints,
+  awardWellnessPoints,
+} from "../utils/wellnessPoints.js";
+import { sendExpoPush } from "../utils/expoPush.js";
+import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 
 const router = express.Router();
@@ -29,69 +39,78 @@ router.get("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const { status = 'all', deliveryType } = req.query;
+    const { status = "all", deliveryType } = req.query;
 
     // Build WHERE clause for filtering based on role
     let whereConditions = [];
     let queryParams = [];
 
-    if (userRole === 'user') {
-      whereConditions.push('o.user_id = ?');
+    if (userRole === "user") {
+      whereConditions.push("o.user_id = ?");
       queryParams.push(userId);
-    } else if (userRole === 'shopkeeper') {
-      whereConditions.push('o.shopkeeper_id = ?');
+    } else if (userRole === "shopkeeper") {
+      whereConditions.push("o.shopkeeper_id = ?");
       queryParams.push(userId);
-    } else if (userRole === 'admin') {
+    } else if (userRole === "admin") {
       // Admin can see all orders unless filtered by another parameter
     } else {
-      return res.status(403).json({ success: false, message: "Unauthorized role" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Unauthorized role" });
     }
 
     // Add status filter (map UI status to DB status)
-    if (status && status !== 'all') {
-      if (status === 'pending') {
+    if (status && status !== "all") {
+      if (status === "pending") {
         whereConditions.push("o.status IN ('Pending', 'Processing', 'Paid')");
-      } else if (status === 'completed') {
+      } else if (status === "completed") {
         whereConditions.push("o.status IN ('Completed', 'Delivered')");
-      } else if (status === 'cancelled') {
+      } else if (status === "cancelled") {
         whereConditions.push("o.status = 'Cancelled'");
       }
     }
 
     // Add delivery type filter
     if (deliveryType) {
-      if (deliveryType === 'store_pickup') {
-        whereConditions.push('o.has_timer = 1');
-      } else if (deliveryType === 'home_delivery') {
-        whereConditions.push('(o.has_timer = 0 OR o.has_timer IS NULL)');
+      if (deliveryType === "store_pickup") {
+        whereConditions.push("o.has_timer = 1");
+      } else if (deliveryType === "home_delivery") {
+        whereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
       }
     }
 
-    const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+    const whereClause =
+      whereConditions.length > 0
+        ? "WHERE " + whereConditions.join(" AND ")
+        : "";
 
     // Get counts for all statuses
     let countWhereConditions = [];
     let countParams = [];
-    
-    if (userRole === 'user') {
-      countWhereConditions.push('o.user_id = ?');
+
+    if (userRole === "user") {
+      countWhereConditions.push("o.user_id = ?");
       countParams.push(userId);
-    } else if (userRole === 'shopkeeper') {
-      countWhereConditions.push('o.shopkeeper_id = ?');
+    } else if (userRole === "shopkeeper") {
+      countWhereConditions.push("o.shopkeeper_id = ?");
       countParams.push(userId);
     }
 
     if (deliveryType) {
-      if (deliveryType === 'store_pickup') {
-        countWhereConditions.push('o.has_timer = 1');
-      } else if (deliveryType === 'home_delivery') {
-        countWhereConditions.push('(o.has_timer = 0 OR o.has_timer IS NULL)');
+      if (deliveryType === "store_pickup") {
+        countWhereConditions.push("o.has_timer = 1");
+      } else if (deliveryType === "home_delivery") {
+        countWhereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
       }
     }
-    
-    const countWhereClause = countWhereConditions.length > 0 ? 'WHERE ' + countWhereConditions.join(' AND ') : '';
 
-    const [counts] = await pool.execute(`
+    const countWhereClause =
+      countWhereConditions.length > 0
+        ? "WHERE " + countWhereConditions.join(" AND ")
+        : "";
+
+    const [counts] = await pool.execute(
+      `
       SELECT 
         COUNT(*) as all_count,
         SUM(CASE WHEN o.status IN ('Pending', 'Processing', 'Paid') THEN 1 ELSE 0 END) as pending_count,
@@ -99,10 +118,13 @@ router.get("/", verifyToken, async (req, res) => {
         SUM(CASE WHEN o.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_count
       FROM orders o
       ${countWhereClause}
-    `, countParams);
+    `,
+      countParams
+    );
 
     // Get filtered orders with shopkeeper and items details
-    const [orders] = await pool.execute(`
+    const [orders] = await pool.execute(
+      `
       SELECT 
         o.id,
         o.id as orderId,
@@ -142,15 +164,18 @@ router.get("/", verifyToken, async (req, res) => {
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       ${whereClause}
       ORDER BY o.created_at DESC
-    `, queryParams);
+    `,
+      queryParams
+    );
 
     // Get order items for each order
-    const orderIds = orders.map(o => o.id);
+    const orderIds = orders.map((o) => o.id);
     let orderItems = [];
-    
+
     if (orderIds.length > 0) {
-      const placeholders = orderIds.map(() => '?').join(',');
-      const [items] = await pool.execute(`
+      const placeholders = orderIds.map(() => "?").join(",");
+      const [items] = await pool.execute(
+        `
         SELECT 
           oi.order_id as orderId,
           oi.product_id as productId,
@@ -162,19 +187,22 @@ router.get("/", verifyToken, async (req, res) => {
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
         WHERE oi.order_id IN (${placeholders})
-      `, orderIds);
-      
+      `,
+        orderIds
+      );
+
       orderItems = items;
     }
 
     // Attach items and computed fields to each order
-    const ordersWithItems = orders.map(order => {
+    const ordersWithItems = orders.map((order) => {
       // Compute delivery slot for home delivery orders (30-minute slots in next 12 hours)
       const computeDeliverySlot = (createdAt) => {
         const created = new Date(createdAt);
         const start = new Date(created);
         const minutes = start.getMinutes();
-        const roundedMinutes = minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
+        const roundedMinutes =
+          minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
         start.setMinutes(roundedMinutes, 0, 0);
         const end = new Date(start.getTime() + 30 * 60 * 1000);
         const limit = new Date(created.getTime() + 12 * 60 * 60 * 1000);
@@ -182,43 +210,61 @@ router.get("/", verifyToken, async (req, res) => {
           start.setTime(limit.getTime());
           end.setTime(limit.getTime() + 30 * 60 * 1000);
         }
-        const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+        const label = `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        return {
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+          label,
+        };
       };
 
       return {
         ...order,
-        items: orderItems.filter(item => item.orderId === order.id).map(item => ({
-          productId: item.productId,
-          productName: item.productName,
-          productImage: item.productImage,
-          productCategory: item.productCategory,
-          quantity: item.quantity,
-          price: parseFloat(item.price)
-        })),
-        deliverySlot: order.deliveryType === 'home_delivery' ? computeDeliverySlot(order.createdAt) : null,
-        timerInfo: order.deliveryType === 'store_pickup' ? {
-          hasTimer: order.hasTimer === 1,
-          pickupCode: order.pickupCode,
-          timerStartedAt: order.timerStartedAt,
-          timerExpiresAt: order.timerExpiresAt,
-          isExpired: order.timerExpiresAt ? new Date() > new Date(order.timerExpiresAt) : false
-        } : null
+        items: orderItems
+          .filter((item) => item.orderId === order.id)
+          .map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            productImage: item.productImage,
+            productCategory: item.productCategory,
+            quantity: item.quantity,
+            price: parseFloat(item.price),
+          })),
+        deliverySlot:
+          order.deliveryType === "home_delivery"
+            ? computeDeliverySlot(order.createdAt)
+            : null,
+        timerInfo:
+          order.deliveryType === "store_pickup"
+            ? {
+                hasTimer: order.hasTimer === 1,
+                pickupCode: order.pickupCode,
+                timerStartedAt: order.timerStartedAt,
+                timerExpiresAt: order.timerExpiresAt,
+                isExpired: order.timerExpiresAt
+                  ? new Date() > new Date(order.timerExpiresAt)
+                  : false,
+              }
+            : null,
       };
     });
 
     res.json({
       success: true,
       orders: ordersWithItems,
-      counts: counts[0] || { all_count: 0, pending_count: 0, completed_count: 0, cancelled_count: 0 }
+      counts: counts[0] || {
+        all_count: 0,
+        pending_count: 0,
+        completed_count: 0,
+        cancelled_count: 0,
+      },
     });
-
   } catch (error) {
-    console.error('Get orders error:', error);
+    console.error("Get orders error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch orders",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -236,7 +282,9 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
 
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
-      return res.status(400).json({ success: false, message: "Invalid order ID" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order ID" });
     }
 
     // Check if order exists and belongs to the user or shopkeeper
@@ -246,23 +294,25 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
     );
 
     if (orderRows.length === 0) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const order = orderRows[0];
 
     // Authorization check
-    if (userRole === 'user' && order.user_id !== userId) {
+    if (userRole === "user" && order.user_id !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
-    } else if (userRole === 'shopkeeper' && order.shopkeeper_id !== userId) {
+    } else if (userRole === "shopkeeper" && order.shopkeeper_id !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     // Only allow cancellation of certain statuses
-    if (!['Pending', 'Paid', 'Processing'].includes(order.status)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Cannot cancel order with status: ${order.status}` 
+    if (!["Pending", "Paid", "Processing"].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot cancel order with status: ${order.status}`,
       });
     }
 
@@ -277,16 +327,19 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
       );
 
       // Stop timer if order has one
-      await pool.query(`
+      await pool.query(
+        `
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
         WHERE order_id = ? AND is_active = TRUE
-      `, [orderIdNum]);
+      `,
+        [orderIdNum]
+      );
 
       // Restore stock using manager utility
       const stockRestoration = await restoreStockForCancelledOrder(
-        orderIdNum, 
-        userRole, 
+        orderIdNum,
+        userRole,
         cancellation_reason
       );
 
@@ -296,12 +349,12 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
       if (req.io) {
         const shopRoom = `shop_${Number(order.shopkeeper_id)}`;
         const customerRoom = `customer_${Number(order.user_id)}`;
-        
+
         const payload = {
           orderId: orderIdNum,
-          status: 'Cancelled',
+          status: "Cancelled",
           cancellation_reason,
-          stockRestored: stockRestoration.success
+          stockRestored: stockRestoration.success,
         };
 
         req.io.to(shopRoom).emit("orderStatusUpdate", payload);
@@ -312,16 +365,14 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         success: true,
         message: "Order cancelled and stock restored successfully",
         orderId: orderIdNum,
-        stockRestoration
+        stockRestoration,
       });
-
     } catch (transactionError) {
       await pool.query("ROLLBACK");
       throw transactionError;
     }
-
   } catch (error) {
-    console.error('Cancel order error:', error);
+    console.error("Cancel order error:", error);
     res.status(500).json({ success: false, message: "Failed to cancel order" });
   }
 });
@@ -335,8 +386,11 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    if (userRole !== 'user') {
-      return res.status(403).json({ success: false, message: "Only customers can clear their order history" });
+    if (userRole !== "user") {
+      return res.status(403).json({
+        success: false,
+        message: "Only customers can clear their order history",
+      });
     }
 
     // First, delete order items
@@ -348,20 +402,20 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
     );
 
     // Then delete orders
-    const [result] = await pool.query(
-      "DELETE FROM orders WHERE user_id = ?",
-      [userId]
-    );
+    const [result] = await pool.query("DELETE FROM orders WHERE user_id = ?", [
+      userId,
+    ]);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: "Order history cleared successfully",
-      clearedCount: result.affectedRows
+      clearedCount: result.affectedRows,
     });
-
   } catch (error) {
     console.error("Clear orders error:", error);
-    res.status(500).json({ success: false, message: "Server error while clearing orders" });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error while clearing orders" });
   }
 });
 
@@ -375,25 +429,27 @@ router.get("/status/:status", verifyToken, async (req, res) => {
     const { status } = req.params;
 
     // Validate status
-    const validStatuses = ['pending', 'completed', 'cancelled', 'all'];
+    const validStatuses = ["pending", "completed", "cancelled", "all"];
     if (!validStatuses.includes(status.toLowerCase())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid status. Must be one of: pending, completed, cancelled, all"
+        message:
+          "Invalid status. Must be one of: pending, completed, cancelled, all",
       });
     }
 
     // Build status condition
-    let statusCondition = '';
-    if (status === 'pending') {
+    let statusCondition = "";
+    if (status === "pending") {
       statusCondition = "AND o.status = 'Pending'";
-    } else if (status === 'completed') {
+    } else if (status === "completed") {
       statusCondition = "AND o.status = 'Completed'";
-    } else if (status === 'cancelled') {
+    } else if (status === "cancelled") {
       statusCondition = "AND o.status = 'Cancelled'";
     }
 
-    const [orders] = await pool.execute(`
+    const [orders] = await pool.execute(
+      `
       SELECT 
         o.id,
         o.id as orderId,
@@ -416,15 +472,18 @@ router.get("/status/:status", verifyToken, async (req, res) => {
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       WHERE o.user_id = ? ${statusCondition}
       ORDER BY o.created_at DESC
-    `, [userId]);
+    `,
+      [userId]
+    );
 
     // Get items for orders
-    const orderIds = orders.map(o => o.id);
+    const orderIds = orders.map((o) => o.id);
     let orderItems = [];
-    
+
     if (orderIds.length > 0) {
-      const placeholders = orderIds.map(() => '?').join(',');
-      const [items] = await pool.execute(`
+      const placeholders = orderIds.map(() => "?").join(",");
+      const [items] = await pool.execute(
+        `
         SELECT 
           oi.order_id as orderId,
           oi.product_id as productId,
@@ -434,28 +493,29 @@ router.get("/status/:status", verifyToken, async (req, res) => {
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
         WHERE oi.order_id IN (${placeholders})
-      `, orderIds);
-      
+      `,
+        orderIds
+      );
+
       orderItems = items;
     }
 
-    const ordersWithItems = orders.map(order => ({
+    const ordersWithItems = orders.map((order) => ({
       ...order,
-      items: orderItems.filter(item => item.orderId === order.id),
-      totalAmount: parseFloat(order.totalAmount)
+      items: orderItems.filter((item) => item.orderId === order.id),
+      totalAmount: parseFloat(order.totalAmount),
     }));
 
     res.json({
       success: true,
-      orders: ordersWithItems
+      orders: ordersWithItems,
     });
-
   } catch (error) {
-    console.error('Get orders by status error:', error);
+    console.error("Get orders by status error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch orders",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -469,7 +529,8 @@ router.get("/:orderId", verifyToken, async (req, res) => {
     const { orderId } = req.params;
     const userId = req.user.id;
 
-    const [orders] = await pool.execute(`
+    const [orders] = await pool.execute(
+      `
       SELECT 
         o.id,
         o.id as orderId,
@@ -504,19 +565,22 @@ router.get("/:orderId", verifyToken, async (req, res) => {
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       WHERE o.id = ? AND (o.user_id = ? OR o.shopkeeper_id = ? OR ? IN (SELECT id FROM admins))
-    `, [orderId, userId, userId, userId]);
+    `,
+      [orderId, userId, userId, userId]
+    );
 
     if (orders.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Order not found"
+        message: "Order not found",
       });
     }
 
     const order = orders[0];
 
     // Get items for this order
-    const [items] = await pool.execute(`
+    const [items] = await pool.execute(
+      `
       SELECT 
         oi.product_id as productId,
         oi.product_id as product_id,
@@ -527,23 +591,24 @@ router.get("/:orderId", verifyToken, async (req, res) => {
       FROM order_items oi
       LEFT JOIN products p ON oi.product_id = p.id
       WHERE oi.order_id = ?
-    `, [orderId]);
+    `,
+      [orderId]
+    );
 
     res.json({
       success: true,
       order: {
         ...order,
         items,
-        totalAmount: parseFloat(order.totalAmount)
-      }
+        totalAmount: parseFloat(order.totalAmount),
+      },
     });
-
   } catch (error) {
-    console.error('Get order details error:', error);
+    console.error("Get order details error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch order details",
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -554,7 +619,8 @@ router.get("/:orderId/timer", verifyToken, async (req, res) => {
     const userId = req.user.id;
     const { orderId } = req.params;
 
-    const [timerInfo] = await pool.query(`
+    const [timerInfo] = await pool.query(
+      `
       SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
              ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
              s.shop_name, s.name as shopkeeperName, s.phone as shopkeeperPhone, 
@@ -563,10 +629,14 @@ router.get("/:orderId/timer", verifyToken, async (req, res) => {
       LEFT JOIN order_timers ot ON o.id = ot.order_id
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       WHERE o.id = ? AND o.user_id = ?
-    `, [orderId, userId]);
+    `,
+      [orderId, userId]
+    );
 
     if (timerInfo.length === 0) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const timer = timerInfo[0];
@@ -578,8 +648,8 @@ router.get("/:orderId/timer", verifyToken, async (req, res) => {
       timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       timer: {
         order_id: timer.id,
         orderId: timer.id,
@@ -599,9 +669,9 @@ router.get("/:orderId/timer", verifyToken, async (req, res) => {
           shopkeeperPhone: timer.shopkeeperPhone,
           shopAddress: timer.shopAddress,
           shopLatitude: timer.shopLatitude,
-          shopLongitude: timer.shopLongitude
-        }
-      }
+          shopLongitude: timer.shopLongitude,
+        },
+      },
     });
   } catch (err) {
     console.error("Get order timer error:", err);
@@ -615,15 +685,20 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
     const userId = req.user.id;
     const { orderId } = req.params;
 
-    const [orderInfo] = await pool.query(`
+    const [orderInfo] = await pool.query(
+      `
       SELECT id, id as orderId, status, has_timer, pickup_code, timer_started_at, timer_expires_at,
              total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
       FROM orders 
       WHERE id = ? AND user_id = ?
-    `, [orderId, userId]);
+    `,
+      [orderId, userId]
+    );
 
     if (orderInfo.length === 0) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     res.json({ success: true, order: orderInfo[0] });
@@ -639,35 +714,35 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 // POST /api/orders
 router.post("/", verifyToken, async (req, res) => {
   const connection = await pool.getConnection();
-  
+
   try {
     await connection.beginTransaction();
 
     const userId = req.user.id;
     // Extract with aliases for compatibility with frontend naming conventions
-    const { 
-      items: reqItems, 
+    const {
+      items: reqItems,
       products,
-      deliveryType: reqDeliveryType, 
+      deliveryType: reqDeliveryType,
       order_type,
       totalAmount: reqTotalAmount,
       total,
       grandTotal,
       shopkeeperId: reqShopkeeperId,
       shopId,
-      paymentMethod = 'cod',
+      paymentMethod = "cod",
       deliveryAddress: reqDeliveryAddress,
       address,
       latitude = null,
       longitude = null,
       creditsUsed: reqCreditsUsed,
       pointsToRedeem,
-      scheduled_time: reqScheduledTime
+      scheduled_time: reqScheduledTime,
     } = req.body;
 
     // Use aliases if main fields are missing
     const items = reqItems || products;
-    const deliveryType = reqDeliveryType || order_type || 'home_delivery';
+    const deliveryType = reqDeliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
     const shopkeeperId = reqShopkeeperId || shopId;
     const deliveryAddress = reqDeliveryAddress || address || null;
@@ -679,7 +754,7 @@ router.post("/", verifyToken, async (req, res) => {
       await connection.rollback();
       return res.status(400).json({
         success: false,
-        message: "Items array is required and cannot be empty"
+        message: "Items array is required and cannot be empty",
       });
     }
 
@@ -687,7 +762,7 @@ router.post("/", verifyToken, async (req, res) => {
       await connection.rollback();
       return res.status(400).json({
         success: false,
-        message: "Valid total amount is required"
+        message: "Valid total amount is required",
       });
     }
 
@@ -695,7 +770,7 @@ router.post("/", verifyToken, async (req, res) => {
       await connection.rollback();
       return res.status(400).json({
         success: false,
-        message: "Shopkeeper ID is required"
+        message: "Shopkeeper ID is required",
       });
     }
 
@@ -706,43 +781,62 @@ router.post("/", verifyToken, async (req, res) => {
       connection.release();
       return res.status(400).json({
         success: false,
-        message: 'Some items are out of stock',
-        unavailableItems: stockCheck.unavailableItems
+        message: "Some items are out of stock",
+        unavailableItems: stockCheck.unavailableItems,
       });
     }
 
     // Determine if this is a store pickup order
-    const hasTimer = deliveryType === 'store_pickup' ? 1 : 0;
+    const hasTimer = deliveryType === "store_pickup" ? 1 : 0;
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Handle wellness points redemption if requested
     let pointsDiscount = 0;
     if (creditsUsed > 0) {
       try {
-        const [[user]] = await connection.execute('SELECT store_credits FROM users WHERE id = ?', [userId]);
+        const [[user]] = await connection.execute(
+          "SELECT store_credits FROM users WHERE id = ?",
+          [userId]
+        );
         if (!user) {
           await connection.rollback();
-          return res.status(404).json({ success: false, message: "User not found" });
+          return res
+            .status(404)
+            .json({ success: false, message: "User not found" });
         }
 
-        const validation = validatePointsUsage(creditsUsed, user.store_credits || 0, totalAmount);
+        const validation = validatePointsUsage(
+          creditsUsed,
+          user.store_credits || 0,
+          totalAmount
+        );
         if (!validation.valid) {
           await connection.rollback();
-          return res.status(400).json({ success: false, message: validation.message });
+          return res
+            .status(400)
+            .json({ success: false, message: validation.message });
         }
 
-        const pointsResult = await deductWellnessPoints(connection, userId, creditsUsed);
+        const pointsResult = await deductWellnessPoints(
+          connection,
+          userId,
+          creditsUsed
+        );
         pointsDiscount = pointsResult.discountAmount;
       } catch (pointsError) {
         await connection.rollback();
-        return res.status(400).json({ success: false, message: pointsError.message });
+        return res
+          .status(400)
+          .json({ success: false, message: pointsError.message });
       }
     }
 
     const finalTotal = totalAmount - pointsDiscount;
 
     // Get next order ID (TiDB doesn't support auto-increment reliably)
-    const [maxOrderId] = await connection.execute("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders");
+    const [maxOrderId] = await connection.execute(
+      "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
+    );
     const orderId = maxOrderId[0].nextId;
 
     // Calculate credits earned (1% of total amount)
@@ -751,10 +845,13 @@ router.post("/", verifyToken, async (req, res) => {
     // Precompute timer timestamps for click & collect
     const now = new Date();
     const timerStartedAt = hasTimer ? now : null;
-    const timerExpiresAt = hasTimer ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000) : null;
+    const timerExpiresAt = hasTimer
+      ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000)
+      : null;
 
     // Insert order
-    await connection.execute(`
+    await connection.execute(
+      `
       INSERT INTO orders (
         id,
         user_id, 
@@ -776,33 +873,48 @@ router.post("/", verifyToken, async (req, res) => {
         scheduled_time,
         created_at
       ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-    `, [
-      orderId,
-      userId, 
-      shopkeeperId, 
-      paymentMethod,
-      finalTotal, 
-      creditsEarned,
-      creditsUsed,
-      deliveryAddress,
-      latitude,
-      longitude,
-      hasTimer,
-      pickupCode,
-      timerStartedAt,
-      timerExpiresAt,
-      (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-      (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-      scheduledTime
-    ]);
+    `,
+      [
+        orderId,
+        userId,
+        shopkeeperId,
+        paymentMethod,
+        finalTotal,
+        creditsEarned,
+        creditsUsed,
+        deliveryAddress,
+        latitude,
+        longitude,
+        hasTimer,
+        pickupCode,
+        timerStartedAt,
+        timerExpiresAt,
+        deliveryType === "store_pickup" || deliveryType === "pickup"
+          ? "pickup"
+          : "delivery",
+        deliveryType === "store_pickup" || deliveryType === "pickup"
+          ? "pickup"
+          : "delivery",
+        scheduledTime,
+      ]
+    );
 
     // Create timer record in order_timers table (only for pickup orders)
     if (hasTimer) {
       try {
-        await connection.execute(`
+        await connection.execute(
+          `
           INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
           VALUES (?, ?, ?, ?, ?, TRUE)
-        `, [orderId, pickupCode, TIMER_DURATION_SECONDS, timerStartedAt, timerExpiresAt]);
+        `,
+          [
+            orderId,
+            pickupCode,
+            TIMER_DURATION_SECONDS,
+            timerStartedAt,
+            timerExpiresAt,
+          ]
+        );
       } catch (timerError) {
         console.warn("Timer record creation failed:", timerError.message);
       }
@@ -819,20 +931,28 @@ router.post("/", verifyToken, async (req, res) => {
         continue;
       }
 
-      const [maxItemId] = await connection.execute("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
+      const [maxItemId] = await connection.execute(
+        "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items"
+      );
       const itemId = maxItemId[0].nextId;
-      
-      await connection.execute(`
+
+      await connection.execute(
+        `
         INSERT INTO order_items (id, order_id, product_id, quantity, price)
         VALUES (?, ?, ?, ?, ?)
-      `, [itemId, orderId, productId, quantity, price]);
+      `,
+        [itemId, orderId, productId, quantity, price]
+      );
 
       // Reduce stock
-      await connection.execute(`
+      await connection.execute(
+        `
         UPDATE products 
         SET stock = stock - ? 
         WHERE id = ? AND stock >= ?
-      `, [quantity, productId, quantity]);
+      `,
+        [quantity, productId, quantity]
+      );
     }
 
     // Deduct inventory stock for order items
@@ -844,22 +964,34 @@ router.post("/", verifyToken, async (req, res) => {
     const computeNextDeliverySlot = (baseDate) => {
       const start = new Date(baseDate);
       const minutes = start.getMinutes();
-      const roundedMinutes = minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0 
-        ? minutes 
-        : minutes + (TIME_SLOT_CONFIG.INTERVAL_MINUTES - (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
+      const roundedMinutes =
+        minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0
+          ? minutes
+          : minutes +
+            (TIME_SLOT_CONFIG.INTERVAL_MINUTES -
+              (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
       start.setMinutes(roundedMinutes, 0, 0);
-      const end = new Date(start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+      const end = new Date(
+        start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000
+      );
       const limit = new Date(baseDate.getTime() + 12 * 60 * 60 * 1000);
       if (start > limit) {
         // If beyond 12 hours, cap at limit window
         start.setTime(limit.getTime());
-        end.setTime(limit.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+        end.setTime(
+          limit.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000
+        );
       }
-      const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+      const label = `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+      return {
+        startISO: start.toISOString(),
+        endISO: end.toISOString(),
+        label,
+      };
     };
 
-    const deliverySlot = deliveryType === 'home_delivery' ? computeNextDeliverySlot(now) : null;
+    const deliverySlot =
+      deliveryType === "home_delivery" ? computeNextDeliverySlot(now) : null;
 
     // Socket broadcast to shopkeeper and customer rooms
     try {
@@ -887,11 +1019,11 @@ router.post("/", verifyToken, async (req, res) => {
         const product = productDetails[0] || {};
         itemsWithDetails.push({
           productId: productId,
-          productName: product.name || 'Unknown Product',
+          productName: product.name || "Unknown Product",
           productImage: product.image || null,
           productCategory: product.category || null,
           quantity: quantity,
-          price: parseFloat(price) || 0
+          price: parseFloat(price) || 0,
         });
       }
 
@@ -905,12 +1037,24 @@ router.post("/", verifyToken, async (req, res) => {
         shopkeeper_id: shopkeeperId, // Add for compatibility
         deliveryType,
         delivery_type: deliveryType, // Add for compatibility
-        orderType: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-        order_type: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-        deliveryMode: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-        delivery_mode: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
-        status: 'pending',
-        originalStatus: 'Pending',
+        orderType:
+          deliveryType === "store_pickup" || deliveryType === "pickup"
+            ? "pickup"
+            : "delivery",
+        order_type:
+          deliveryType === "store_pickup" || deliveryType === "pickup"
+            ? "pickup"
+            : "delivery",
+        deliveryMode:
+          deliveryType === "store_pickup" || deliveryType === "pickup"
+            ? "pickup"
+            : "delivery",
+        delivery_mode:
+          deliveryType === "store_pickup" || deliveryType === "pickup"
+            ? "pickup"
+            : "delivery",
+        status: "pending",
+        originalStatus: "Pending",
         totalAmount: parseFloat(finalTotal),
         total_amount: parseFloat(finalTotal), // Add for compatibility
         creditsEarned,
@@ -949,27 +1093,36 @@ router.post("/", verifyToken, async (req, res) => {
         shop_longitude: shopkeeper.longitude, // Add for compatibility
         items: itemsWithDetails,
         // Add timer info for click & collect
-        timerInfo: hasTimer === 1 ? {
-          hasTimer: true,
-          pickupCode,
-          timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
-          timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-          isExpired: false
-        } : null
+        timerInfo:
+          hasTimer === 1
+            ? {
+                hasTimer: true,
+                pickupCode,
+                timerStartedAt: timerStartedAt
+                  ? timerStartedAt.toISOString()
+                  : null,
+                timerExpiresAt: timerExpiresAt
+                  ? timerExpiresAt.toISOString()
+                  : null,
+                isExpired: false,
+              }
+            : null,
       };
 
-      console.log(`📡 Socket: Broadcasting new order ${orderId} to shopkeeper ${shopkeeperId} and customer ${userId}`);
-      
+      console.log(
+        `📡 Socket: Broadcasting new order ${orderId} to shopkeeper ${shopkeeperId} and customer ${userId}`
+      );
+
       // Emit events used by clients
       if (req.io) {
         const shopRoom = `shop_${Number(shopkeeperId)}`;
         const customerRoom = `customer_${Number(userId)}`;
-        
-        req.io.to(shopRoom).emit('newOrder', payload);
-        req.io.to(shopRoom).emit('orderCreated', payload);
-        req.io.to(customerRoom).emit('newOrder', payload);
-        req.io.to(customerRoom).emit('orderCreated', payload);
-        req.io.to('admin').emit('newOrder', payload);
+
+        req.io.to(shopRoom).emit("newOrder", payload);
+        req.io.to(shopRoom).emit("orderCreated", payload);
+        req.io.to(customerRoom).emit("newOrder", payload);
+        req.io.to(customerRoom).emit("orderCreated", payload);
+        req.io.to("admin").emit("newOrder", payload);
       }
 
       // Send push notification to shopkeeper
@@ -977,7 +1130,10 @@ router.post("/", verifyToken, async (req, res) => {
         const token = shopkeeper.expo_push_token;
         const title = "📦 New Order Received!";
         const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
-        const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+        const payload = {
+          orderId: String(orderId),
+          shopId: String(shopkeeperId),
+        };
 
         try {
           if (isFCMToken(token)) {
@@ -986,18 +1142,24 @@ router.post("/", verifyToken, async (req, res) => {
             await sendExpoPush(token, title, body, payload);
           }
         } catch (pushErr) {
-          console.error(`Failed to send push to shopkeeper ${shopkeeperId}:`, pushErr);
+          console.error(
+            `Failed to send push to shopkeeper ${shopkeeperId}:`,
+            pushErr
+          );
         }
       }
 
       // Send push notification to customer (Order Confirmed)
-      const [customerRows] = await connection.execute("SELECT expo_push_token FROM users WHERE id = ?", [userId]);
+      const [customerRows] = await connection.execute(
+        "SELECT expo_push_token FROM users WHERE id = ?",
+        [userId]
+      );
       const customer = customerRows[0];
       if (customer && customer.expo_push_token) {
         const token = customer.expo_push_token;
         const title = "Order Placed Successfully!";
         const body = `Your order #${orderId} has been placed. You can track it in the app.`;
-        const payload = { orderId: String(orderId), status: 'Pending' };
+        const payload = { orderId: String(orderId), status: "Pending" };
 
         try {
           if (isFCMToken(token)) {
@@ -1009,7 +1171,6 @@ router.post("/", verifyToken, async (req, res) => {
           console.error(`Failed to send push to customer ${userId}:`, pushErr);
         }
       }
-
     } catch (notifyErr) {
       console.error("Error notifying shopkeeper:", notifyErr);
     }
@@ -1021,17 +1182,16 @@ router.post("/", verifyToken, async (req, res) => {
         id: orderId,
         orderId,
         totalAmount: finalTotal,
-        pickupCode
-      }
+        pickupCode,
+      },
     });
-
   } catch (error) {
     await connection.rollback();
-    console.error('Create order error:', error);
+    console.error("Create order error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to create order",
-      error: error.message
+      error: error.message,
     });
   } finally {
     connection.release();
@@ -1051,74 +1211,105 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
 
     const orderIdNum = parseInt(orderId);
     if (isNaN(orderIdNum)) {
-      return res.status(400).json({ success: false, message: "Invalid order ID" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order ID" });
     }
 
     // Validate status
-    const validStatuses = ['pending', 'completed', 'cancelled', 'paid', 'processing'];
+    const validStatuses = [
+      "pending",
+      "completed",
+      "cancelled",
+      "paid",
+      "processing",
+    ];
     if (!validStatuses.includes(status.toLowerCase())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid status. Must be one of: " + validStatuses.join(", ")
+        message: "Invalid status. Must be one of: " + validStatuses.join(", "),
       });
     }
 
     // Map frontend status to database status
     const statusMap = {
-      'pending': 'Pending',
-      'completed': 'Completed',
-      'cancelled': 'Cancelled',
-      'paid': 'Paid',
-      'processing': 'Processing'
+      pending: "Pending",
+      completed: "Completed",
+      cancelled: "Cancelled",
+      paid: "Paid",
+      processing: "Processing",
     };
     const dbStatus = statusMap[status.toLowerCase()];
 
     // Check if order exists and get details for authorization and notifications
-    const [orderRows] = await pool.execute(`
+    const [orderRows] = await pool.execute(
+      `
       SELECT id, status, user_id, shopkeeper_id, total_amount, has_timer, timer_started_at, order_type, delivery_mode
       FROM orders 
       WHERE id = ?
-    `, [orderIdNum]);
+    `,
+      [orderIdNum]
+    );
 
     if (orderRows.length === 0) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const order = orderRows[0];
 
     // Authorization check
-    if (userRole === 'user' && order.user_id !== userId) {
+    if (userRole === "user" && order.user_id !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
-    } else if (userRole === 'shopkeeper' && order.shopkeeper_id !== userId) {
+    } else if (userRole === "shopkeeper" && order.shopkeeper_id !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
-    } else if (userRole !== 'user' && userRole !== 'shopkeeper' && userRole !== 'admin') {
+    } else if (
+      userRole !== "user" &&
+      userRole !== "shopkeeper" &&
+      userRole !== "admin"
+    ) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     // Business Logic: Handle specific status transitions
-    if (dbStatus === 'Cancelled') {
+    if (dbStatus === "Cancelled") {
       console.log(`📦 Order ${orderIdNum} being cancelled by ${userRole}`);
-      
+
       await pool.query("START TRANSACTION");
       try {
-        await pool.query("UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?", 
-          [cancellation_reason || `${userRole} cancellation`, orderIdNum]);
-        
+        await pool.query(
+          "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
+          [cancellation_reason || `${userRole} cancellation`, orderIdNum]
+        );
+
         // Stop timer
-        await pool.query(`
+        await pool.query(
+          `
           UPDATE order_timers 
           SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
           WHERE order_id = ? AND is_active = TRUE
-        `, [orderIdNum]);
+        `,
+          [orderIdNum]
+        );
 
         // Restore stock
-        await restoreStockForCancelledOrder(orderIdNum, userRole, cancellation_reason);
+        await restoreStockForCancelledOrder(
+          orderIdNum,
+          userRole,
+          cancellation_reason
+        );
 
         // Refund credits if any
-        const [[creditsData]] = await pool.query("SELECT credits_used FROM orders WHERE id = ?", [orderIdNum]);
+        const [[creditsData]] = await pool.query(
+          "SELECT credits_used FROM orders WHERE id = ?",
+          [orderIdNum]
+        );
         if (creditsData?.credits_used > 0) {
-          await pool.query("UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?", 
-            [creditsData.credits_used, order.user_id]);
+          await pool.query(
+            "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+            [creditsData.credits_used, order.user_id]
+          );
         }
 
         await pool.query("COMMIT");
@@ -1126,25 +1317,30 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         await pool.query("ROLLBACK");
         throw err;
       }
-    } else if (dbStatus === 'Completed') {
-      await pool.query("UPDATE orders SET status = 'Completed' WHERE id = ?", [orderIdNum]);
-      
+    } else if (dbStatus === "Completed") {
+      await pool.query("UPDATE orders SET status = 'Completed' WHERE id = ?", [
+        orderIdNum,
+      ]);
+
       // Award wellness points
       try {
-        const orderType = order.order_type || order.delivery_mode || 'pickup';
+        const orderType = order.order_type || order.delivery_mode || "pickup";
         await awardWellnessPoints(
-          pool, 
-          order.user_id, 
-          new Date(), 
-          order.timer_started_at || new Date(), 
-          order.total_amount, 
+          pool,
+          order.user_id,
+          new Date(),
+          order.timer_started_at || new Date(),
+          order.total_amount,
           orderType
         );
       } catch (pointsErr) {
         console.error("Error awarding points:", pointsErr);
       }
     } else {
-      await pool.query("UPDATE orders SET status = ? WHERE id = ?", [dbStatus, orderIdNum]);
+      await pool.query("UPDATE orders SET status = ? WHERE id = ?", [
+        dbStatus,
+        orderIdNum,
+      ]);
     }
 
     // Socket Notification
@@ -1153,24 +1349,30 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         orderId: orderIdNum,
         order_id: orderIdNum,
         status: dbStatus,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
-      req.io.to(`shop_${order.shopkeeper_id}`).emit("orderStatusUpdate", payload);
+      req.io
+        .to(`shop_${order.shopkeeper_id}`)
+        .emit("orderStatusUpdate", payload);
       req.io.to(`customer_${order.user_id}`).emit("orderStatusUpdate", payload);
-      req.io.to('admin').emit("orderStatusUpdate", payload);
+      req.io.to("admin").emit("orderStatusUpdate", payload);
     }
 
     // Push Notification
     try {
-      const targetId = userRole === 'user' ? order.shopkeeper_id : order.user_id;
-      const targetTable = userRole === 'user' ? 'shopkeepers' : 'users';
-      const [[target]] = await pool.query(`SELECT expo_push_token FROM ${targetTable} WHERE id = ?`, [targetId]);
-      
+      const targetId =
+        userRole === "user" ? order.shopkeeper_id : order.user_id;
+      const targetTable = userRole === "user" ? "shopkeepers" : "users";
+      const [[target]] = await pool.query(
+        `SELECT expo_push_token FROM ${targetTable} WHERE id = ?`,
+        [targetId]
+      );
+
       if (target?.expo_push_token) {
         const title = `Order #${orderIdNum} Update`;
         const body = `Your order status has been updated to ${dbStatus}.`;
         const payload = { orderId: String(orderIdNum), status: dbStatus };
-        
+
         try {
           if (isFCMToken(target.expo_push_token)) {
             await sendFCMPush(target.expo_push_token, title, body, payload);
@@ -1178,18 +1380,26 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
             await sendExpoPush(target.expo_push_token, title, body, payload);
           }
         } catch (pushErr) {
-          console.error(`Failed to send status update push to ${targetTable}:`, pushErr);
+          console.error(
+            `Failed to send status update push to ${targetTable}:`,
+            pushErr
+          );
         }
       }
     } catch (pushErr) {
       console.error("Error sending push:", pushErr);
     }
 
-    res.json({ success: true, message: `Order status updated to ${dbStatus}`, status: dbStatus });
-
+    res.json({
+      success: true,
+      message: `Order status updated to ${dbStatus}`,
+      status: dbStatus,
+    });
   } catch (error) {
-    console.error('Update order status error:', error);
-    res.status(500).json({ success: false, message: "Failed to update status" });
+    console.error("Update order status error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update status" });
   }
 });
 
@@ -1203,7 +1413,7 @@ router.get("/cart", handleCartTokenExpiration, verifyToken, (req, res) => {
     success: true,
     message: "Cart retrieved successfully",
     cart: [],
-    user: req.user
+    user: req.user,
   });
 });
 
@@ -1211,7 +1421,7 @@ router.post("/cart/add", handleCartTokenExpiration, verifyToken, (req, res) => {
   res.json({
     success: true,
     message: "Item added to cart",
-    user: req.user
+    user: req.user,
   });
 });
 

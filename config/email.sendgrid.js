@@ -1,4 +1,4 @@
-import sgMail from '@sendgrid/mail';
+import sgMail from "@sendgrid/mail";
 
 /**
  * SendGrid Email Service
@@ -9,84 +9,98 @@ import sgMail from '@sendgrid/mail';
 // Initialize SendGrid
 const initSendGrid = () => {
   const apiKey = process.env.SENDGRID_API_KEY;
-  
+
   if (!apiKey) {
-    console.warn('[SENDGRID] API key not configured. Email sending will fail.');
+    console.warn("[SENDGRID] API key not configured. Email sending will fail.");
     return false;
   }
-  
+
   sgMail.setApiKey(apiKey);
-  console.log('[SENDGRID] ✅ Initialized successfully');
+  console.log("[SENDGRID] ✅ Initialized successfully");
   return true;
 };
 
 /**
  * Send password reset email via SendGrid
  */
-export const sendPasswordResetEmailSendGrid = async (to, resetToken, userName) => {
+export const sendPasswordResetEmailSendGrid = async (
+  to,
+  resetToken,
+  userName
+) => {
   try {
     console.log(`[SENDGRID] Sending password reset email to: ${to}`);
-    
+
     // Initialize SendGrid
     if (!initSendGrid()) {
-      throw new Error('SendGrid not configured. Please set SENDGRID_API_KEY in environment variables.');
+      throw new Error(
+        "SendGrid not configured. Please set SENDGRID_API_KEY in environment variables."
+      );
     }
-    
+
     // Use HTTPS link that redirects to deep link (works better in emails)
-    const backendUrl = process.env.RESET_REDIRECT_URL || process.env.RENDER_EXTERNAL_URL || 'https://nexbackend.onrender.com';
+    const backendUrl =
+      process.env.RESET_REDIRECT_URL ||
+      process.env.RENDER_EXTERNAL_URL ||
+      "https://nexbackend.onrender.com";
     const resetLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
-    
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || 'resetnexkirana@gmail.com';
-    const fromName = process.env.SENDGRID_FROM_NAME || 'NexKirana';
+
+    const fromEmail =
+      process.env.SENDGRID_FROM_EMAIL ||
+      process.env.EMAIL_USER ||
+      "resetnexkirana@gmail.com";
+    const fromName = process.env.SENDGRID_FROM_NAME || "NexKirana";
     const templateId = process.env.SENDGRID_TEMPLATE_ID;
-    
+
     // If template ID is provided, use dynamic template
     if (templateId) {
       console.log(`[SENDGRID] Using template: ${templateId}`);
-      
+
       const msg = {
         to,
         from: {
           email: fromEmail,
-          name: fromName
+          name: fromName,
         },
         templateId: templateId,
         dynamicTemplateData: {
           RESET_LINK: resetLink,
-          USER_NAME: userName || 'Customer',
-          EXPIRY_MINUTES: '60'
-        }
+          USER_NAME: userName || "Customer",
+          EXPIRY_MINUTES: "60",
+        },
       };
 
       const startTime = Date.now();
       await sgMail.send(msg);
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      console.log(`[SENDGRID] ✅ Password reset email sent successfully in ${duration}s (using template)`);
-      
+      console.log(
+        `[SENDGRID] ✅ Password reset email sent successfully in ${duration}s (using template)`
+      );
+
       return {
         success: true,
-        provider: 'sendgrid',
-        method: 'template'
+        provider: "sendgrid",
+        method: "template",
       };
     }
-    
+
     // Otherwise, use inline HTML (fallback)
     console.log(`[SENDGRID] Using inline HTML (no template ID configured)`);
-    
+
     const msg = {
       to,
       from: {
         email: fromEmail,
-        name: fromName
+        name: fromName,
       },
-      subject: 'Password Reset Request - NexKirana Account',
+      subject: "Password Reset Request - NexKirana Account",
       text: `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         NEXKIRANA - PASSWORD RESET REQUEST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Dear ${userName || 'Valued Customer'},
+Dear ${userName || "Valued Customer"},
 
 We have received a request to reset the password for your NexKirana account.
 
@@ -149,7 +163,7 @@ This email was sent to: ${to}
                       <h2 style="color: #111111; margin: 0 0 20px 0; font-size: 22px;">Password Reset Request</h2>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 10px 0;">
-                        Hello ${userName || 'Customer'},
+                        Hello ${userName || "Customer"},
                       </p>
                       
                       <p style="color: #111111; font-size: 14px; line-height: 1.6; margin: 0 0 20px 0;">
@@ -223,30 +237,34 @@ This email was sent to: ${to}
           </table>
         </body>
         </html>
-      `
+      `,
     };
 
     const startTime = Date.now();
     await sgMail.send(msg);
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    console.log(`[SENDGRID] ✅ Password reset email sent successfully in ${duration}s`);
-    
+    console.log(
+      `[SENDGRID] ✅ Password reset email sent successfully in ${duration}s`
+    );
+
     return {
       success: true,
-      provider: 'sendgrid'
+      provider: "sendgrid",
     };
   } catch (error) {
-    console.error('[SENDGRID] ❌ Error sending email:', error.message);
-    
+    console.error("[SENDGRID] ❌ Error sending email:", error.message);
+
     if (error.response) {
-      console.error('[SENDGRID] Error details:', {
+      console.error("[SENDGRID] Error details:", {
         statusCode: error.response.statusCode,
-        body: error.response.body
+        body: error.response.body,
       });
     }
-    
-    throw new Error(`SendGrid email failed: ${error.message}`);
+
+    throw new Error(`SendGrid email failed: ${error.message}`, {
+      cause: error,
+    });
   }
 };
 
@@ -256,21 +274,24 @@ This email was sent to: ${to}
 export const sendPasswordResetConfirmationSendGrid = async (to, userName) => {
   try {
     if (!initSendGrid()) {
-      throw new Error('SendGrid not configured');
+      throw new Error("SendGrid not configured");
     }
-    
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER || 'resetnexkirana@gmail.com';
-    const fromName = process.env.SENDGRID_FROM_NAME || 'NexKirana';
-    
+
+    const fromEmail =
+      process.env.SENDGRID_FROM_EMAIL ||
+      process.env.EMAIL_USER ||
+      "resetnexkirana@gmail.com";
+    const fromName = process.env.SENDGRID_FROM_NAME || "NexKirana";
+
     const msg = {
       to,
       from: {
         email: fromEmail,
-        name: fromName
+        name: fromName,
       },
-      subject: 'Security Alert: Password Successfully Changed - NexKirana',
+      subject: "Security Alert: Password Successfully Changed - NexKirana",
       text: `
-Dear ${userName || 'Customer'},
+Dear ${userName || "Customer"},
 
 This email confirms that your NexKirana account password has been successfully changed.
 
@@ -286,7 +307,7 @@ If you did not make this change, please contact our support team immediately at 
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px;">
           <h2>Password Successfully Changed</h2>
-          <p>Hello ${userName || 'Customer'},</p>
+          <p>Hello ${userName || "Customer"},</p>
           <p>This confirms that your NexKirana account password has been successfully changed.</p>
           <p><strong>Account:</strong> ${to}<br>
           <strong>Changed:</strong> ${new Date().toLocaleString()}</p>
@@ -294,20 +315,20 @@ If you did not make this change, please contact our support team immediately at 
           <p style="color: #777; font-size: 12px;">© ${new Date().getFullYear()} NexKirana</p>
         </body>
         </html>
-      `
+      `,
     };
 
     await sgMail.send(msg);
-    console.log('[SENDGRID] ✅ Confirmation email sent');
-    
+    console.log("[SENDGRID] ✅ Confirmation email sent");
+
     return { success: true };
   } catch (error) {
-    console.error('[SENDGRID] ❌ Confirmation email failed:', error.message);
+    console.error("[SENDGRID] ❌ Confirmation email failed:", error.message);
     throw error;
   }
 };
 
 export default {
   sendPasswordResetEmailSendGrid,
-  sendPasswordResetConfirmationSendGrid
+  sendPasswordResetConfirmationSendGrid,
 };

@@ -1,4 +1,4 @@
-import pool from '../config/db.js';
+import pool from "../config/db.js";
 
 // Subscription constants
 const BILLING_CYCLE_DAYS = 15;
@@ -9,19 +9,19 @@ const GRACE_PERIOD_DAYS = 2;
  */
 async function calculateSubscriptionStatus(shopkeeperId) {
   const [shopkeepers] = await pool.query(
-    'SELECT * FROM shopkeepers WHERE id = ?',
+    "SELECT * FROM shopkeepers WHERE id = ?",
     [shopkeeperId]
   );
 
   if (shopkeepers.length === 0) {
-    throw new Error('Shopkeeper not found');
+    throw new Error("Shopkeeper not found");
   }
 
   const shopkeeper = shopkeepers[0];
   const now = new Date();
 
   // No trial period - start billing from day 1
-  const lastPaymentDate = shopkeeper.last_payment_date 
+  const lastPaymentDate = shopkeeper.last_payment_date
     ? new Date(shopkeeper.last_payment_date)
     : new Date(shopkeeper.created_at);
 
@@ -44,25 +44,25 @@ async function calculateSubscriptionStatus(shopkeeperId) {
     : 0;
 
   // Determine status with grace_period support
-  let status = 'active';
+  let status = "active";
   let isActive = true;
-  let message = 'Subscription active';
+  let message = "Subscription active";
   let needsPayment = false;
 
   if (isAccountSuspended) {
-    status = 'suspended';
+    status = "suspended";
     isActive = false;
-    message = 'Account suspended - Payment overdue';
+    message = "Account suspended - Payment overdue";
     needsPayment = true;
   } else if (isInGracePeriod) {
-    status = 'grace_period';
+    status = "grace_period";
     isActive = true; // Still active during grace period
     message = `Grace period - ${graceDaysRemaining} day(s) remaining to make payment`;
     needsPayment = true;
   } else if (isPaymentOverdue) {
-    status = 'grace_period';
+    status = "grace_period";
     isActive = true;
-    message = 'Payment required - Grace period active';
+    message = "Payment required - Grace period active";
     needsPayment = true;
   }
 
@@ -109,7 +109,7 @@ async function updateSubscriptionStatus(shopkeeperId) {
  */
 async function processPaymentApproval(shopkeeperId) {
   const now = new Date();
-  
+
   // Update last payment date
   await pool.query(
     `UPDATE shopkeepers 

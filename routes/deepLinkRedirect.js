@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 
 const router = express.Router();
 
@@ -6,12 +6,12 @@ const router = express.Router();
  * @route   GET /reset-password
  * @desc    Redirect to app deep link for password reset
  * @access  Public
- * 
+ *
  * This route handles password reset links from emails.
  * It creates an HTML page that automatically redirects to the app's deep link.
  * If the app is not installed, it shows instructions.
  */
-router.get('/reset-password', (req, res) => {
+router.get("/reset-password", (req, res) => {
   const { token } = req.query;
 
   if (!token) {

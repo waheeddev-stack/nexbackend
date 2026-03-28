@@ -9,29 +9,33 @@ export function startTimerCleanupCron(scheduleMs = 60_000, io = null) {
   intervalHandle = setInterval(async () => {
     try {
       const now = new Date();
-      const [expiredTimers] = await db.query(
-        `SELECT ot.order_id 
+      const [expiredTimers] = await db
+        .query(
+          `SELECT ot.order_id 
          FROM order_timers ot
          WHERE ot.is_active = TRUE AND ot.timer_expires_at < ?`,
-        [now]
-      ).catch(() => [[]]);
+          [now]
+        )
+        .catch(() => [[]]);
 
       if (expiredTimers.length > 0) {
-        const orderIds = expiredTimers.map(t => t.order_id);
+        const orderIds = expiredTimers.map((t) => t.order_id);
         await db.query(
           `UPDATE order_timers 
            SET is_expired = TRUE
-           WHERE order_id IN (${orderIds.map(() => '?').join(',')})`,
+           WHERE order_id IN (${orderIds.map(() => "?").join(",")})`,
           orderIds
         );
         if (io) {
-          const placeholders = orderIds.map(() => '?').join(',');
-          const [orders] = await db.query(
-            `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at 
+          const placeholders = orderIds.map(() => "?").join(",");
+          const [orders] = await db
+            .query(
+              `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at 
              FROM orders 
              WHERE id IN (${placeholders})`,
-            orderIds
-          ).catch(() => [[]]);
+              orderIds
+            )
+            .catch(() => [[]]);
           for (const o of orders) {
             const payload = {
               orderId: o.id,
@@ -40,16 +44,18 @@ export function startTimerCleanupCron(scheduleMs = 60_000, io = null) {
               pickupCode: o.pickup_code,
               timerStartedAt: o.timer_started_at,
               timerExpiresAt: o.timer_expires_at,
-              expiredAt: now.toISOString()
+              expiredAt: now.toISOString(),
             };
             const shopRoom = `shop_${Number(o.shopkeeper_id)}`;
             const customerRoom = `customer_${Number(o.user_id)}`;
-            io.to(shopRoom).emit('timerExpired', payload);
-            io.to(customerRoom).emit('timerExpired', payload);
-            io.to('admin').emit('timerExpired', payload);
+            io.to(shopRoom).emit("timerExpired", payload);
+            io.to(customerRoom).emit("timerExpired", payload);
+            io.to("admin").emit("timerExpired", payload);
           }
         }
-        console.log(`⏱️ Timer cleanup cron: expired ${expiredTimers.length} timers`);
+        console.log(
+          `⏱️ Timer cleanup cron: expired ${expiredTimers.length} timers`
+        );
       }
     } catch (err) {
       console.warn(`⏱️ Timer cleanup cron error: ${err.message}`);
@@ -61,6 +67,6 @@ export function startTimerCleanupCron(scheduleMs = 60_000, io = null) {
 export function getTimerCleanupCronStatus() {
   return {
     running: !!intervalHandle,
-    intervalMs: intervalHandle ? intervalHandle._idleTimeout : null
+    intervalMs: intervalHandle ? intervalHandle._idleTimeout : null,
   };
 }

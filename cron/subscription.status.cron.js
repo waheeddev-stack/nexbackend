@@ -1,20 +1,20 @@
 /**
  * Subscription Status Cron Job
- * 
+ *
  * This module implements automatic subscription status updates based on payment due dates and grace periods.
- * 
+ *
  * Status Flow:
  * 1. active → grace_period (when payment due date passes)
  * 2. grace_period → suspended (when grace period ends)
- * 
+ *
  * Billing Cycle:
  * - 15 days billing period
  * - 2 days grace period after payment due
  * - Total: 17 days from last payment to suspension
  */
 
-import cron from 'node-cron';
-import pool from '../config/db.js';
+import cron from "node-cron";
+import pool from "../config/db.js";
 
 let cronJob = null;
 
@@ -24,9 +24,10 @@ let cronJob = null;
 async function updateSubscriptionStatuses() {
   try {
     const now = new Date();
-    
+
     // 1. Move active accounts to grace_period if payment is overdue
-    const [movedToGrace] = await pool.query(`
+    const [movedToGrace] = await pool.query(
+      `
       UPDATE shopkeepers 
       SET subscription_status = 'grace_period'
       WHERE subscription_status = 'active'
@@ -36,14 +37,19 @@ async function updateSubscriptionStatuses() {
         AND grace_period_end >= ?
         AND is_verified = 1
         AND is_deleted = 0
-    `, [now, now]);
-    
+    `,
+      [now, now]
+    );
+
     if (movedToGrace.affectedRows > 0) {
-      console.log(`⚠️ Moved ${movedToGrace.affectedRows} shopkeeper(s) to grace_period status`);
+      console.log(
+        `⚠️ Moved ${movedToGrace.affectedRows} shopkeeper(s) to grace_period status`
+      );
     }
-    
+
     // 2. Move grace_period accounts to suspended if grace period has ended
-    const [movedToSuspended] = await pool.query(`
+    const [movedToSuspended] = await pool.query(
+      `
       UPDATE shopkeepers 
       SET subscription_status = 'suspended'
       WHERE subscription_status IN ('grace_period', 'overdue')
@@ -51,12 +57,16 @@ async function updateSubscriptionStatuses() {
         AND grace_period_end < ?
         AND is_verified = 1
         AND is_deleted = 0
-    `, [now]);
-    
+    `,
+      [now]
+    );
+
     if (movedToSuspended.affectedRows > 0) {
-      console.log(`🚫 Suspended ${movedToSuspended.affectedRows} shopkeeper(s) - grace period expired`);
+      console.log(
+        `🚫 Suspended ${movedToSuspended.affectedRows} shopkeeper(s) - grace period expired`
+      );
     }
-    
+
     // 3. Log current status distribution
     const [statusCounts] = await pool.query(`
       SELECT 
@@ -66,16 +76,15 @@ async function updateSubscriptionStatuses() {
       WHERE is_verified = 1 AND is_deleted = 0
       GROUP BY subscription_status
     `);
-    
+
     if (movedToGrace.affectedRows > 0 || movedToSuspended.affectedRows > 0) {
-      console.log('📊 Current subscription status distribution:');
-      statusCounts.forEach(row => {
-        console.log(`   ${row.subscription_status || 'null'}: ${row.count}`);
+      console.log("📊 Current subscription status distribution:");
+      statusCounts.forEach((row) => {
+        console.log(`   ${row.subscription_status || "null"}: ${row.count}`);
       });
     }
-    
   } catch (error) {
-    console.error('❌ Subscription status update error:', error);
+    console.error("❌ Subscription status update error:", error);
   }
 }
 
@@ -85,20 +94,20 @@ async function updateSubscriptionStatuses() {
  */
 export function startSubscriptionStatusCron() {
   if (cronJob) {
-    console.log('⚠️ Subscription status cron already running');
+    console.log("⚠️ Subscription status cron already running");
     return;
   }
-  
+
   // Schedule cron job to run every hour at minute 0
   // Format: "0 * * * *" = At minute 0 of every hour
-  cronJob = cron.schedule('0 * * * *', async () => {
-    console.log('🔄 Running subscription status check...');
+  cronJob = cron.schedule("0 * * * *", async () => {
+    console.log("🔄 Running subscription status check...");
     await updateSubscriptionStatuses();
   });
-  
+
   // Run immediately on startup
-  console.log('✅ Subscription status cron started (runs every hour)');
-  console.log('🔄 Running initial subscription status check...');
+  console.log("✅ Subscription status cron started (runs every hour)");
+  console.log("🔄 Running initial subscription status check...");
   updateSubscriptionStatuses();
 }
 
@@ -109,7 +118,7 @@ export function stopSubscriptionStatusCron() {
   if (cronJob) {
     cronJob.stop();
     cronJob = null;
-    console.log('✅ Subscription status cron stopped');
+    console.log("✅ Subscription status cron stopped");
   }
 }
 
@@ -119,8 +128,9 @@ export function stopSubscriptionStatusCron() {
 export function getSubscriptionStatusCronStatus() {
   return {
     running: cronJob !== null,
-    schedule: '0 * * * *', // Every hour
-    description: 'Automatically updates subscription statuses: active → grace_period → suspended'
+    schedule: "0 * * * *", // Every hour
+    description:
+      "Automatically updates subscription statuses: active → grace_period → suspended",
   };
 }
 
@@ -128,6 +138,6 @@ export function getSubscriptionStatusCronStatus() {
  * Manual trigger for testing
  */
 export async function triggerSubscriptionStatusUpdate() {
-  console.log('🔄 Manual subscription status update triggered...');
+  console.log("🔄 Manual subscription status update triggered...");
   await updateSubscriptionStatuses();
 }
