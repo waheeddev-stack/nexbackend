@@ -2392,27 +2392,27 @@ shopkeeperRouter.post(
       );
 
       // ✅ FIX: Use atomic update to prevent race condition
-      // Mark order as Completed if status is Pending, Processing, or Paid
+      // Mark order as Completed for any status except Completed or Cancelled
       // This prevents duplicate reward awards from concurrent requests
       try {
         const [updateResult] = await pool.execute(
           `
         UPDATE orders 
         SET status = 'Completed', has_timer = FALSE
-        WHERE id = ? AND status IN ('Pending', 'Processing', 'Paid')
+        WHERE id = ? AND status NOT IN ('Completed', 'Cancelled')
       `,
           [orderIdNum]
         );
 
         if (updateResult.affectedRows === 0) {
-          // Order was already completed by another request or has invalid status
+          // Order was already completed or cancelled
           console.warn(
-            `Order ${orderIdNum} already completed or invalid status`
+            `Order ${orderIdNum} already completed or cancelled`
           );
           return res.status(400).json({
             success: false,
             message:
-              "Order is already completed or cannot be completed at this time",
+              "Order is already completed or cancelled and cannot be completed",
           });
         }
 
