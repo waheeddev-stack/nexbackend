@@ -644,17 +644,35 @@ router.post("/", verifyToken, async (req, res) => {
     await connection.beginTransaction();
 
     const userId = req.user.id;
+    // Extract with aliases for compatibility with frontend naming conventions
     const { 
-      items, 
-      deliveryType = 'home_delivery', 
-      totalAmount,
-      shopkeeperId,
+      items: reqItems, 
+      products,
+      deliveryType: reqDeliveryType, 
+      order_type,
+      totalAmount: reqTotalAmount,
+      total,
+      grandTotal,
+      shopkeeperId: reqShopkeeperId,
+      shopId,
       paymentMethod = 'cod',
-      deliveryAddress,
+      deliveryAddress: reqDeliveryAddress,
+      address,
       latitude,
       longitude,
-      creditsUsed = 0
+      creditsUsed: reqCreditsUsed,
+      pointsToRedeem,
+      scheduled_time: reqScheduledTime
     } = req.body;
+
+    // Use aliases if main fields are missing
+    const items = reqItems || products;
+    const deliveryType = reqDeliveryType || order_type || 'home_delivery';
+    const totalAmount = reqTotalAmount || grandTotal || total;
+    const shopkeeperId = reqShopkeeperId || shopId;
+    const deliveryAddress = reqDeliveryAddress || address;
+    const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
+    const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -753,8 +771,11 @@ router.post("/", verifyToken, async (req, res) => {
         pickup_code,
         timer_started_at,
         timer_expires_at,
+        order_type,
+        delivery_mode,
+        scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `, [
       orderId,
       userId, 
@@ -769,7 +790,10 @@ router.post("/", verifyToken, async (req, res) => {
       hasTimer,
       pickupCode,
       timerStartedAt,
-      timerExpiresAt
+      timerExpiresAt,
+       deliveryType === 'store_pickup' ? 'pickup' : 'delivery',
+       deliveryType === 'store_pickup' ? 'pickup' : 'delivery',
+       scheduledTime
     ]);
 
     // Create timer record in order_timers table (only for pickup orders)
@@ -786,20 +810,29 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Insert order items
     for (const item of items) {
+      const productId = item.productId || item.product_id;
+      const quantity = item.quantity || item.qty;
+      const price = item.price;
+
+      if (!productId) {
+        console.warn("Skipping item with missing productId", item);
+        continue;
+      }
+
       const [maxItemId] = await connection.execute("SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items");
       const itemId = maxItemId[0].nextId;
       
       await connection.execute(`
         INSERT INTO order_items (id, order_id, product_id, quantity, price)
         VALUES (?, ?, ?, ?, ?)
-      `, [itemId, orderId, item.productId, item.quantity, item.price]);
+      `, [itemId, orderId, productId, quantity, price]);
 
       // Reduce stock
       await connection.execute(`
         UPDATE products 
         SET stock = stock - ? 
         WHERE id = ? AND stock >= ?
-      `, [item.quantity, item.productId, item.quantity]);
+      `, [quantity, productId, quantity]);
     }
 
     // Deduct inventory stock for order items
@@ -841,18 +874,24 @@ router.post("/", verifyToken, async (req, res) => {
       // Get product details for items
       const itemsWithDetails = [];
       for (const item of items) {
+        const productId = item.productId || item.product_id;
+        const quantity = item.quantity || item.qty;
+        const price = item.price;
+
+        if (!productId) continue;
+
         const [productDetails] = await connection.execute(
           "SELECT name, image, category FROM products WHERE id = ?",
-          [item.productId]
+          [productId]
         );
         const product = productDetails[0] || {};
         itemsWithDetails.push({
-          productId: item.productId,
+          productId: productId,
           productName: product.name || 'Unknown Product',
           productImage: product.image || null,
           productCategory: product.category || null,
-          quantity: item.quantity,
-          price: parseFloat(item.price)
+          quantity: quantity,
+          price: parseFloat(price)
         });
       }
 
