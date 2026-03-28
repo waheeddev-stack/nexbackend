@@ -69,6 +69,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     // 🔍 1st CHECK: Scan for all potential ONLINE shops in the expanded bounding box
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
+    // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOnlineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
@@ -77,7 +78,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                    cos(radians(longitude) - radians(?)) +
                    sin(radians(?)) * sin(radians(latitude))
                  ))
-              )) * 1000 AS distance
+              )) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -89,7 +90,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND (is_online = 1 OR is_online IS NULL)
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
 
     console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops within ${radiusMeters}m`);
@@ -151,6 +152,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
+    // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOfflineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
@@ -159,7 +161,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                    cos(radians(longitude) - radians(?)) +
                    sin(radians(?)) * sin(radians(latitude))
                  ))
-              )) * 1000 AS distance
+              )) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -171,7 +173,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_online = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
 
     console.log(`📴 Offline Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`);
@@ -185,6 +187,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Check for unverified shops nearby (for debugging)
+    // Returns distance in km (not meters) to be compatible with formatDistance
     const [unverifiedShops] = await pool.query(
       `SELECT id, name, shop_name, is_verified, is_online,
               (6371 * acos(
@@ -193,7 +196,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                    cos(radians(longitude) - radians(?)) +
                    sin(radians(?)) * sin(radians(latitude))
                  ))
-              )) * 1000 AS distance
+              )) AS distance
        FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
@@ -204,7 +207,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 0
        HAVING distance <= ?
        ORDER BY distance ASC`,
-      [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
+      [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
     
     if (unverifiedShops.length > 0) {
@@ -252,7 +255,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
         .filter(p => p.shop_id === shop.id)
         .map(p => ({
           ...p,
-          unit: "In stock"
+          // Show actual stock number or "Low stock" if < 5, or "In stock" for >= 5
+          unit: p.stock < 5 ? (p.stock === 1 ? "1 left" : `${p.stock} left`) : "In stock"
         })),
     }));
 
