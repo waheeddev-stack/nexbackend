@@ -52,13 +52,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     console.log(`🔍 Nearby shops request: lat=${lat.toFixed(6)}, lng=${lng.toFixed(6)}, radius=${finalRadiusKm}km (${radiusMeters}m)`);
     
-    // ⏱️ TIME OPTIMIZATION: Artificial delay removed for maximum performance.
-    // We rely on optimized SQL indexing (Bounding Box) for speed.
+    // Performance tracking
     const startTime = Date.now();
 
     // Bounding Box calculation for optimization (approx 111km per degree)
-    // 🛡️ SAFETY MARGIN: Using 1.2x the radius for the bounding box
-    const safetyFactor = 1.2;
+    // 🛡️ INCREASED SAFETY MARGIN: Using 1.5x the radius for the bounding box
+    // to ensure no edge-case shop is missed before applying precise distance check
+    const safetyFactor = 1.5;
     const latDelta = (finalRadiusKm * safetyFactor) / 111;
     const lngDelta = (finalRadiusKm * safetyFactor) / (111 * Math.cos(lat * Math.PI / 180));
     
@@ -67,11 +67,10 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const minLng = lng - lngDelta;
     const maxLng = lng + lngDelta;
 
-    // 🔍 OPTIMIZED 1st CHECK: Combined Scan & Verification
-    // Using EXISTS to pre-filter shops that have at least one product in stock (stock > 0)
-    // This eliminates the need for separate queries per shop and speeds up the search.
+    // 🔍 1st CHECK: Scan for all potential ONLINE shops in the expanded bounding box
+    // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     const [allPotentialOnlineShops] = await pool.query(
-      `SELECT s.id, s.name, s.shop_name, s.address, s.phone, s.latitude, s.longitude, s.is_online, s.is_verified,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -79,7 +78,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                    sin(radians(?)) * sin(radians(latitude))
                  ))
               )) * 1000 AS distance
-       FROM shopkeepers s
+       FROM shopkeepers
        WHERE latitude IS NOT NULL 
          AND longitude IS NOT NULL
          AND latitude BETWEEN ? AND ?
@@ -88,40 +87,69 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND longitude != 0
          AND is_verified = 1
          AND (is_online = 1 OR is_online IS NULL)
-         AND EXISTS (SELECT 1 FROM products p WHERE p.shop_id = s.id AND p.stock > 0)
        HAVING distance <= ?
-       ORDER BY distance ASC
-       LIMIT 5`, // Get top 5 candidates to re-verify in Node.js
+       ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
 
-    console.log(`🔍 Scan Result: Found ${allPotentialOnlineShops.length} verified online shops with stock within ${radiusMeters}m`);
+    console.log(`🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops within ${radiusMeters}m`);
     
-    // 🎯 2nd CHECK: Precise Node.js re-verification
+    // 🎯 2nd CHECK: Strict re-verification phase
     let onlineShops = [];
     if (allPotentialOnlineShops.length > 0) {
+      console.log("🕵️ Starting strict re-verification for potential shops...");
+      
       for (const shop of allPotentialOnlineShops) {
-        // Re-verify distance in Node.js for absolute precision
-        const R = 6371;
+        // Re-verify distance in Node.js for absolute precision (Double verification)
+        const R = 6371; // Earth's radius in km
         const dLat = (shop.latitude - lat) * Math.PI / 180;
         const dLon = (shop.longitude - lng) * Math.PI / 180;
         const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
                   Math.cos(lat * Math.PI / 180) * Math.cos(shop.latitude * Math.PI / 180) *
                   Math.sin(dLon/2) * Math.sin(dLon/2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        const verifiedDistance = R * c * 1000;
+        const verifiedDistance = R * c * 1000; // Meters
 
-        if (verifiedDistance <= radiusMeters) {
-          console.log(`🎯 FINAL ALLOTMENT: ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m (took ${Date.now() - startTime}ms)`);
-          onlineShops = [shop];
-          break; // Stop at the absolute best match.
+        console.log(`   - Verifying ${shop.shop_name}: SQL dist=${shop.distance.toFixed(2)}m, Node dist=${verifiedDistance.toFixed(2)}m`);
+
+        if (verifiedDistance > radiusMeters) {
+          console.log(`     ❌ Rejected: Distance ${verifiedDistance.toFixed(2)}m exceeds 1km limit.`);
+          continue;
         }
+
+        // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0)
+        // A nearby shop with no stock is not useful to the user.
+        const [[productCount]] = await pool.query(
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0",
+          [shop.id]
+        );
+
+        if (productCount.count === 0) {
+          console.log(`     ⚠️ Skipped ${shop.shop_name}: No products currently in stock. Searching for next nearest...`);
+          continue;
+        }
+
+        // Fresh status check: Re-verify online and verified status one last time
+        const [[freshStatus]] = await pool.query(
+          "SELECT is_online, is_verified FROM shopkeepers WHERE id = ?",
+          [shop.id]
+        );
+
+        if (freshStatus.is_verified !== 1 || (freshStatus.is_online !== 1 && freshStatus.is_online !== null)) {
+          console.log(`     ❌ Rejected ${shop.shop_name}: Status changed during processing.`);
+          continue;
+        }
+
+        // All checks passed! This is our best candidate.
+        console.log(`🎯 3rd Check (FINAL ALLOTMENT): ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m with ${productCount.count} products.`);
+        onlineShops = [shop];
+        break; // Stop at the absolute best match that is fully verified.
       }
     } else {
-      console.log(`❌ No online verified shops with stock found within ${finalRadiusKm}km`);
+      console.log(`❌ 2nd Check: No online verified shops found within ${finalRadiusKm}km`);
     }
 
-    // 🔍 OFFLINE CHECK: Scan for potential offline shops as fallback
+    // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
     const [allPotentialOfflineShops] = await pool.query(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
@@ -141,16 +169,17 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND is_verified = 1
          AND is_online = 0
        HAVING distance <= ?
-       ORDER BY distance ASC
-       LIMIT 1`,
+       ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, radiusMeters]
     );
+
+    console.log(`📴 Offline Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`);
 
     // Only allot nearest offline shop if no online shop was allotted
     let offlineShops = [];
     if (onlineShops.length === 0 && allPotentialOfflineShops.length > 0) {
       const nearestOffline = allPotentialOfflineShops[0];
-      console.log(`📴 Offline Fallback Allotment: ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`);
+      console.log(`📴 Final Allotment (Offline Fallback): ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`);
       offlineShops = [nearestOffline];
     }
 
