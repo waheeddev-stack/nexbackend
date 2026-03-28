@@ -506,17 +506,34 @@ userrouter.post("/push-token", verifyToken, async (req, res) => {
 
 userrouter.get("/products", async (req, res) => {
   try {
-    // ✅ FIX: Return empty array instead of all products when location is not provided
-    // This prevents showing products from all shops when location permission is denied
-    // Users should only see products from nearby shops with proper location context
-    console.log("⚠️ /products endpoint called without location - returning empty array");
+    // If location is provided, we should ideally use nearby-shops logic, 
+    // but as a fallback/general products endpoint, we return products from all verified shops.
+    const { latitude, longitude } = req.query;
+    
+    let query = `
+      SELECT p.id AS product_id, p.shop_id, p.name, p.description, p.image, p.category, 
+             p.price, p.stock, s.shop_name AS shopName, s.address AS shopAddress
+      FROM products p
+      JOIN shopkeepers s ON p.shop_id = s.id
+      WHERE s.is_verified = 1 AND (s.is_online = 1 OR s.is_online IS NULL)
+        AND p.stock > 0
+      ORDER BY p.created_at DESC
+      LIMIT 50
+    `;
+    
+    const [products] = await pool.query(query);
+
+    if (!latitude || !longitude) {
+      console.log("ℹ️ /products called without location - returning global products list");
+    }
+
     res.json({ 
       success: true, 
-      products: [], 
-      message: "Location required to view nearby products" 
+      products: products,
+      message: products.length > 0 ? "Showing available products" : "No products available currently"
     });
   } catch (err) {
-    console.error(err);
+    console.error("Get products error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
