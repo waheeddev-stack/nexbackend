@@ -775,7 +775,7 @@ router.post("/", verifyToken, async (req, res) => {
         delivery_mode,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `, [
       orderId,
       userId, 
@@ -791,9 +791,9 @@ router.post("/", verifyToken, async (req, res) => {
       pickupCode,
       timerStartedAt,
       timerExpiresAt,
-       deliveryType === 'store_pickup' ? 'pickup' : 'delivery',
-       deliveryType === 'store_pickup' ? 'pickup' : 'delivery',
-       scheduledTime
+      (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
+      (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
+      scheduledTime
     ]);
 
     // Create timer record in order_timers table (only for pickup orders)
@@ -905,6 +905,10 @@ router.post("/", verifyToken, async (req, res) => {
         shopkeeper_id: shopkeeperId, // Add for compatibility
         deliveryType,
         delivery_type: deliveryType, // Add for compatibility
+        orderType: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
+        order_type: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
+        deliveryMode: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
+        delivery_mode: (deliveryType === 'store_pickup' || deliveryType === 'pickup') ? 'pickup' : 'delivery',
         status: 'pending',
         originalStatus: 'Pending',
         totalAmount: parseFloat(finalTotal),
@@ -971,10 +975,38 @@ router.post("/", verifyToken, async (req, res) => {
       // Send push notification to shopkeeper
       if (shopkeeper.expo_push_token) {
         const token = shopkeeper.expo_push_token;
-        if (isFCMToken(token)) {
-          await sendFCMPush(token, "📦 New Order Received!", `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`, { orderId: String(orderId), shopId: String(shopkeeperId) });
-        } else {
-          await sendExpoPush(token, "📦 New Order Received!", `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`, { orderId, shopId: shopkeeperId });
+        const title = "📦 New Order Received!";
+        const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
+        const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+
+        try {
+          if (isFCMToken(token)) {
+            await sendFCMPush(token, title, body, payload);
+          } else {
+            await sendExpoPush(token, title, body, payload);
+          }
+        } catch (pushErr) {
+          console.error(`Failed to send push to shopkeeper ${shopkeeperId}:`, pushErr);
+        }
+      }
+
+      // Send push notification to customer (Order Confirmed)
+      const [customerRows] = await connection.execute("SELECT expo_push_token FROM users WHERE id = ?", [userId]);
+      const customer = customerRows[0];
+      if (customer && customer.expo_push_token) {
+        const token = customer.expo_push_token;
+        const title = "Order Placed Successfully!";
+        const body = `Your order #${orderId} has been placed. You can track it in the app.`;
+        const payload = { orderId: String(orderId), status: 'Pending' };
+
+        try {
+          if (isFCMToken(token)) {
+            await sendFCMPush(token, title, body, payload);
+          } else {
+            await sendExpoPush(token, title, body, payload);
+          }
+        } catch (pushErr) {
+          console.error(`Failed to send push to customer ${userId}:`, pushErr);
         }
       }
 
@@ -1137,7 +1169,17 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
       if (target?.expo_push_token) {
         const title = `Order #${orderIdNum} Update`;
         const body = `Your order status has been updated to ${dbStatus}.`;
-        await sendExpoPush(target.expo_push_token, title, body, { orderId: orderIdNum, status: dbStatus });
+        const payload = { orderId: String(orderIdNum), status: dbStatus };
+        
+        try {
+          if (isFCMToken(target.expo_push_token)) {
+            await sendFCMPush(target.expo_push_token, title, body, payload);
+          } else {
+            await sendExpoPush(target.expo_push_token, title, body, payload);
+          }
+        } catch (pushErr) {
+          console.error(`Failed to send status update push to ${targetTable}:`, pushErr);
+        }
       }
     } catch (pushErr) {
       console.error("Error sending push:", pushErr);
