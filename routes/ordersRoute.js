@@ -9,8 +9,10 @@ import {
   onOrderCancelled
 } from '../middleware/inventory.order.hooks.js';
 import { TIMER_DURATION_SECONDS, TIME_SLOT_CONFIG, ORDER_STATUS } from '../config/constants.js';
-import { validatePointsUsage, deductWellnessPoints } from '../utils/wellnessPoints.js';
-import { sendExpoPush, sendFCMPush, isFCMToken } from '../utils/expoPush.js';
+import { validatePointsUsage, deductWellnessPoints, awardWellnessPoints } from '../utils/wellnessPoints.js';
+import { sendExpoPush } from '../utils/expoPush.js';
+import { sendFCMPush, isFCMToken } from '../utils/fcmPush.js';
+import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 
 const router = express.Router();
 
@@ -26,24 +28,37 @@ router.use(handleCartTokenExpiration);
 router.get("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
+    const userRole = req.user.role;
     const { status = 'all', deliveryType } = req.query;
 
-    // Build WHERE clause for filtering
-    let whereConditions = ['o.user_id = ?'];
-    let queryParams = [userId];
+    // Build WHERE clause for filtering based on role
+    let whereConditions = [];
+    let queryParams = [];
+
+    if (userRole === 'user') {
+      whereConditions.push('o.user_id = ?');
+      queryParams.push(userId);
+    } else if (userRole === 'shopkeeper') {
+      whereConditions.push('o.shopkeeper_id = ?');
+      queryParams.push(userId);
+    } else if (userRole === 'admin') {
+      // Admin can see all orders unless filtered by another parameter
+    } else {
+      return res.status(403).json({ success: false, message: "Unauthorized role" });
+    }
 
     // Add status filter (map UI status to DB status)
     if (status && status !== 'all') {
       if (status === 'pending') {
-        whereConditions.push("o.status = 'Pending'");
+        whereConditions.push("o.status IN ('Pending', 'Processing', 'Paid')");
       } else if (status === 'completed') {
-        whereConditions.push("o.status = 'Completed'");
+        whereConditions.push("o.status IN ('Completed', 'Delivered')");
       } else if (status === 'cancelled') {
         whereConditions.push("o.status = 'Cancelled'");
       }
     }
 
-    // Add delivery type filter (check if has_timer field exists)
+    // Add delivery type filter
     if (deliveryType) {
       if (deliveryType === 'store_pickup') {
         whereConditions.push('o.has_timer = 1');
@@ -52,12 +67,20 @@ router.get("/", verifyToken, async (req, res) => {
       }
     }
 
-    const whereClause = whereConditions.join(' AND ');
+    const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
 
-    // Get counts for all statuses (respecting deliveryType filter)
-    let countWhereConditions = ['o.user_id = ?'];
-    let countParams = [userId];
+    // Get counts for all statuses
+    let countWhereConditions = [];
+    let countParams = [];
     
+    if (userRole === 'user') {
+      countWhereConditions.push('o.user_id = ?');
+      countParams.push(userId);
+    } else if (userRole === 'shopkeeper') {
+      countWhereConditions.push('o.shopkeeper_id = ?');
+      countParams.push(userId);
+    }
+
     if (deliveryType) {
       if (deliveryType === 'store_pickup') {
         countWhereConditions.push('o.has_timer = 1');
@@ -66,16 +89,16 @@ router.get("/", verifyToken, async (req, res) => {
       }
     }
     
-    const countWhereClause = countWhereConditions.join(' AND ');
+    const countWhereClause = countWhereConditions.length > 0 ? 'WHERE ' + countWhereConditions.join(' AND ') : '';
 
     const [counts] = await pool.execute(`
       SELECT 
         COUNT(*) as all_count,
-        SUM(CASE WHEN o.status = 'Pending' THEN 1 ELSE 0 END) as pending_count,
-        SUM(CASE WHEN o.status = 'Completed' THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN o.status IN ('Pending', 'Processing', 'Paid') THEN 1 ELSE 0 END) as pending_count,
+        SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 ELSE 0 END) as completed_count,
         SUM(CASE WHEN o.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_count
       FROM orders o
-      WHERE ${countWhereClause}
+      ${countWhereClause}
     `, countParams);
 
     // Get filtered orders with shopkeeper and items details
@@ -83,18 +106,23 @@ router.get("/", verifyToken, async (req, res) => {
       SELECT 
         o.id,
         o.id as orderId,
+        o.id as order_id,
         o.user_id as userId,
+        o.user_id as user_id,
+        o.shopkeeper_id as shopkeeperId,
+        o.shopkeeper_id as shopkeeper_id,
         CASE 
           WHEN o.has_timer = 1 THEN 'store_pickup'
           ELSE 'home_delivery'
         END as deliveryType,
         CASE 
-          WHEN o.status = 'Completed' THEN 'completed'
+          WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,
         o.status as originalStatus,
         o.total_amount as totalAmount,
+        o.total_amount as total_amount,
         o.credits_earned as creditsEarned,
         o.credits_used as creditsUsed,
         o.payment_method as paymentMethod,
@@ -112,7 +140,7 @@ router.get("/", verifyToken, async (req, res) => {
         s.address as shopAddress
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
-      WHERE ${whereClause}
+      ${whereClause}
       ORDER BY o.created_at DESC
     `, queryParams);
 
@@ -139,44 +167,50 @@ router.get("/", verifyToken, async (req, res) => {
       orderItems = items;
     }
 
-    // Attach items to each order
-    const ordersWithItems = orders.map(order => ({
-      ...order,
-      items: orderItems.filter(item => item.orderId === order.id).map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        productImage: item.productImage,
-        productCategory: item.productCategory,
-        quantity: item.quantity,
-        price: parseFloat(item.price)
-      })),
-      totalAmount: parseFloat(order.totalAmount),
-      creditsEarned: parseFloat(order.creditsEarned || 0),
-      creditsUsed: parseInt(order.creditsUsed || 0),
-      // Attach computed delivery slot for home delivery (ephemeral if not stored)
-      deliverySlot: order.deliveryType === 'home_delivery' ? (() => {
-        const created = order.createdAt ? new Date(order.createdAt) : new Date();
+    // Attach items and computed fields to each order
+    const ordersWithItems = orders.map(order => {
+      // Compute delivery slot for home delivery orders (30-minute slots in next 12 hours)
+      const computeDeliverySlot = (createdAt) => {
+        const created = new Date(createdAt);
         const start = new Date(created);
         const minutes = start.getMinutes();
-        const roundedMinutes = minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0 
-          ? minutes 
-          : minutes + (TIME_SLOT_CONFIG.INTERVAL_MINUTES - (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
+        const roundedMinutes = minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
         start.setMinutes(roundedMinutes, 0, 0);
-        const end = new Date(start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000);
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
+        const limit = new Date(created.getTime() + 12 * 60 * 60 * 1000);
+        if (start > limit) {
+          start.setTime(limit.getTime());
+          end.setTime(limit.getTime() + 30 * 60 * 1000);
+        }
         const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         return { startISO: start.toISOString(), endISO: end.toISOString(), label };
-      })() : null
-    }));
+      };
+
+      return {
+        ...order,
+        items: orderItems.filter(item => item.orderId === order.id).map(item => ({
+          productId: item.productId,
+          productName: item.productName,
+          productImage: item.productImage,
+          productCategory: item.productCategory,
+          quantity: item.quantity,
+          price: parseFloat(item.price)
+        })),
+        deliverySlot: order.deliveryType === 'home_delivery' ? computeDeliverySlot(order.createdAt) : null,
+        timerInfo: order.deliveryType === 'store_pickup' ? {
+          hasTimer: order.hasTimer === 1,
+          pickupCode: order.pickupCode,
+          timerStartedAt: order.timerStartedAt,
+          timerExpiresAt: order.timerExpiresAt,
+          isExpired: order.timerExpiresAt ? new Date() > new Date(order.timerExpiresAt) : false
+        } : null
+      };
+    });
 
     res.json({
       success: true,
-      counts: {
-        all: parseInt(counts[0].all_count) || 0,
-        pending: parseInt(counts[0].pending_count) || 0,
-        completed: parseInt(counts[0].completed_count) || 0,
-        cancelled: parseInt(counts[0].cancelled_count) || 0
-      },
-      orders: ordersWithItems
+      orders: ordersWithItems,
+      counts: counts[0] || { all_count: 0, pending_count: 0, completed_count: 0, cancelled_count: 0 }
     });
 
   } catch (error) {
@@ -186,6 +220,148 @@ router.get("/", verifyToken, async (req, res) => {
       message: "Failed to fetch orders",
       error: error.message
     });
+  }
+});
+
+// ============================================================================
+// CANCEL ORDER
+// ============================================================================
+// POST /api/orders/:orderId/cancel
+router.post("/:orderId/cancel", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { orderId } = req.params;
+    const { cancellation_reason = "Customer cancellation" } = req.body;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    // Check if order exists and belongs to the user or shopkeeper
+    const [orderRows] = await pool.query(
+      "SELECT id, user_id, shopkeeper_id, status FROM orders WHERE id = ?",
+      [orderIdNum]
+    );
+
+    if (orderRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orderRows[0];
+
+    // Authorization check
+    if (userRole === 'user' && order.user_id !== userId) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    } else if (userRole === 'shopkeeper' && order.shopkeeper_id !== userId) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    // Only allow cancellation of certain statuses
+    if (!['Pending', 'Paid', 'Processing'].includes(order.status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot cancel order with status: ${order.status}` 
+      });
+    }
+
+    // Start transaction for cancellation and stock restoration
+    await pool.query("START TRANSACTION");
+
+    try {
+      // Update order status
+      await pool.query(
+        "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
+        [cancellation_reason, orderIdNum]
+      );
+
+      // Stop timer if order has one
+      await pool.query(`
+        UPDATE order_timers 
+        SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
+        WHERE order_id = ? AND is_active = TRUE
+      `, [orderIdNum]);
+
+      // Restore stock using manager utility
+      const stockRestoration = await restoreStockForCancelledOrder(
+        orderIdNum, 
+        userRole, 
+        cancellation_reason
+      );
+
+      await pool.query("COMMIT");
+
+      // Notify via socket
+      if (req.io) {
+        const shopRoom = `shop_${Number(order.shopkeeper_id)}`;
+        const customerRoom = `customer_${Number(order.user_id)}`;
+        
+        const payload = {
+          orderId: orderIdNum,
+          status: 'Cancelled',
+          cancellation_reason,
+          stockRestored: stockRestoration.success
+        };
+
+        req.io.to(shopRoom).emit("orderStatusUpdate", payload);
+        req.io.to(customerRoom).emit("orderStatusUpdate", payload);
+      }
+
+      res.json({
+        success: true,
+        message: "Order cancelled and stock restored successfully",
+        orderId: orderIdNum,
+        stockRestoration
+      });
+
+    } catch (transactionError) {
+      await pool.query("ROLLBACK");
+      throw transactionError;
+    }
+
+  } catch (error) {
+    console.error('Cancel order error:', error);
+    res.status(500).json({ success: false, message: "Failed to cancel order" });
+  }
+});
+
+// ============================================================================
+// CLEAR ALL USER ORDERS
+// ============================================================================
+// DELETE /api/orders/clear-all
+router.delete("/clear-all", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    if (userRole !== 'user') {
+      return res.status(403).json({ success: false, message: "Only customers can clear their order history" });
+    }
+
+    // First, delete order items
+    await pool.query(
+      `DELETE oi FROM order_items oi
+       INNER JOIN orders o ON oi.order_id = o.id
+       WHERE o.user_id = ?`,
+      [userId]
+    );
+
+    // Then delete orders
+    const [result] = await pool.query(
+      "DELETE FROM orders WHERE user_id = ?",
+      [userId]
+    );
+
+    res.json({ 
+      success: true, 
+      message: "Order history cleared successfully",
+      clearedCount: result.affectedRows
+    });
+
+  } catch (error) {
+    console.error("Clear orders error:", error);
+    res.status(500).json({ success: false, message: "Server error while clearing orders" });
   }
 });
 
@@ -327,8 +503,8 @@ router.get("/:orderId", verifyToken, async (req, res) => {
         s.upi_id as shop_upi
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
-      WHERE o.id = ? AND (o.user_id = ? OR ? IN (SELECT id FROM admins))
-    `, [orderId, userId, userId]);
+      WHERE o.id = ? AND (o.user_id = ? OR o.shopkeeper_id = ? OR ? IN (SELECT id FROM admins))
+    `, [orderId, userId, userId, userId]);
 
     if (orders.length === 0) {
       return res.status(404).json({
@@ -798,144 +974,141 @@ router.post("/", verifyToken, async (req, res) => {
 router.patch("/:orderId/status", verifyToken, async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { status } = req.body;
+    const { status, cancellation_reason } = req.body;
     const userId = req.user.id;
+    const userRole = req.user.role;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
 
     // Validate status
-    const validStatuses = ['completed', 'cancelled'];
+    const validStatuses = ['pending', 'completed', 'cancelled', 'paid', 'processing'];
     if (!validStatuses.includes(status.toLowerCase())) {
       return res.status(400).json({
         success: false,
-        message: "Invalid status. Must be 'completed' or 'cancelled'"
+        message: "Invalid status. Must be one of: " + validStatuses.join(", ")
       });
     }
 
     // Map frontend status to database status
-    const dbStatus = status === 'completed' ? 'Completed' : 'Cancelled';
+    const statusMap = {
+      'pending': 'Pending',
+      'completed': 'Completed',
+      'cancelled': 'Cancelled',
+      'paid': 'Paid',
+      'processing': 'Processing'
+    };
+    const dbStatus = statusMap[status.toLowerCase()];
 
-    // Check if order exists and belongs to user
-    const [orders] = await pool.execute(`
-      SELECT id, status, user_id 
+    // Check if order exists and get details for authorization and notifications
+    const [orderRows] = await pool.execute(`
+      SELECT id, status, user_id, shopkeeper_id, total_amount, has_timer, timer_started_at, order_type, delivery_mode
       FROM orders 
-      WHERE id = ? AND user_id = ?
-    `, [orderId, userId]);
+      WHERE id = ?
+    `, [orderIdNum]);
 
-    if (orders.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found"
-      });
+    if (orderRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // Update order status
-    await pool.execute(`
-      UPDATE orders 
-      SET status = ? 
-      WHERE id = ? AND user_id = ?
-    `, [dbStatus, orderId, userId]);
+    const order = orderRows[0];
 
-    // Handle order cancellation: restore stock and refund credits
+    // Authorization check
+    if (userRole === 'user' && order.user_id !== userId) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    } else if (userRole === 'shopkeeper' && order.shopkeeper_id !== userId) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    } else if (userRole !== 'user' && userRole !== 'shopkeeper' && userRole !== 'admin') {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    // Business Logic: Handle specific status transitions
     if (dbStatus === 'Cancelled') {
-      // Restore inventory stock
-      await onOrderCancelled(orderId, 'USER_CANCELLED');
+      console.log(`📦 Order ${orderIdNum} being cancelled by ${userRole}`);
       
-      // Refund any credits that were used in this order
+      await pool.query("START TRANSACTION");
       try {
-        const [orderData] = await pool.execute(
-          "SELECT credits_used FROM orders WHERE id = ? AND user_id = ?",
-          [orderId, userId]
+        await pool.query("UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?", 
+          [cancellation_reason || `${userRole} cancellation`, orderIdNum]);
+        
+        // Stop timer
+        await pool.query(`
+          UPDATE order_timers 
+          SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
+          WHERE order_id = ? AND is_active = TRUE
+        `, [orderIdNum]);
+
+        // Restore stock
+        await restoreStockForCancelledOrder(orderIdNum, userRole, cancellation_reason);
+
+        // Refund credits if any
+        const [[creditsData]] = await pool.query("SELECT credits_used FROM orders WHERE id = ?", [orderIdNum]);
+        if (creditsData?.credits_used > 0) {
+          await pool.query("UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?", 
+            [creditsData.credits_used, order.user_id]);
+        }
+
+        await pool.query("COMMIT");
+      } catch (err) {
+        await pool.query("ROLLBACK");
+        throw err;
+      }
+    } else if (dbStatus === 'Completed') {
+      await pool.query("UPDATE orders SET status = 'Completed' WHERE id = ?", [orderIdNum]);
+      
+      // Award wellness points
+      try {
+        const orderType = order.order_type || order.delivery_mode || 'pickup';
+        await awardWellnessPoints(
+          pool, 
+          order.user_id, 
+          new Date(), 
+          order.timer_started_at || new Date(), 
+          order.total_amount, 
+          orderType
         );
-        
-        if (orderData.length > 0 && orderData[0].credits_used > 0) {
-          const creditsUsed = orderData[0].credits_used;
-          console.log(`Refunding ${creditsUsed} credits to user ${userId} for cancelled order ${orderId}`);
-          
-          // Refund the credits back to user
-          await pool.execute(
-            'UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?',
-            [creditsUsed, userId]
-          );
-          
-          console.log(`Credits refunded successfully for order ${orderId}`);
-        }
-      } catch (refundError) {
-        console.error("Error refunding credits:", refundError);
-        // Don't fail the cancellation if refund fails
+      } catch (pointsErr) {
+        console.error("Error awarding points:", pointsErr);
       }
+    } else {
+      await pool.query("UPDATE orders SET status = ? WHERE id = ?", [dbStatus, orderIdNum]);
     }
 
-    // Socket broadcast status update
+    // Socket Notification
+    if (req.io) {
+      const payload = {
+        orderId: orderIdNum,
+        order_id: orderIdNum,
+        status: dbStatus,
+        updatedAt: new Date().toISOString()
+      };
+      req.io.to(`shop_${order.shopkeeper_id}`).emit("orderStatusUpdate", payload);
+      req.io.to(`customer_${order.user_id}`).emit("orderStatusUpdate", payload);
+      req.io.to('admin').emit("orderStatusUpdate", payload);
+    }
+
+    // Push Notification
     try {
-      // Get order details for proper broadcasting
-      const [orderDetails] = await pool.execute(
-        "SELECT shopkeeper_id, user_id, total_amount, has_timer FROM orders WHERE id = ?",
-        [orderId]
-      );
-
-      if (orderDetails.length > 0) {
-        const shopkeeperId = orderDetails[0].shopkeeper_id;
-        const orderUserId = orderDetails[0].user_id;
-        const payload = { 
-          orderId: parseInt(orderId),
-          order_id: parseInt(orderId), // Add for compatibility
-          status: status.toLowerCase(),
-          originalStatus: dbStatus,
-          userId: orderUserId,
-          user_id: orderUserId, // Add for compatibility
-          shopkeeperId: shopkeeperId,
-          shopkeeper_id: shopkeeperId, // Add for compatibility
-          totalAmount: parseFloat(orderDetails[0].total_amount),
-          total_amount: parseFloat(orderDetails[0].total_amount), // Add for compatibility
-          hasTimer: orderDetails[0].has_timer === 1,
-          has_timer: orderDetails[0].has_timer === 1, // Add for compatibility
-          updatedAt: new Date().toISOString(),
-          updated_at: new Date().toISOString() // Add for compatibility
-        };
-        
-        console.log(`📡 Socket: Broadcasting order status update - orderId: ${orderId}, status: ${status}`);
-        console.log(`📡 Socket: Shopkeeper: ${shopkeeperId}, Customer: ${orderUserId}`);
-        
-        if (req.io) {
-          // Broadcast to shopkeeper room
-          const shopRoom = `shop_${Number(shopkeeperId)}`;
-          console.log(`📡 Socket: Emitting orderStatusUpdate to ${shopRoom}`);
-          req.io.to(shopRoom).emit('orderStatusUpdate', payload);
-          
-          // Broadcast to customer room
-          const customerRoom = `customer_${Number(orderUserId)}`;
-          console.log(`📡 Socket: Emitting orderStatusUpdate to ${customerRoom}`);
-          req.io.to(customerRoom).emit('orderStatusUpdate', payload);
-          
-          // Also emit to admin room
-          console.log(`📡 Socket: Emitting orderStatusUpdate to admin room`);
-          req.io.to('admin').emit('orderStatusUpdate', payload);
-          
-          console.log(`📡 Socket: Order status update broadcast completed successfully`);
-        } else {
-          console.warn('📡 Socket: req.io not available - status updates will not sync in real-time!');
-        }
+      const targetId = userRole === 'user' ? order.shopkeeper_id : order.user_id;
+      const targetTable = userRole === 'user' ? 'shopkeepers' : 'users';
+      const [[target]] = await pool.query(`SELECT expo_push_token FROM ${targetTable} WHERE id = ?`, [targetId]);
+      
+      if (target?.expo_push_token) {
+        const title = `Order #${orderIdNum} Update`;
+        const body = `Your order status has been updated to ${dbStatus}.`;
+        await sendExpoPush(target.expo_push_token, title, body, { orderId: orderIdNum, status: dbStatus });
       }
-    } catch (_socketErr) {
-      console.error('📡 Socket: Error broadcasting order status update:', _socketErr);
-      console.error('📡 Socket: Stack trace:', _socketErr.stack);
+    } catch (pushErr) {
+      console.error("Error sending push:", pushErr);
     }
 
-    res.json({
-      success: true,
-      message: `Order ${status} successfully`,
-      order: {
-        id: parseInt(orderId),
-        status: status.toLowerCase()
-      }
-    });
+    res.json({ success: true, message: `Order status updated to ${dbStatus}`, status: dbStatus });
 
   } catch (error) {
     console.error('Update order status error:', error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update order status",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Failed to update status" });
   }
 });
 
