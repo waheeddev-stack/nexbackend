@@ -1167,7 +1167,7 @@ shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkSubs
 shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { name, description, category, price, stock, baselineQty } = req.body;
+    const { name, description, category, price, stock } = req.body;
 
     if (!name || price == null) {
       return res.status(400).json({ success: false, message: "Name and price are required" });
@@ -1408,6 +1408,7 @@ shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStat
 
     if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) {
       return res.status(400).json({ success: false, message: "Invalid stock or baseline quantity" });
+    }
     }
 
     // Verify global product exists
