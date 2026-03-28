@@ -101,26 +101,43 @@ export const apiService = {
 
   // Products
   products: {
-    getAll: (params = {}) => api.get('/products', { params }),
-    getByShopkeeper: (shopkeeperId, params = {}) => 
-      api.get(`/shopkeepers/${shopkeeperId}/products`, { params }),
-    getById: (productId) => api.get(`/products/${productId}`),
-    search: (query, params = {}) => 
-      api.get('/products/search', { params: { q: query, ...params } }),
-    getByCategory: (category, params = {}) => 
-      api.get('/products/category', { params: { category, ...params } }),
+    getAll: (params = {}) => {
+      const userType = localStorage.getItem('userType');
+      const prefix = userType === 'admin' ? '/admin' : '/shopkeeper';
+      return api.get(`${prefix}/products`, { params });
+    },
+    getById: (productId) => {
+      const userType = localStorage.getItem('userType');
+      const prefix = userType === 'admin' ? '/admin' : '/shopkeeper';
+      return api.get(`${prefix}/products/${productId}`);
+    },
+    create: (productData) => {
+      const config = productData instanceof FormData ? {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      } : {};
+      return api.post('/shopkeeper/products', productData, config);
+    },
+    update: (productId, productData) => {
+      const config = productData instanceof FormData ? {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      } : {};
+      return api.put(`/shopkeeper/products/${productId}`, productData, config);
+    },
+    delete: (productId) => api.delete(`/shopkeeper/products/${productId}`),
+    updateStock: (productId, stock) => api.patch(`/shopkeeper/products/${productId}/stock`, { stock }),
+    addFromGlobal: (data) => api.post('/shopkeeper/products/from-global', data)
   },
 
   // Orders
   orders: {
-    create: (orderData) => api.post('/orders', orderData),
-    getUserOrders: (userId, params = {}) => 
-      api.get(`/users/${userId}/orders`, { params }),
-    getShopkeeperOrders: (shopkeeperId, params = {}) => 
-      api.get(`/shopkeepers/${shopkeeperId}/orders`, { params }),
+    getAll: (params = {}) => api.get('/orders', { params }),
     getById: (orderId) => api.get(`/orders/${orderId}`),
-    updateStatus: (orderId, status) => 
-      api.patch(`/orders/${orderId}/status`, { status }),
+    create: (orderData) => api.post('/orders', orderData),
+    updateStatus: (orderId, status, reason) => 
+      api.patch(`/orders/${orderId}/status`, { status, cancellation_reason: reason }),
+    cancel: (orderId, reason) => 
+      api.post(`/orders/${orderId}/cancel`, { cancellation_reason: reason }),
+    getStats: (shopkeeperId) => api.get('/shopkeeper/stats') // Stats are still in shopkeeperRoute
   },
 
   // Users
