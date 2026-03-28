@@ -2392,14 +2392,14 @@ shopkeeperRouter.post(
       );
 
       // ✅ FIX: Use atomic update to prevent race condition
-      // Mark order as Completed ONLY if status is still Pending
+      // Mark order as Completed if status is Pending, Processing, or Paid
       // This prevents duplicate reward awards from concurrent requests
       try {
         const [updateResult] = await pool.execute(
           `
         UPDATE orders 
         SET status = 'Completed', has_timer = FALSE
-        WHERE id = ? AND status = 'Pending'
+        WHERE id = ? AND status IN ('Pending', 'Processing', 'Paid')
       `,
           [orderIdNum]
         );
