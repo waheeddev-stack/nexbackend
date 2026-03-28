@@ -327,30 +327,32 @@ router.get("/", verifyToken, async (req, res) => {
         CASE 
           WHEN o.has_timer = 1 THEN 'store_pickup'
           ELSE 'home_delivery'
-        END as deliveryType,
+        END as delivery_mode,
         CASE 
           WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,
         o.status as originalStatus,
-        o.total_amount as totalAmount,
-        o.total_amount as total_amount,
-        o.credits_earned as creditsEarned,
-        o.credits_used as creditsUsed,
-        o.payment_method as paymentMethod,
-        o.delivery_address as deliveryAddress,
+        o.total_amount,
+        o.credits_earned,
+        o.credits_used,
+        o.payment_method,
+        o.delivery_address,
         o.latitude,
         o.longitude,
-        o.has_timer as hasTimer,
-        o.pickup_code as pickupCode,
-        o.timer_started_at as timerStartedAt,
-        o.timer_expires_at as timerExpiresAt,
-        o.created_at as createdAt,
-        s.shop_name as shopName,
-        s.name as shopkeeperName,
-        s.phone as shopkeeperPhone,
-        s.address as shopAddress
+        o.has_timer,
+        o.pickup_code,
+        o.timer_started_at,
+        o.timer_expires_at,
+        o.created_at,
+        o.scheduled_time,
+        o.cancellation_reason,
+        o.cancelled_by,
+        s.shop_name,
+        s.name as shopkeeper_name,
+        s.phone as shopkeeper_phone,
+        s.address as shop_address
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       ${whereClause}
@@ -411,32 +413,29 @@ router.get("/", verifyToken, async (req, res) => {
 
       return {
         ...order,
-        // Add pickup_code at top level for both snake_case and camelCase compatibility
-        pickup_code: order.pickupCode,
-        pickupCode: order.pickupCode,
         items: orderItems
           .filter((item) => item.orderId === order.id)
           .map((item) => ({
-            productId: item.productId,
-            productName: item.productName,
-            productImage: item.productImage,
-            productCategory: item.productCategory,
+            product_id: item.productId,
+            product_name: item.productName,
+            product_image: item.productImage,
+            product_category: item.productCategory,
             quantity: item.quantity,
             price: parseFloat(item.price),
           })),
-        deliverySlot:
-          order.deliveryType === "home_delivery"
-            ? computeDeliverySlot(order.createdAt)
+        delivery_slot:
+          order.delivery_mode === "home_delivery"
+            ? computeDeliverySlot(order.created_at)
             : null,
-        timerInfo:
-          order.deliveryType === "store_pickup"
+        timer_info:
+          order.delivery_mode === "store_pickup"
             ? {
-                hasTimer: order.hasTimer === 1,
-                pickupCode: order.pickupCode,
-                timerStartedAt: order.timerStartedAt,
-                timerExpiresAt: order.timerExpiresAt,
-                isExpired: order.timerExpiresAt
-                  ? new Date() > new Date(order.timerExpiresAt)
+                has_timer: order.has_timer === 1,
+                pickup_code: order.pickup_code,
+                timer_started_at: order.timer_started_at,
+                timer_expires_at: order.timer_expires_at,
+                is_expired: order.timer_expires_at
+                  ? new Date() > new Date(order.timer_expires_at)
                   : false,
               }
             : null,
@@ -646,22 +645,22 @@ router.get("/status/:status", verifyToken, async (req, res) => {
       `
       SELECT 
         o.id,
-        o.id as orderId,
-        o.user_id as userId,
+        o.id as order_id,
+        o.user_id,
         CASE 
           WHEN o.has_timer = 1 THEN 'store_pickup'
           ELSE 'home_delivery'
-        END as deliveryType,
+        END as delivery_mode,
         CASE 
           WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,
-        o.status as originalStatus,
-        o.total_amount as totalAmount,
-        o.created_at as createdAt,
-        s.shop_name as shopName,
-        s.name as shopkeeperName
+        o.status as original_status,
+        o.total_amount,
+        o.created_at,
+        s.shop_name,
+        s.name as shopkeeper_name
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
       WHERE o.user_id = ? ${statusCondition}
@@ -679,11 +678,11 @@ router.get("/status/:status", verifyToken, async (req, res) => {
       const [items] = await pool.execute(
         `
         SELECT 
-          oi.order_id as orderId,
-          oi.product_id as productId,
+          oi.order_id,
+          oi.product_id,
           oi.quantity,
           oi.price,
-          p.name as productName
+          p.name as product_name
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
         WHERE oi.order_id IN (${placeholders})
@@ -696,8 +695,7 @@ router.get("/status/:status", verifyToken, async (req, res) => {
 
     const ordersWithItems = orders.map((order) => ({
       ...order,
-      items: orderItems.filter((item) => item.orderId === order.id),
-      totalAmount: parseFloat(order.totalAmount),
+      items: orderItems.filter((item) => item.order_id === order.id),
     }));
 
     res.json({
@@ -727,34 +725,31 @@ router.get("/:orderId", verifyToken, async (req, res) => {
       `
       SELECT 
         o.id,
-        o.id as orderId,
         o.id as order_id,
-        o.user_id as userId,
-        o.user_id as user_id,
-        o.shopkeeper_id as shopkeeperId,
-        o.shopkeeper_id as shopkeeper_id,
+        o.user_id,
+        o.shopkeeper_id,
         CASE 
           WHEN o.has_timer = 1 THEN 'store_pickup'
           ELSE 'home_delivery'
-        END as deliveryType,
+        END as delivery_mode,
         CASE 
           WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           WHEN o.status = 'Paid' THEN 'paid'
           ELSE 'pending'
         END as status,
-        o.status as originalStatus,
-        o.total_amount as totalAmount,
-        o.total_amount as total_amount,
+        o.status as original_status,
+        o.total_amount,
         o.payment_status,
         o.payment_method,
         o.delivery_address,
         o.pickup_code,
-        o.created_at as createdAt,
-        o.created_at as created_at,
-        s.shop_name as shopName,
-        s.shop_name as shop_name,
-        s.name as shopkeeperName,
+        o.created_at,
+        o.scheduled_time,
+        o.cancellation_reason,
+        o.cancelled_by,
+        s.shop_name,
+        s.name as shopkeeper_name,
         s.upi_id as shop_upi
       FROM orders o
       LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
@@ -776,12 +771,10 @@ router.get("/:orderId", verifyToken, async (req, res) => {
     const [items] = await pool.execute(
       `
       SELECT 
-        oi.product_id as productId,
-        oi.product_id as product_id,
+        oi.product_id,
         oi.quantity,
         oi.price,
-        p.name as productName,
-        p.name as name
+        p.name as product_name
       FROM order_items oi
       LEFT JOIN products p ON oi.product_id = p.id
       WHERE oi.order_id = ?
@@ -794,7 +787,6 @@ router.get("/:orderId", verifyToken, async (req, res) => {
       order: {
         ...order,
         items,
-        totalAmount: parseFloat(order.totalAmount),
       },
     });
   } catch (error) {
