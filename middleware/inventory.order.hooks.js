@@ -133,7 +133,8 @@ export async function validateStockAvailability(orderItems, connection = null) {
       const product = products[0];
 
       // Check if product is live (baselineQty > 0)
-      if (product.baselineQty <= 0) {
+      const baseline = product.baselineQty != null ? Number(product.baselineQty) : 0;
+      if (baseline <= 0) {
         unavailableItems.push({
           productId: product.id,
           productName: product.name,
