@@ -521,6 +521,24 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
+    // VALIDATION: Name and phone are always required
+    if (!name || name.trim().length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Name is required." });
+    }
+
+    if (!phone || phone.trim().length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required." });
+    }
+
+    // NOTE: Address validation is NOT enforced here
+    // Address is only required when placing HOME DELIVERY orders
+    // Users can have empty address for STORE PICKUP orders
+    // Address validation happens at order placement time
+
     let imgUrl = null;
     if (req.file) {
       // Use streamifier for cloudinary upload

@@ -1,17 +1,16 @@
 /**
  * Inventory Service Bridge
  *
- * This module provides service layer functions that bridge inventorymng logic
+ * This module provides service layer functions that bridge inventory logic
  * with nexbackend's existing database and business logic.
  *
- * CRITICAL: Reuses existing database connection, no schema changes.
+ * CRITICAL: Uses the shared mysql2 pool directly, no duplicate connections.
  */
 
-import { getInventoryDB } from "../config/inventory.db.bridge.js";
 import pool from "../config/db.js";
 
 /**
- * Handle auto-restock logic (from inventorymng/utils/autoRestock.js)
+ * Handle auto-restock logic
  * Schedules restock when product stock reaches 0
  */
 const DAY_MS = 10000; // 10 seconds for testing (original: 24 * 60 * 60 * 1000)
@@ -19,17 +18,19 @@ const DAY_MS = 10000; // 10 seconds for testing (original: 24 * 60 * 60 * 1000)
 export async function handleAutoRestock(productId, currentStock) {
   if (currentStock === 0) {
     try {
-      const { models } = await getInventoryDB();
-      const product = await models.InventoryProduct.findByPk(productId);
-
-      if (product && !product.restockAt) {
-        product.restockAt = new Date(Date.now() + DAY_MS);
-        await product.save();
-
+      const connection = await pool.getConnection();
+      try {
+        const restockAt = new Date(Date.now() + DAY_MS);
+        await connection.execute(
+          "UPDATE products SET restockAt = ? WHERE id = ?",
+          [restockAt, productId]
+        );
         console.log(
-          `🕒 Restock scheduled for product ${productId} at ${product.restockAt}`
+          `🕒 Restock scheduled for product ${productId} at ${restockAt}`
         );
         return true;
+      } finally {
+        connection.release();
       }
     } catch (error) {
       console.error("❌ Auto-restock scheduling failed:", error);
@@ -235,9 +236,16 @@ export async function restoreStockForOrder(
  */
 export async function getInventoryProduct(productId) {
   try {
-    const { models } = await getInventoryDB();
-    const product = await models.InventoryProduct.findByPk(productId);
-    return product;
+    const connection = await pool.getConnection();
+    try {
+      const [products] = await connection.execute(
+        "SELECT id, name, stock, baselineQty, restockAt FROM products WHERE id = ?",
+        [productId]
+      );
+      return products.length > 0 ? products[0] : null;
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     console.error("❌ Get inventory product failed:", error);
     return null;
@@ -249,18 +257,24 @@ export async function getInventoryProduct(productId) {
  */
 export async function createInventoryProduct(productData) {
   try {
-    const { models } = await getInventoryDB();
-    const product = await models.InventoryProduct.create({
-      name: productData.name,
-      stock: productData.stock || 0,
-      baselineQty: productData.baselineQty || productData.stock || 0,
-      restockAt: null,
-    });
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.execute(
+        "INSERT INTO products (name, stock, baselineQty, restockAt, createdAt, updatedAt) VALUES (?, ?, ?, NULL, NOW(), NOW())",
+        [
+          productData.name,
+          productData.stock || 0,
+          productData.baselineQty || productData.stock || 0,
+        ]
+      );
 
-    console.log(
-      `✅ Inventory product created: ${product.name} (ID: ${product.id})`
-    );
-    return product;
+      console.log(
+        `✅ Inventory product created: ${productData.name} (ID: ${result.insertId})`
+      );
+      return { id: result.insertId, ...productData };
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     console.error("❌ Create inventory product failed:", error);
     throw error;
@@ -276,41 +290,55 @@ export async function updateInventoryStock(
   operation = "SET"
 ) {
   try {
-    const { models } = await getInventoryDB();
-    const product = await models.InventoryProduct.findByPk(productId);
+    const connection = await pool.getConnection();
+    try {
+      // Get current product
+      const [products] = await connection.execute(
+        "SELECT id, name, stock FROM products WHERE id = ?",
+        [productId]
+      );
 
-    if (!product) {
-      throw new Error(`Product ${productId} not found`);
+      if (products.length === 0) {
+        throw new Error(`Product ${productId} not found`);
+      }
+
+      const product = products[0];
+      const previousStock = product.stock;
+      let newStock = previousStock;
+
+      if (operation === "ADD") {
+        newStock = previousStock + quantity;
+      } else if (operation === "SUBTRACT") {
+        newStock = Math.max(0, previousStock - quantity);
+      } else {
+        newStock = quantity;
+      }
+
+      // Update stock
+      await connection.execute("UPDATE products SET stock = ? WHERE id = ?", [
+        newStock,
+        productId,
+      ]);
+
+      // Handle auto-restock if needed
+      await handleAutoRestock(productId, newStock);
+
+      console.log(
+        `✅ Inventory stock updated: ${product.name} (${previousStock} → ${newStock})`
+      );
+
+      return {
+        success: true,
+        product: {
+          id: product.id,
+          name: product.name,
+          previousStock,
+          newStock,
+        },
+      };
+    } finally {
+      connection.release();
     }
-
-    const previousStock = product.stock;
-
-    if (operation === "ADD") {
-      product.stock += quantity;
-    } else if (operation === "SUBTRACT") {
-      product.stock = Math.max(0, product.stock - quantity);
-    } else {
-      product.stock = quantity;
-    }
-
-    await product.save();
-
-    // Handle auto-restock if needed
-    await handleAutoRestock(productId, product.stock);
-
-    console.log(
-      `✅ Inventory stock updated: ${product.name} (${previousStock} → ${product.stock})`
-    );
-
-    return {
-      success: true,
-      product: {
-        id: product.id,
-        name: product.name,
-        previousStock,
-        newStock: product.stock,
-      },
-    };
   } catch (error) {
     console.error("❌ Update inventory stock failed:", error);
     throw error;

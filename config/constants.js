@@ -50,7 +50,56 @@ export const TIME_SLOT_CONFIG = {
   START_HOUR: 8, // 8 AM
   END_HOUR: 20, // 8 PM (20:00 in 24-hour format)
   INTERVAL_MINUTES: 30,
+  MIN_ADVANCE_BOOKING_MINUTES: 30,
+  MAX_ADVANCE_BOOKING_DAYS: 7,
 };
+
+// CRITICAL FIX #7: Centralized delivery slot calculation
+export function calculateDeliverySlots(baseDate = new Date()) {
+  const slots = [];
+  const now = new Date();
+  const minBookingTime = new Date(now.getTime() + TIME_SLOT_CONFIG.MIN_ADVANCE_BOOKING_MINUTES * 60000);
+  
+  // Generate slots for next 7 days
+  for (let day = 0; day < TIME_SLOT_CONFIG.MAX_ADVANCE_BOOKING_DAYS; day++) {
+    const slotDate = new Date(baseDate);
+    slotDate.setDate(slotDate.getDate() + day);
+    slotDate.setHours(TIME_SLOT_CONFIG.START_HOUR, 0, 0, 0);
+    
+    while (slotDate.getHours() < TIME_SLOT_CONFIG.END_HOUR) {
+      const slotStart = new Date(slotDate);
+      const slotEnd = new Date(slotDate.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60000);
+      
+      // Only include future slots
+      if (slotEnd > minBookingTime) {
+        slots.push({
+          start: slotStart.toISOString(),
+          end: slotEnd.toISOString(),
+          label: `${slotStart.getHours().toString().padStart(2, '0')}:${slotStart.getMinutes().toString().padStart(2, '0')} - ${slotEnd.getHours().toString().padStart(2, '0')}:${slotEnd.getMinutes().toString().padStart(2, '0')}`,
+          available: true
+        });
+      }
+      
+      slotDate.setMinutes(slotDate.getMinutes() + TIME_SLOT_CONFIG.INTERVAL_MINUTES);
+    }
+  }
+  
+  return slots;
+}
+
+export function getSlotForTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  const slotStart = new Date(date);
+  slotStart.setMinutes(Math.floor(date.getMinutes() / TIME_SLOT_CONFIG.INTERVAL_MINUTES) * TIME_SLOT_CONFIG.INTERVAL_MINUTES, 0, 0);
+  
+  const slotEnd = new Date(slotStart.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60000);
+  
+  return {
+    start: slotStart.toISOString(),
+    end: slotEnd.toISOString(),
+    label: `${slotStart.getHours().toString().padStart(2, '0')}:${slotStart.getMinutes().toString().padStart(2, '0')} - ${slotEnd.getHours().toString().padStart(2, '0')}:${slotEnd.getMinutes().toString().padStart(2, '0')}`
+  };
+}
 
 // ==================== ORDER STATUS CONSTANTS ====================
 

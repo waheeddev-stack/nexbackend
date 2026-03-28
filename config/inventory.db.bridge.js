@@ -1,72 +1,53 @@
 /**
  * Inventory Database Bridge
  *
- * This module bridges the inventorymng Sequelize models with nexbackend's mysql2 pool.
- * It reuses the SAME database connection without creating duplicate connections.
+ * This module provides direct access to the shared mysql2 pool for inventory operations.
+ * It eliminates the duplicate Sequelize instance and uses the existing database connection.
  *
- * CRITICAL: This file does NOT modify any existing files or database schema.
+ * CRITICAL: This file uses the SAME database connection pool as the rest of the backend.
  */
 
-import { Sequelize } from "sequelize";
 import pool from "./db.js";
 
-let sequelizeInstance = null;
-let inventoryModels = null;
+/**
+ * Get a connection from the shared pool
+ * Always release the connection when done
+ */
+export async function getConnection() {
+  return await pool.getConnection();
+}
 
 /**
- * Initialize Sequelize instance using the existing mysql2 pool configuration
- * This ensures we use the SAME database without duplicate connections
+ * Execute a query using the shared pool
+ */
+export async function executeQuery(sql, params = []) {
+  const connection = await pool.getConnection();
+  try {
+    const [results] = await connection.execute(sql, params);
+    return results;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Execute a query within an existing transaction
+ */
+export async function executeQueryInTransaction(connection, sql, params = []) {
+  const [results] = await connection.execute(sql, params);
+  return results;
+}
+
+/**
+ * Initialize inventory database (no-op since we use shared pool)
  */
 export async function initializeInventoryDB() {
-  if (sequelizeInstance) {
-    return { sequelize: sequelizeInstance, models: inventoryModels };
-  }
-
   try {
-    // Get a connection to verify database access
+    // Test connection to verify database access
     const connection = await pool.getConnection();
     connection.release();
-
-    // Create Sequelize instance with SAME database credentials
-    sequelizeInstance = new Sequelize(
-      process.env.DB_NAME,
-      process.env.DB_USER,
-      process.env.DB_PASS,
-      {
-        host: process.env.DB_HOST,
-        port: parseInt(process.env.DB_PORT) || 4000,
-        dialect: "mysql",
-        logging: false,
-        pool: {
-          max: 5,
-          min: 0,
-          acquire: 30000,
-          idle: 10000,
-        },
-        dialectOptions:
-          process.env.DB_SSL === "true"
-            ? {
-                ssl: {
-                  rejectUnauthorized: false,
-                },
-              }
-            : {},
-      }
-    );
-
-    // Test connection
-    await sequelizeInstance.authenticate();
-    console.log(
-      "✅ Inventory DB bridge: Sequelize connected to existing database"
-    );
-
-    // Define inventory models (matching inventorymng structure)
-    inventoryModels = defineInventoryModels(sequelizeInstance);
-
-    // DO NOT SYNC - use existing tables only
-    console.log("✅ Inventory models loaded (no schema changes)");
-
-    return { sequelize: sequelizeInstance, models: inventoryModels };
+    console.log("✅ Inventory DB bridge: Using shared mysql2 pool");
+    return { success: true };
   } catch (error) {
     console.error("❌ Inventory DB bridge initialization failed:", error);
     throw error;
@@ -74,71 +55,15 @@ export async function initializeInventoryDB() {
 }
 
 /**
- * Define inventory models matching inventorymng/models structure
- * These models map to existing tables without modifying schema
- */
-function defineInventoryModels(sequelize) {
-  const { DataTypes } = Sequelize;
-
-  // Product model for inventory management
-  const InventoryProduct = sequelize.define(
-    "InventoryProduct",
-    {
-      id: {
-        type: DataTypes.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-      },
-      name: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
-      stock: {
-        type: DataTypes.INTEGER,
-        defaultValue: 0,
-      },
-      baselineQty: {
-        type: DataTypes.INTEGER,
-        defaultValue: 0,
-        field: "baselineQty",
-      },
-      restockAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "restockAt",
-      },
-    },
-    {
-      tableName: "products",
-      timestamps: true,
-      createdAt: "createdAt",
-      updatedAt: "updatedAt",
-    }
-  );
-
-  return {
-    InventoryProduct,
-  };
-}
-
-/**
- * Get initialized inventory database instance
+ * Get initialized inventory database instance (returns pool reference)
  */
 export async function getInventoryDB() {
-  if (!sequelizeInstance) {
-    return await initializeInventoryDB();
-  }
-  return { sequelize: sequelizeInstance, models: inventoryModels };
+  return { pool };
 }
 
 /**
- * Close inventory database connection
+ * Close inventory database connection (no-op since pool is managed globally)
  */
 export async function closeInventoryDB() {
-  if (sequelizeInstance) {
-    await sequelizeInstance.close();
-    sequelizeInstance = null;
-    inventoryModels = null;
-    console.log("✅ Inventory DB bridge closed");
-  }
+  console.log("✅ Inventory DB bridge: Pool remains active (managed globally)");
 }

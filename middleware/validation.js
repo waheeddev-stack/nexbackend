@@ -95,9 +95,10 @@ export const validateRequired = (obj, requiredFields) => {
 
 // Validate order data
 export const validateOrderData = (orderData) => {
-  const { products, total, address } = orderData;
+  const { products, total, address, deliveryType, hasTimer } = orderData;
 
-  validateRequired(orderData, ["products", "total", "address"]);
+  // Products and total are always required
+  validateRequired(orderData, ["products", "total"]);
 
   if (!Array.isArray(products) || products.length === 0) {
     throw new Error("Products must be a non-empty array");
@@ -105,8 +106,15 @@ export const validateOrderData = (orderData) => {
 
   const validatedTotal = validateNumber(total, "total", 0.01, 100000);
 
-  if (typeof address !== "string" || address.trim().length < 10) {
-    throw new Error("Address must be at least 10 characters long");
+  // Address is ONLY required for HOME DELIVERY orders, not for STORE PICKUP
+  // Store pickup orders have hasTimer = 1 or deliveryType = "store_pickup"
+  const isStorePickup = hasTimer === 1 || deliveryType === "store_pickup";
+  
+  if (!isStorePickup) {
+    // This is a home delivery order - address is required
+    if (typeof address !== "string" || address.trim().length < 10) {
+      throw new Error("Address must be at least 10 characters long for home delivery");
+    }
   }
 
   // Validate each product
@@ -121,7 +129,7 @@ export const validateOrderData = (orderData) => {
   return {
     products,
     total: validatedTotal,
-    address: sanitizeString(address),
+    address: address ? sanitizeString(address) : null,
   };
 };
 

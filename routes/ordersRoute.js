@@ -14,6 +14,8 @@ import {
 import {
   TIMER_DURATION_SECONDS,
   TIME_SLOT_CONFIG,
+  calculateDeliverySlots,
+  getSlotForTimestamp,
 } from "../config/constants.js";
 import {
   validatePointsUsage,
@@ -26,10 +28,199 @@ import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 
 const router = express.Router();
 
+// ============================================================================
+// CRITICAL FIX #9: Background Task Error Handling Helper
+// ============================================================================
+/**
+ * Execute background tasks without blocking order response
+ * All errors are caught and logged, never thrown
+ */
+async function executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection) {
+  try {
+    // Execute all background tasks in parallel with error handling
+    const tasks = [
+      // Task 1: Send notifications (non-blocking)
+      sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal, connection)
+        .catch(err => {
+          console.error(`❌ Failed to send notifications for order ${orderId}:`, err.message);
+          return { success: false, task: 'notifications', error: err.message };
+        }),
+      
+      // Task 2: Award wellness points (non-blocking)
+      awardWellnessPointsAsync(userId, finalTotal, orderId)
+        .catch(err => {
+          console.error(`❌ Failed to award wellness points for order ${orderId}:`, err.message);
+          return { success: false, task: 'wellness_points', error: err.message };
+        }),
+      
+      // Task 3: Log order analytics (non-blocking)
+      logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal)
+        .catch(err => {
+          console.error(`❌ Failed to log order analytics for order ${orderId}:`, err.message);
+          return { success: false, task: 'analytics', error: err.message };
+        })
+    ];
+
+    // Execute all tasks in parallel, don't wait for them
+    Promise.allSettled(tasks).then((results) => {
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+      console.log(`✅ Background tasks for order ${orderId}: ${succeeded} succeeded, ${failed} failed`);
+    }).catch(err => {
+      console.error(`❌ Unexpected error in background task execution for order ${orderId}:`, err);
+    });
+  } catch (err) {
+    console.error(`❌ Failed to start background tasks for order ${orderId}:`, err);
+    // Don't throw - background tasks should never block order placement
+  }
+}
+
+/**
+ * Send push notifications to shopkeeper and customer
+ */
+async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal, connection) {
+  try {
+    // Get shopkeeper details
+    const [shopkeeperRows] = await connection.execute(
+      "SELECT expo_push_token FROM shopkeepers WHERE id = ?",
+      [shopkeeperId]
+    );
+    const shopkeeper = shopkeeperRows[0];
+
+    // Send to shopkeeper
+    if (shopkeeper?.expo_push_token) {
+      try {
+        const token = shopkeeper.expo_push_token;
+        const title = "📦 New Order Received!";
+        const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
+        const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+
+        if (isFCMToken(token)) {
+          await sendFCMPush(token, title, body, payload);
+        } else {
+          await sendExpoPush(token, title, body, payload);
+        }
+        console.log(`✅ Push notification sent to shopkeeper ${shopkeeperId}`);
+      } catch (pushErr) {
+        console.error(`⚠️ Failed to send push to shopkeeper ${shopkeeperId}:`, pushErr.message);
+      }
+    }
+
+    // Get customer details
+    const [customerRows] = await connection.execute(
+      "SELECT expo_push_token FROM users WHERE id = ?",
+      [userId]
+    );
+    const customer = customerRows[0];
+
+    // Send to customer
+    if (customer?.expo_push_token) {
+      try {
+        const token = customer.expo_push_token;
+        const title = "Order Placed Successfully!";
+        const body = `Your order #${orderId} has been placed. You can track it in the app.`;
+        const payload = { orderId: String(orderId), status: "Pending" };
+
+        if (isFCMToken(token)) {
+          await sendFCMPush(token, title, body, payload);
+        } else {
+          await sendExpoPush(token, title, body, payload);
+        }
+        console.log(`✅ Push notification sent to customer ${userId}`);
+      } catch (pushErr) {
+        console.error(`⚠️ Failed to send push to customer ${userId}:`, pushErr.message);
+      }
+    }
+
+    return { success: true, task: 'notifications' };
+  } catch (error) {
+    console.error(`❌ Error in sendNotificationsAsync:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Award wellness points to customer
+ */
+async function awardWellnessPointsAsync(userId, finalTotal, orderId) {
+  try {
+    // Award 1% of order amount as wellness points
+    const pointsToAward = Math.floor(finalTotal * 0.01);
+    
+    if (pointsToAward > 0) {
+      const conn = await pool.getConnection();
+      try {
+        await conn.execute(
+          "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+          [pointsToAward, userId]
+        );
+        console.log(`✅ Awarded ${pointsToAward} wellness points to user ${userId} for order ${orderId}`);
+      } finally {
+        conn.release();
+      }
+    }
+
+    return { success: true, task: 'wellness_points', pointsAwarded: pointsToAward };
+  } catch (error) {
+    console.error(`❌ Error in awardWellnessPointsAsync:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Log order analytics for reporting
+ */
+async function logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal) {
+  try {
+    // Log order creation for analytics
+    console.log(`📊 Order Analytics - Order: ${orderId}, User: ${userId}, Shop: ${shopkeeperId}, Amount: ₹${finalTotal}`);
+    
+    // Could be extended to write to analytics table or external service
+    return { success: true, task: 'analytics' };
+  } catch (error) {
+    console.error(`❌ Error in logOrderAnalyticsAsync:`, error);
+    throw error;
+  }
+}
+
 // Apply order-specific middleware
 router.use(refreshTokenIfNeeded);
 router.use(handleOrderTokenExpiration);
 router.use(handleCartTokenExpiration);
+
+// ============================================================================
+// CRITICAL FIX #7: GET DELIVERY SLOTS (Centralized calculation)
+// ============================================================================
+// GET /api/orders/delivery-slots?date=2026-03-29
+router.get("/delivery-slots", verifyToken, async (req, res) => {
+  try {
+    const { date } = req.query;
+    const baseDate = date ? new Date(date) : new Date();
+    
+    const slots = calculateDeliverySlots(baseDate);
+    
+    res.json({
+      success: true,
+      slots,
+      config: {
+        slotDurationMinutes: TIME_SLOT_CONFIG.INTERVAL_MINUTES,
+        minAdvanceBookingMinutes: TIME_SLOT_CONFIG.MIN_ADVANCE_BOOKING_MINUTES,
+        maxAdvanceBookingDays: TIME_SLOT_CONFIG.MAX_ADVANCE_BOOKING_DAYS,
+        operatingHours: {
+          start: `${TIME_SLOT_CONFIG.START_HOUR}:00`,
+          end: `${TIME_SLOT_CONFIG.END_HOUR}:00`
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching delivery slots:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch delivery slots',
+      error: error.message
+    });
+  }
+});
 
 // ============================================================================
 // GET ALL ORDERS WITH FILTERS AND COUNTS
@@ -716,6 +907,65 @@ router.post("/", verifyToken, async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
+    // CRITICAL FIX #6: Check idempotency key to prevent duplicate orders
+    const idempotencyKey = req.headers['idempotency-key'];
+    
+    if (idempotencyKey) {
+      // Check if order with this key already exists
+      const [existingOrder] = await connection.execute(
+        `SELECT id, status FROM orders WHERE idempotency_key = ? LIMIT 1`,
+        [idempotencyKey]
+      );
+      
+      if (existingOrder && existingOrder.length > 0) {
+        // Order already created, return existing order
+        console.log('Duplicate order request detected, returning existing order', { idempotencyKey });
+        connection.release();
+        return res.status(200).json({
+          success: true,
+          order: existingOrder[0],
+          isDuplicate: true,
+          message: 'Order already created'
+        });
+      }
+    }
+
+    // CRITICAL FIX #5: Check shopkeeper subscription status BEFORE creating order
+    const [shopkeeperCheck] = await connection.execute(
+      `SELECT id, subscription_status, is_deleted FROM shopkeepers WHERE id = ? LIMIT 1`,
+      [req.body.shopkeeperId || req.body.shopId]
+    );
+    
+    if (!shopkeeperCheck || shopkeeperCheck.length === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Shopkeeper not found',
+        code: 'SHOP_NOT_FOUND'
+      });
+    }
+    
+    const shopkeeper = shopkeeperCheck[0];
+    
+    if (shopkeeper.is_deleted) {
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        message: 'This shop is no longer available',
+        code: 'SHOP_DELETED'
+      });
+    }
+    
+    if (shopkeeper.subscription_status !== 'active') {
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        message: `Shop is currently ${shopkeeper.subscription_status}. Cannot place orders.`,
+        code: 'SHOP_INACTIVE',
+        shopStatus: shopkeeper.subscription_status
+      });
+    }
+
     await connection.beginTransaction();
 
     const userId = req.user.id;
@@ -774,16 +1024,39 @@ router.post("/", verifyToken, async (req, res) => {
       });
     }
 
-    // Validate stock availability BEFORE creating order
-    const stockCheck = await validateStockAvailability(items, connection);
-    if (!stockCheck.available) {
-      await connection.rollback();
-      connection.release();
-      return res.status(400).json({
-        success: false,
-        message: "Some items are out of stock",
-        unavailableItems: stockCheck.unavailableItems,
-      });
+    // CRITICAL FIX #3: Validate stock availability with row-level locking
+    // Lock rows for update to prevent concurrent modifications
+    const [products_check] = await connection.execute(
+      `SELECT id, stock FROM products WHERE id IN (?) AND shop_id = ? FOR UPDATE`,
+      [items.map(item => item.productId || item.product_id), shopkeeperId]
+    );
+    
+    // Validate stock for each item
+    for (const item of items) {
+      const productId = item.productId || item.product_id;
+      const product = products_check.find(p => p.id === productId);
+      
+      if (!product) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Product ${productId} not found`,
+          code: 'PRODUCT_NOT_FOUND',
+          productId
+        });
+      }
+      
+      if (product.stock < item.quantity) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for product ${productId}`,
+          code: 'INSUFFICIENT_STOCK',
+          productId,
+          requestedQuantity: item.quantity,
+          availableStock: product.stock
+        });
+      }
     }
 
     // Determine if this is a store pickup order
@@ -838,6 +1111,9 @@ router.post("/", verifyToken, async (req, res) => {
       "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
     );
     const orderId = maxOrderId[0].nextId;
+    
+    // CRITICAL FIX #6: Use idempotency key from header or generate new one
+    const finalIdempotencyKey = idempotencyKey || `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Calculate credits earned (1% of total amount)
     const creditsEarned = Math.floor(finalTotal * 0.01);
@@ -871,8 +1147,9 @@ router.post("/", verifyToken, async (req, res) => {
         order_type,
         delivery_mode,
         scheduled_time,
+        idempotency_key,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -896,6 +1173,7 @@ router.post("/", verifyToken, async (req, res) => {
           ? "pickup"
           : "delivery",
         scheduledTime,
+        finalIdempotencyKey,
       ]
     );
 
@@ -1174,6 +1452,16 @@ router.post("/", verifyToken, async (req, res) => {
     } catch (notifyErr) {
       console.error("Error notifying shopkeeper:", notifyErr);
     }
+
+    // ============================================================================
+    // CRITICAL FIX #9: Execute background tasks without blocking response
+    // ============================================================================
+    // Start background tasks but don't wait for them
+    executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection)
+      .catch(err => {
+        console.error(`Failed to start background tasks for order ${orderId}:`, err);
+        // Don't throw - order is already created successfully
+      });
 
     res.json({
       success: true,

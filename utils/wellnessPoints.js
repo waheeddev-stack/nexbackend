@@ -46,6 +46,28 @@ const calculateWellnessPoints = (
 // Get point value in rupees
 const getPointValue = () => 0.05; // ₹0.05 per point
 
+// Calculate maximum points allowed (30% of order value)
+const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
+  const maxFromAmount = Math.floor(totalAmount / getPointValue() * 0.3);
+  return Math.min(availablePoints, maxFromAmount);
+};
+
+// Convert points to rupees
+const pointsToRupees = (points) => points * getPointValue();
+
+// Convert rupees to points
+const rupeesToPoints = (rupees) => Math.floor(rupees / getPointValue());
+
+// Format points for display
+const formatPoints = (points) => {
+  return `${points} points (₹${pointsToRupees(points).toFixed(2)})`;
+};
+
+// Calculate discount from points
+const calculateDiscount = (points) => {
+  return pointsToRupees(points);
+};
+
 // Validate points usage
 const validatePointsUsage = (selectedPoints, availablePoints, totalAmount) => {
   const maxAllowed = calculateMaxPointsAllowed(availablePoints, totalAmount);
