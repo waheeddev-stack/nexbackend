@@ -900,29 +900,6 @@ router.post("/", verifyToken, async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
-    // CRITICAL FIX #6: Check idempotency key to prevent duplicate orders
-    const idempotencyKey = req.headers['idempotency-key'];
-    
-    if (idempotencyKey) {
-      // Check if order with this key already exists
-      const [existingOrder] = await connection.execute(
-        `SELECT id, status FROM orders WHERE idempotency_key = ? LIMIT 1`,
-        [idempotencyKey]
-      );
-      
-      if (existingOrder && existingOrder.length > 0) {
-        // Order already created, return existing order
-        console.log('Duplicate order request detected, returning existing order', { idempotencyKey });
-        connection.release();
-        return res.status(200).json({
-          success: true,
-          order: existingOrder[0],
-          isDuplicate: true,
-          message: 'Order already created'
-        });
-      }
-    }
-
     // CRITICAL FIX #5: Check shopkeeper subscription status BEFORE creating order
     const [shopkeeperCheck] = await connection.execute(
       `SELECT id, subscription_status, is_deleted FROM shopkeepers WHERE id = ? LIMIT 1`,
@@ -1108,9 +1085,6 @@ router.post("/", verifyToken, async (req, res) => {
     );
     const orderId = maxOrderId[0].nextId;
     
-    // CRITICAL FIX #6: Use idempotency key from header or generate new one
-    const finalIdempotencyKey = idempotencyKey || `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
     // Calculate credits earned (1% of total amount)
     const creditsEarned = Math.floor(finalTotal * 0.01);
 
@@ -1144,9 +1118,8 @@ router.post("/", verifyToken, async (req, res) => {
         order_type,
         delivery_mode,
         scheduled_time,
-        idempotency_key,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -1170,7 +1143,6 @@ router.post("/", verifyToken, async (req, res) => {
           ? "pickup"
           : "delivery",
         scheduledTime,
-        finalIdempotencyKey,
       ]
     );
 
