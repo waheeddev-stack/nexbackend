@@ -855,6 +855,129 @@ shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req,
 });
 
 /**
+ * PATCH /shopkeeper/orders/:id/status
+ * Update order status (complete or cancel)
+ */
+shopkeeperRouter.patch("/orders/:orderId/status", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { orderId } = req.params;
+    let { status, cancellation_reason } = req.body;
+
+    const orderIdNum = parseInt(orderId);
+    if (isNaN(orderIdNum)) {
+      return res.status(400).json({ success: false, message: "Invalid order ID" });
+    }
+
+    const validStatuses = ["Pending", "Completed", "Cancelled"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status. Must be one of: " + validStatuses.join(", ")
+      });
+    }
+
+    if (status === "Cancelled") {
+      if (!cancellation_reason || !cancellation_reason.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Cancellation reason is required when cancelling an order"
+        });
+      }
+      cancellation_reason = cancellation_reason.trim().substring(0, 500);
+    }
+
+    const [orderCheck] = await pool.query(
+      "SELECT id FROM orders WHERE id = ? AND shopkeeper_id = ?",
+      [orderIdNum, shopkeeper_id]
+    );
+
+    if (orderCheck.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found or not assigned to you"
+      });
+    }
+
+    if (status === "Cancelled") {
+      await pool.query("START TRANSACTION");
+      try {
+        await pool.query("UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
+          [cancellation_reason, orderIdNum]);
+
+        await pool.query(`
+          UPDATE order_timers
+          SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
+          WHERE order_id = ? AND is_active = TRUE
+        `, [orderIdNum]);
+
+        await restoreStockForCancelledOrder(orderIdNum, 'shopkeeper', cancellation_reason || 'Shopkeeper cancellation');
+
+        const [[orderData]] = await pool.query("SELECT credits_used, user_id FROM orders WHERE id = ?", [orderIdNum]);
+        if (orderData?.credits_used > 0) {
+          await pool.query("UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+            [orderData.credits_used, orderData.user_id]);
+        }
+
+        await pool.query("COMMIT");
+      } catch (err) {
+        await pool.query("ROLLBACK");
+        throw err;
+      }
+    } else if (status === "Completed") {
+      await pool.query("UPDATE orders SET status = 'Completed' WHERE id = ?", [orderIdNum]);
+
+      try {
+        const [[orderDetails]] = await pool.query(
+          "SELECT user_id, created_at, timer_started_at, total_amount, order_type, delivery_mode FROM orders WHERE id = ?",
+          [orderIdNum]
+        );
+
+        if (orderDetails) {
+          const orderType = orderDetails.order_type || orderDetails.delivery_mode || 'pickup';
+          await awardWellnessPoints(
+            pool,
+            orderDetails.user_id,
+            new Date(),
+            orderDetails.timer_started_at || orderDetails.created_at,
+            orderDetails.total_amount,
+            orderType
+          );
+        }
+      } catch (pointsErr) {
+        console.error("Error awarding points:", pointsErr);
+      }
+    } else {
+      await pool.query("UPDATE orders SET status = ? WHERE id = ?", [status, orderIdNum]);
+    }
+
+    if (req.io) {
+      const [[orderRow]] = await pool.query("SELECT user_id, shopkeeper_id, total_amount, has_timer FROM orders WHERE id = ?", [orderIdNum]);
+      const payload = {
+        orderId: orderIdNum,
+        order_id: orderIdNum,
+        status,
+        updatedAt: new Date().toISOString()
+      };
+      req.io.to(`shop_${orderRow?.shopkeeper_id}`).emit("orderStatusUpdate", payload);
+      req.io.to(`customer_${orderRow?.user_id}`).emit("orderStatusUpdate", payload);
+      req.io.to('admin').emit("orderStatusUpdate", payload);
+    }
+
+    const [[target]] = await pool.query("SELECT expo_push_token FROM users WHERE id = (SELECT user_id FROM orders WHERE id = ?)", [orderIdNum]);
+    if (target?.expo_push_token) {
+      await sendExpoPush(target.expo_push_token, `Order #${orderIdNum} Update`, `Your order status has been updated to ${status}.`, { orderId: orderIdNum, status });
+    }
+
+    res.json({ success: true, message: `Order status updated to ${status}`, status });
+
+  } catch (err) {
+    console.error("Update order status error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/**
  * GET all products of the logged-in shopkeeper
  */
 shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
