@@ -71,7 +71,7 @@ router.post("/google/users", async (req, res) => {
     }
 
     // Check if user exists with this Google ID
-    let [users] = await pool.query("SELECT * FROM users WHERE google_id = ?", [
+    let [users] = await pool.execute("SELECT * FROM users WHERE google_id = ?", [
       googleUser.googleId,
     ]);
 
@@ -97,7 +97,7 @@ router.post("/google/users", async (req, res) => {
 
       if (updateFields.length > 0) {
         updateValues.push(user.id);
-        await pool.query(
+        await pool.execute(
           `UPDATE users SET ${updateFields.join(", ")} WHERE id = ?`,
           updateValues
         );
@@ -106,7 +106,7 @@ router.post("/google/users", async (req, res) => {
       console.log(`Google Sign-In: Existing user ${user.email}`);
     } else {
       // Check if email already exists (user might have signed up with email/password)
-      [users] = await pool.query("SELECT * FROM users WHERE email = ?", [
+      [users] = await pool.execute("SELECT * FROM users WHERE email = ?", [
         googleUser.email,
       ]);
 
@@ -114,7 +114,7 @@ router.post("/google/users", async (req, res) => {
         // Link Google account to existing email account
         user = users[0];
 
-        await pool.query(
+        await pool.execute(
           "UPDATE users SET google_id = ?, img = ?, expo_push_token = ? WHERE id = ?",
           [
             googleUser.googleId,
@@ -132,7 +132,7 @@ router.post("/google/users", async (req, res) => {
         console.log("🔄 Creating new Google user...");
 
         // First, get the next available Google user ID
-        const [maxGoogleUser] = await pool.query(
+        const [maxGoogleUser] = await pool.execute(
           "SELECT MAX(id) as max_id FROM users WHERE id >= 9999999999"
         );
 
@@ -143,7 +143,7 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
-        const [result] = await pool.query(
+        const [result] = await pool.execute(
           `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token) 
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
@@ -189,7 +189,7 @@ router.post("/google/users", async (req, res) => {
     );
 
     // Save refresh token
-    await pool.query("UPDATE users SET refresh_token = ? WHERE id = ?", [
+    await pool.execute("UPDATE users SET refresh_token = ? WHERE id = ?", [
       refreshToken,
       user.id,
     ]);
@@ -249,7 +249,7 @@ router.post("/google/shopkeepers", async (req, res) => {
     }
 
     // Check if shopkeeper exists with this Google ID
-    let [shopkeepers] = await pool.query(
+    let [shopkeepers] = await pool.execute(
       "SELECT * FROM shopkeepers WHERE google_id = ?",
       [googleUser.googleId]
     );
@@ -261,7 +261,7 @@ router.post("/google/shopkeepers", async (req, res) => {
       shopkeeper = shopkeepers[0];
 
       if (expoPushToken) {
-        await pool.query(
+        await pool.execute(
           "UPDATE shopkeepers SET expo_push_token = ? WHERE id = ?",
           [expoPushToken, shopkeeper.id]
         );
@@ -270,7 +270,7 @@ router.post("/google/shopkeepers", async (req, res) => {
       console.log(`Google Sign-In: Existing shopkeeper ${shopkeeper.email}`);
     } else {
       // Check if email already exists
-      [shopkeepers] = await pool.query(
+      [shopkeepers] = await pool.execute(
         "SELECT * FROM shopkeepers WHERE email = ?",
         [googleUser.email]
       );
@@ -279,7 +279,7 @@ router.post("/google/shopkeepers", async (req, res) => {
         // Link Google account to existing email account
         shopkeeper = shopkeepers[0];
 
-        await pool.query(
+        await pool.execute(
           "UPDATE shopkeepers SET google_id = ?, img = ?, expo_push_token = ? WHERE id = ?",
           [
             googleUser.googleId,
@@ -320,7 +320,7 @@ router.post("/google/shopkeepers", async (req, res) => {
     );
 
     // Save refresh token
-    await pool.query("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
+    await pool.execute("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
       refreshToken,
       shopkeeper.id,
     ]);
@@ -390,7 +390,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     }
 
     // Check if shopkeeper already exists
-    const [existing] = await pool.query(
+    const [existing] = await pool.execute(
       "SELECT id FROM shopkeepers WHERE google_id = ? OR email = ?",
       [googleUser.googleId, googleUser.email]
     );
@@ -403,7 +403,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     }
 
     // Create new shopkeeper
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       `INSERT INTO shopkeepers 
        (name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -447,7 +447,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     );
 
     // Save refresh token
-    await pool.query("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
+    await pool.execute("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
       refreshToken,
       shopkeeper.id,
     ]);

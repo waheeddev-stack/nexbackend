@@ -34,7 +34,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
 
     const query = `SELECT id, name, email, phone, address, shop_name, img, is_verified, shop_scale, created_at, subscription_status, next_payment_due, last_payment_date FROM shopkeepers ${whereClause} ORDER BY created_at DESC`;
 
-    const [rows] = await pool.query(query, queryParams);
+    const [rows] = await pool.execute(query, queryParams);
 
     // Map is_verified to verification_status for frontend compatibility and ensure valid IDs
     const mappedRows = rows
@@ -51,7 +51,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
       }));
 
     // Add summary statistics for the admin panel (excluding deleted)
-    const [stats] = await pool.query(`
+    const [stats] = await pool.execute(`
       SELECT 
         COUNT(*) as total,
         COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
@@ -78,7 +78,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
 // Get shopkeeper statistics for admin panel tabs
 adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
   try {
-    const [stats] = await pool.query(`
+    const [stats] = await pool.execute(`
       SELECT 
         COUNT(*) as total,
         COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
@@ -88,7 +88,7 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
       WHERE id IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
     `);
 
-    const [recentActivity] = await pool.query(`
+    const [recentActivity] = await pool.execute(`
       SELECT 
         COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as new_this_week,
         COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_this_month
@@ -114,7 +114,7 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
 // Fetch all customers/users (protected)
 adminRouter.get("/customers", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       "SELECT id, name, email, phone, address, created_at FROM users ORDER BY created_at DESC"
     );
     res.json({ success: true, data: rows });
@@ -140,7 +140,7 @@ adminRouter.delete(
       }
 
       // Check if customer exists
-      const [customer] = await pool.query(
+      const [customer] = await pool.execute(
         "SELECT id, name, email FROM users WHERE id = ?",
         [customerId]
       );
@@ -153,7 +153,7 @@ adminRouter.delete(
 
       // Delete customer (soft delete or hard delete based on your preference)
       // Using hard delete here - change to soft delete if needed
-      const [result] = await pool.query("DELETE FROM users WHERE id = ?", [
+      const [result] = await pool.execute("DELETE FROM users WHERE id = ?", [
         customerId,
       ]);
 
@@ -192,7 +192,7 @@ adminRouter.get("/test-verify/:id", verifyAdminToken, async (req, res) => {
     console.log(`Testing verification for shopkeeper ${shopkeeperId}`);
 
     // Check if shopkeeper exists
-    const [shopkeeper] = await pool.query(
+    const [shopkeeper] = await pool.execute(
       "SELECT id, name, email, is_verified FROM shopkeepers WHERE id = ?",
       [shopkeeperId]
     );
@@ -257,7 +257,7 @@ adminRouter.patch(
       const is_verified = action === "approve" ? 1 : 0;
 
       // First check if shopkeeper exists
-      const [existingShopkeeper] = await pool.query(
+      const [existingShopkeeper] = await pool.execute(
         "SELECT id, name, email FROM shopkeepers WHERE id = ?",
         [shopkeeperId]
       );
@@ -298,7 +298,7 @@ adminRouter.patch(
         updateParams = [is_verified, parseInt(shopkeeperId)];
       }
 
-      const [result] = await pool.query(updateQuery, updateParams);
+      const [result] = await pool.execute(updateQuery, updateParams);
 
       if (result.affectedRows === 0) {
         return res.status(404).json({
@@ -312,7 +312,7 @@ adminRouter.patch(
       );
 
       // Get updated shopkeeper details for response
-      const [shopkeeper] = await pool.query(
+      const [shopkeeper] = await pool.execute(
         "SELECT * FROM shopkeepers WHERE id = ?",
         [shopkeeperId]
       );
@@ -376,7 +376,7 @@ adminRouter.post(
       }
 
       // Check if shopkeeper exists first
-      const [existingShopkeeper] = await pool.query(
+      const [existingShopkeeper] = await pool.execute(
         "SELECT id, name FROM shopkeepers WHERE id = ?",
         [parseInt(shopkeeperId)]
       );
@@ -417,7 +417,7 @@ adminRouter.post(
         updateParams = [is_verified, parseInt(shopkeeperId)];
       }
 
-      await pool.query(updateQuery, updateParams);
+      await pool.execute(updateQuery, updateParams);
 
       const statusText =
         is_verified === 1
@@ -446,7 +446,7 @@ adminRouter.post(
 adminRouter.post("/register", async (req, res) => {
   try {
     // Check if any admin already exists
-    const [existingAdmins] = await pool.query(
+    const [existingAdmins] = await pool.execute(
       "SELECT COUNT(*) as count FROM admins"
     );
     if (existingAdmins[0].count > 0) {
@@ -468,7 +468,7 @@ adminRouter.post("/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       "INSERT INTO admins (email, password) VALUES (?, ?)",
       [email, hashedPassword]
     );
@@ -488,7 +488,7 @@ adminRouter.post("/register", async (req, res) => {
 // List all admins (protected)
 adminRouter.get("/", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT id, email, created_at FROM admins");
+    const [rows] = await pool.execute("SELECT id, email, created_at FROM admins");
     res.json({ success: true, data: rows });
   } catch (err) {
     res
@@ -500,19 +500,19 @@ adminRouter.get("/", verifyAdminToken, async (req, res) => {
 adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
   try {
     // Shopkeepers count
-    const [shopkeepers] = await pool.query(
+    const [shopkeepers] = await pool.execute(
       "SELECT COUNT(*) as count FROM shopkeepers"
     );
     // Customers count
-    const [customers] = await pool.query("SELECT COUNT(*) as count FROM users");
+    const [customers] = await pool.execute("SELECT COUNT(*) as count FROM users");
     // Orders count and revenue
-    const [ordersRows] = await pool.query(
+    const [ordersRows] = await pool.execute(
       "SELECT COUNT(*) as count, COALESCE(SUM(total_amount),0) as revenue FROM orders"
     );
     const orders = ordersRows[0].count;
     const revenue = ordersRows[0].revenue;
     // Top products (by sales)
-    const [topProducts] = await pool.query(
+    const [topProducts] = await pool.execute(
       `SELECT p.name, SUM(oi.quantity) as sold
        FROM order_items oi
        JOIN products p ON oi.product_id = p.id
@@ -539,7 +539,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 
 // adminRouter.get("/products", verifyToken, async (req, res) => {
 //   try {
-//     const [rows] = await pool.query(
+//     const [rows] = await pool.execute(
 //       "SELECT * FROM products ORDER BY created_at DESC"
 //     );
 //     res.json({ success: true, data: rows });
@@ -574,7 +574,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 //         const result = await streamUpload();
 //         imageUrl = result.secure_url;
 //       }
-//       const [dbResult] = await pool.query(
+//       const [dbResult] = await pool.execute(
 //         "INSERT INTO products (name, price, stock, description, image, category) VALUES (?, ?, ?, ?, ?, ?)",
 //         [name, price, stock || 0, description || "", imageUrl, category || null]
 //       );
@@ -616,7 +616,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 //         const result = await streamUpload();
 //         imageUrl = result.secure_url;
 //       }
-//       const [dbResult] = await pool.query(
+//       const [dbResult] = await pool.execute(
 //         "UPDATE products SET name=?, price=?, stock=?, description=?, image=?, category=? WHERE id=?",
 //         [
 //           name,
@@ -641,7 +641,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 // Delete a product
 // adminRouter.delete("/products/:id", verifyToken, async (req, res) => {
 //   try {
-//     const [result] = await pool.query("DELETE FROM products WHERE id=?", [
+//     const [result] = await pool.execute("DELETE FROM products WHERE id=?", [
 //       req.params.id,
 //     ]);
 //     if (result.affectedRows === 0) {
@@ -658,7 +658,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 // List all global products
 adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       "SELECT id, name, price, category, description, image, brand, barcode, shop_scales, created_at FROM global_products ORDER BY created_at DESC"
     );
 
@@ -717,7 +717,7 @@ adminRouter.post(
     // Check for duplicate barcode if provided
     if (barcode) {
       try {
-        const [existingProducts] = await pool.query(
+        const [existingProducts] = await pool.execute(
           "SELECT id, name FROM global_products WHERE barcode = ?",
           [barcode]
         );
@@ -770,11 +770,11 @@ adminRouter.post(
       }
 
       // Use database transaction for thread-safe ID generation
-      await pool.query("START TRANSACTION");
+      await pool.execute("START TRANSACTION");
 
       try {
         // Lock the table and get next ID
-        const [maxIdResult] = await pool.query(
+        const [maxIdResult] = await pool.execute(
           "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE"
         );
         const nextId = maxIdResult[0].next_id;
@@ -782,7 +782,7 @@ adminRouter.post(
         // ✅ FIX: Ensure price is stored with exactly 2 decimal places
         const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
 
-        const [dbResult] = await pool.query(
+        const [dbResult] = await pool.execute(
           "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             nextId,
@@ -797,7 +797,7 @@ adminRouter.post(
           ]
         );
 
-        await pool.query("COMMIT");
+        await pool.execute("COMMIT");
 
         // Use nextId for response since insertId might be 0
         const actualId = dbResult.insertId || nextId;
@@ -817,7 +817,7 @@ adminRouter.post(
           },
         });
       } catch (transactionError) {
-        await pool.query("ROLLBACK");
+        await pool.execute("ROLLBACK");
         throw transactionError;
       }
     } catch (err) {
@@ -893,7 +893,7 @@ adminRouter.put(
       // ✅ FIX: Ensure price is stored with exactly 2 decimal places
       const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
 
-      const [dbResult] = await pool.query(
+      const [dbResult] = await pool.execute(
         "UPDATE global_products SET name=?, price=?, category=?, description=?, image=?, brand=?, barcode=?, shop_scales=? WHERE id=?",
         [
           name,
@@ -940,7 +940,7 @@ adminRouter.delete(
     }
 
     try {
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         "DELETE FROM global_products WHERE id = ?",
         [parseInt(productId)]
       );
@@ -978,7 +978,7 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
 
   try {
     // Check if shopkeeper exists
-    const [existingShopkeeper] = await pool.query(
+    const [existingShopkeeper] = await pool.execute(
       "SELECT id, name, email, shop_name FROM shopkeepers WHERE id = ?",
       [parseInt(shopkeeperId)]
     );
@@ -992,7 +992,7 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
     const shopkeeper = existingShopkeeper[0];
 
     // Check if shopkeeper has active orders
-    const [activeOrders] = await pool.query(
+    const [activeOrders] = await pool.execute(
       "SELECT COUNT(*) as count FROM orders WHERE shopkeeper_id = ? AND status IN ('Pending', 'Preparing', 'Ready')",
       [parseInt(shopkeeperId)]
     );
@@ -1005,7 +1005,7 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
     }
 
     // Delete shopkeeper (cascade will handle related records based on DB constraints)
-    const [result] = await pool.query("DELETE FROM shopkeepers WHERE id = ?", [
+    const [result] = await pool.execute("DELETE FROM shopkeepers WHERE id = ?", [
       parseInt(shopkeeperId),
     ]);
 
@@ -1073,7 +1073,7 @@ adminRouter.patch(
 
     try {
       // Check if shopkeeper exists
-      const [existingShopkeeper] = await pool.query(
+      const [existingShopkeeper] = await pool.execute(
         "SELECT id, name, email, shop_name, subscription_status FROM shopkeepers WHERE id = ?",
         [parseInt(shopkeeperId)]
       );
@@ -1096,7 +1096,7 @@ adminRouter.patch(
       }
 
       // Suspend the shopkeeper
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         "UPDATE shopkeepers SET subscription_status = 'suspended' WHERE id = ?",
         [parseInt(shopkeeperId)]
       );
@@ -1160,7 +1160,7 @@ adminRouter.patch(
 
     try {
       // Check if shopkeeper exists
-      const [existingShopkeeper] = await pool.query(
+      const [existingShopkeeper] = await pool.execute(
         "SELECT id, name, email, shop_name, subscription_status FROM shopkeepers WHERE id = ?",
         [parseInt(shopkeeperId)]
       );
@@ -1194,7 +1194,7 @@ adminRouter.patch(
       gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 2); // 2 days grace period
 
       // Unsuspend the shopkeeper and reset billing cycle
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         `UPDATE shopkeepers 
        SET subscription_status = 'active',
            last_payment_date = ?,
@@ -1243,7 +1243,7 @@ adminRouter.patch(
 // GET /api/admin/products - Get all shop-specific products
 adminRouter.get("/products", verifyAdminToken, async (req, res) => {
   try {
-    const [products] = await pool.query(`
+    const [products] = await pool.execute(`
       SELECT p.*, s.shop_name, s.name as shopkeeper_name, s.shop_scale
       FROM products p 
       LEFT JOIN shopkeepers s ON p.shop_id = s.id 
@@ -1271,7 +1271,7 @@ adminRouter.get(
         });
       }
 
-      const [rows] = await pool.query(
+      const [rows] = await pool.execute(
         `
       SELECT 
         id, 
@@ -1326,7 +1326,7 @@ adminRouter.put(
         });
       }
 
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         "UPDATE shopkeepers SET shop_scale = ? WHERE id = ?",
         [shop_scale, shopkeeperId]
       );
@@ -1355,7 +1355,7 @@ adminRouter.put(
 // GET /api/admin/order-items - Get all order items
 adminRouter.get("/order-items", verifyAdminToken, async (req, res) => {
   try {
-    const [orderItems] = await pool.query(`
+    const [orderItems] = await pool.execute(`
       SELECT oi.*, o.total_amount, o.status as order_status,
              p.name as product_name, u.name as customer_name
       FROM order_items oi
@@ -1374,7 +1374,7 @@ adminRouter.get("/order-items", verifyAdminToken, async (req, res) => {
 // GET /api/admin/admins - Get all admins
 adminRouter.get("/admins", verifyAdminToken, async (req, res) => {
   try {
-    const [admins] = await pool.query(
+    const [admins] = await pool.execute(
       "SELECT id, email, created_at FROM admins ORDER BY created_at DESC"
     );
     res.json({ success: true, data: admins });
@@ -1419,7 +1419,7 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
         : "";
 
     // Get counts for all statuses
-    const [counts] = await pool.query(`
+    const [counts] = await pool.execute(`
       SELECT 
         COUNT(*) as all_count,
         SUM(CASE WHEN o.status IN ('Pending', 'Processing') THEN 1 ELSE 0 END) as pending_count,
@@ -1429,7 +1429,7 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
     `);
 
     // Fetch orders with details
-    const [orders] = await pool.query(
+    const [orders] = await pool.execute(
       `SELECT 
          o.id,
          o.user_id as userId,
@@ -1477,7 +1477,7 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
 
     if (orderIds.length) {
       const placeholders = orderIds.map(() => "?").join(",");
-      const [items] = await pool.query(
+      const [items] = await pool.execute(
         `SELECT 
            oi.order_id,
            oi.product_id as productId,
@@ -1564,7 +1564,7 @@ adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
     if (status === "pending") dbStatus = "Pending";
 
     // Check if order exists
-    const [orders] = await pool.query("SELECT * FROM orders WHERE id = ?", [
+    const [orders] = await pool.execute("SELECT * FROM orders WHERE id = ?", [
       id,
     ]);
     if (orders.length === 0) {
@@ -1576,7 +1576,7 @@ adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
     const order = orders[0];
 
     // Update order status
-    await pool.query("UPDATE orders SET status = ? WHERE id = ?", [
+    await pool.execute("UPDATE orders SET status = ? WHERE id = ?", [
       dbStatus,
       id,
     ]);
@@ -1636,7 +1636,7 @@ adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
 // Fetch all orders (admin)
 // adminRouter.get("/orders", verifyToken, async (req, res) => {
 //   try {
-//     const [orders] = await pool.query(
+//     const [orders] = await pool.execute(
 //       `SELECT
 //          o.id, o.user_id, o.shopkeeper_id, o.status, o.total_amount, o.credits_earned,
 //          o.latitude, o.longitude, o.delivery_address, o.created_at,
@@ -1652,7 +1652,7 @@ adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
 //     let itemsMap = {};
 
 //     if (orderIds.length) {
-//       const [items] = await pool.query(
+//       const [items] = await pool.execute(
 //         `SELECT oi.order_id, oi.product_id, oi.quantity, oi.price, p.name AS product_name
 //          FROM order_items oi
 //          LEFT JOIN products p ON oi.product_id = p.id
@@ -1676,7 +1676,7 @@ adminRouter.patch("/orders/:id/status", verifyAdminToken, async (req, res) => {
 adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
   try {
     // Check if billing_payments table exists
-    const [tables] = await pool.query("SHOW TABLES LIKE 'billing_payments'");
+    const [tables] = await pool.execute("SHOW TABLES LIKE 'billing_payments'");
 
     if (tables.length === 0) {
       // Table doesn't exist, return empty array
@@ -1688,7 +1688,7 @@ adminRouter.get("/payment-requests", verifyAdminToken, async (req, res) => {
       });
     }
 
-    const [pendingRequests] = await pool.query(`
+    const [pendingRequests] = await pool.execute(`
       SELECT bp.id, bp.shopkeeper_id, bp.amount, bp.payment_method, 
              bp.transaction_id, bp.payment_date as created_at, bp.status, bp.notes as admin_notes,
              s.name as shopkeeper_name, s.email as shopkeeper_email, 
@@ -1724,7 +1724,7 @@ adminRouter.patch(
       }
 
       // Get payment details
-      const [[payment]] = await pool.query(
+      const [[payment]] = await pool.execute(
         `SELECT bp.*, s.created_at 
        FROM billing_payments bp
        JOIN shopkeepers s ON bp.shopkeeper_id = s.id
@@ -1741,7 +1741,7 @@ adminRouter.patch(
 
       // Process payment approval/rejection
       if (action === "approve") {
-        await pool.query(
+        await pool.execute(
           `UPDATE billing_payments 
          SET status = 'approved', 
              notes = ?,
@@ -1763,7 +1763,7 @@ adminRouter.patch(
 
       // Handle rejection
       if (action === "reject") {
-        await pool.query(
+        await pool.execute(
           `UPDATE billing_payments 
          SET status = 'rejected', 
              notes = ?,
@@ -1791,7 +1791,7 @@ adminRouter.patch(
 adminRouter.get("/payments/all", verifyAdminToken, async (req, res) => {
   try {
     // Check if billing_payments table exists
-    const [tables] = await pool.query("SHOW TABLES LIKE 'billing_payments'");
+    const [tables] = await pool.execute("SHOW TABLES LIKE 'billing_payments'");
 
     if (tables.length === 0) {
       return res.json({
@@ -1801,7 +1801,7 @@ adminRouter.get("/payments/all", verifyAdminToken, async (req, res) => {
       });
     }
 
-    const [payments] = await pool.query(`
+    const [payments] = await pool.execute(`
       SELECT 
         bp.id, 
         bp.shopkeeper_id, 
@@ -1835,7 +1835,7 @@ adminRouter.get("/payments/all", verifyAdminToken, async (req, res) => {
 adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
   try {
     // Check if billing_payments table exists
-    const [tables] = await pool.query("SHOW TABLES LIKE 'billing_payments'");
+    const [tables] = await pool.execute("SHOW TABLES LIKE 'billing_payments'");
 
     let earningsData = [
       {
@@ -1848,7 +1848,7 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
 
     if (tables.length > 0) {
       // Get earnings summary from billing_payments
-      const [data] = await pool.query(`
+      const [data] = await pool.execute(`
         SELECT 
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
           COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_payments,
@@ -1867,7 +1867,7 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
     };
 
     try {
-      const [subData] = await pool.query(`
+      const [subData] = await pool.execute(`
         SELECT 
           0 as trial_users,
           COUNT(CASE WHEN subscription_status = 'active' OR subscription_status IS NULL THEN 1 END) as active_users,
@@ -1915,7 +1915,7 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
 adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
   try {
     // Check if billing_payments table exists
-    const [tables] = await pool.query("SHOW TABLES LIKE 'billing_payments'");
+    const [tables] = await pool.execute("SHOW TABLES LIKE 'billing_payments'");
 
     let earningsData = [
       {
@@ -1927,7 +1927,7 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
     ];
 
     if (tables.length > 0) {
-      const [data] = await pool.query(`
+      const [data] = await pool.execute(`
         SELECT 
           COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
           COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_payments,
@@ -1948,7 +1948,7 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
     ];
 
     try {
-      const [subData] = await pool.query(`
+      const [subData] = await pool.execute(`
         SELECT 
           COUNT(CASE WHEN subscription_status = 'active' OR subscription_status IS NULL THEN 1 END) as active_users,
           COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
@@ -1992,7 +1992,7 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
 // Get admin by ID (protected) - keep this at the end
 adminRouter.get("/:id", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool.execute(
       "SELECT id, email, created_at FROM admins WHERE id = ?",
       [req.params.id]
     );
@@ -2112,7 +2112,7 @@ adminRouter.get("/profile", verifyAdminToken, async (req, res) => {
 adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
   try {
     // Get shopkeeper earnings from billing_payments
-    const [shopkeeperEarnings] = await pool.query(`
+    const [shopkeeperEarnings] = await pool.execute(`
       SELECT 
         s.id as shopkeeper_id,
         s.name as shopkeeper_name,
@@ -2216,7 +2216,7 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
 adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
   try {
     // Get basic order statistics instead of earnings
-    const [orderStats] = await pool.query(`
+    const [orderStats] = await pool.execute(`
       SELECT 
         COUNT(*) as total_orders,
         COUNT(CASE WHEN status = 'Delivered' THEN 1 END) as delivered_orders,
@@ -2241,7 +2241,7 @@ adminRouter.get("/earnings", verifyAdminToken, async (req, res) => {
 // Get pending payments
 adminRouter.get("/pending-payments", verifyAdminToken, async (req, res) => {
   try {
-    const [payments] = await pool.query(`
+    const [payments] = await pool.execute(`
       SELECT 
         bp.*,
         s.name as shopkeeper_name,
@@ -2278,7 +2278,7 @@ adminRouter.patch(
       }
 
       // Update payment status
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         "UPDATE billing_payments SET status = ?, approved_by = ?, approved_at = NOW(), notes = ? WHERE id = ?",
         [status, req.admin.id, notes || "", paymentId]
       );
@@ -2291,7 +2291,7 @@ adminRouter.patch(
 
       // If approved, update shopkeeper subscription using subscription utility
       if (status === "approved") {
-        const [payment] = await pool.query(
+        const [payment] = await pool.execute(
           "SELECT shopkeeper_id FROM billing_payments WHERE id = ?",
           [paymentId]
         );
@@ -2318,7 +2318,7 @@ adminRouter.patch(
 // Get payment statistics
 adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
   try {
-    const [stats] = await pool.query(`
+    const [stats] = await pool.execute(`
       SELECT 
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_payments,
         COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_payments,
@@ -2328,7 +2328,7 @@ adminRouter.get("/payment-stats", verifyAdminToken, async (req, res) => {
       FROM billing_payments
     `);
 
-    const [subscriptionStats] = await pool.query(`
+    const [subscriptionStats] = await pool.execute(`
       SELECT 
         COUNT(CASE WHEN subscription_status = 'active' THEN 1 END) as active_users,
         COUNT(CASE WHEN subscription_status = 'overdue' THEN 1 END) as overdue_users,
@@ -2483,7 +2483,7 @@ adminRouter.put(
       // If it doesn't exist, the query below will fail with a clear error
 
       // Check if record exists
-      const [existing] = await pool.query(
+      const [existing] = await pool.execute(
         "SELECT id FROM payment_info WHERE type = 'admin' LIMIT 1"
       );
 
@@ -2527,13 +2527,13 @@ adminRouter.put(
 
         updateValues.push(existing[0].id);
 
-        await pool.query(
+        await pool.execute(
           `UPDATE payment_info SET ${updateFields.join(", ")} WHERE id = ?`,
           updateValues
         );
       } else {
         // Insert new record
-        await pool.query(
+        await pool.execute(
           `INSERT INTO payment_info (upi_id, bank_account, bank_name, ifsc_code, account_holder, qr_code, type) 
          VALUES (?, ?, ?, ?, ?, ?, 'admin')`,
           [
@@ -2569,7 +2569,7 @@ adminRouter.put(
 adminRouter.get("/payment-info/test", verifyAdminToken, async (req, res) => {
   try {
     // Check table exists
-    const [tables] = await pool.query(`
+    const [tables] = await pool.execute(`
       SELECT TABLE_NAME 
       FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_SCHEMA = DATABASE() 
@@ -2577,7 +2577,7 @@ adminRouter.get("/payment-info/test", verifyAdminToken, async (req, res) => {
     `);
 
     // Check columns
-    const [columns] = await pool.query(`
+    const [columns] = await pool.execute(`
       SELECT COLUMN_NAME
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
@@ -2625,7 +2625,7 @@ adminRouter.put("/:id", verifyAdminToken, async (req, res) => {
       params.push(hashedPassword);
     }
     params.push(req.params.id);
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       `UPDATE admins SET ${updateFields.join(", ")} WHERE id = ?`,
       params
     );
@@ -2645,7 +2645,7 @@ adminRouter.put("/:id", verifyAdminToken, async (req, res) => {
 // Delete admin (protected)
 adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
   try {
-    const [result] = await pool.query("DELETE FROM admins WHERE id = ?", [
+    const [result] = await pool.execute("DELETE FROM admins WHERE id = ?", [
       req.params.id,
     ]);
     if (result.affectedRows === 0) {
@@ -2689,7 +2689,7 @@ adminRouter.post(
       // Get all user FCM tokens from database
       let users;
       try {
-        const [result] = await pool.query(
+        const [result] = await pool.execute(
           "SELECT id, name, expo_push_token as fcm_token FROM users WHERE expo_push_token IS NOT NULL AND expo_push_token != ''"
         );
         users = result;
@@ -2752,7 +2752,7 @@ adminRouter.post(
 
         for (const invalidToken of result.invalidTokens) {
           try {
-            await pool.query(
+            await pool.execute(
               "UPDATE users SET expo_push_token = NULL WHERE expo_push_token = ?",
               [invalidToken]
             );
@@ -2797,7 +2797,7 @@ adminRouter.post(
 adminRouter.get("/notifications/stats", verifyAdminToken, async (req, res) => {
   try {
     // Get user statistics
-    const [userStats] = await pool.query(`
+    const [userStats] = await pool.execute(`
       SELECT 
         COUNT(*) as total_users,
         COUNT(CASE WHEN fcm_token IS NOT NULL AND fcm_token != '' THEN 1 END) as users_with_tokens,
@@ -2806,7 +2806,7 @@ adminRouter.get("/notifications/stats", verifyAdminToken, async (req, res) => {
     `);
 
     // Get shopkeeper statistics (optional, for future use)
-    const [shopkeeperStats] = await pool.query(`
+    const [shopkeeperStats] = await pool.execute(`
       SELECT 
         COUNT(*) as total_shopkeepers,
         COUNT(CASE WHEN fcm_token IS NOT NULL AND fcm_token != '' THEN 1 END) as shopkeepers_with_tokens

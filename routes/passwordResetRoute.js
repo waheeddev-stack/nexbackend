@@ -75,7 +75,7 @@ router.post("/request", async (req, res) => {
     }
 
     // Check if user exists
-    const [users] = await pool.query(
+    const [users] = await pool.execute(
       "SELECT id, name, email FROM users WHERE email = ?",
       [validatedEmail]
     );
@@ -187,7 +187,7 @@ router.post("/verify", async (req, res) => {
       }
 
       // Check if user still exists
-      const [users] = await pool.query(
+      const [users] = await pool.execute(
         "SELECT id, email FROM users WHERE id = ? AND email = ?",
         [payload.id, payload.email]
       );
@@ -282,7 +282,7 @@ router.post("/reset", async (req, res) => {
     }
 
     // Get user
-    const [users] = await pool.query(
+    const [users] = await pool.execute(
       "SELECT id, email, name, password FROM users WHERE id = ? AND email = ?",
       [payload.id, payload.email]
     );
@@ -309,7 +309,7 @@ router.post("/reset", async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // Update password
-    await pool.query("UPDATE users SET password = ? WHERE id = ?", [
+    await pool.execute("UPDATE users SET password = ? WHERE id = ?", [
       hashedPassword,
       user.id,
     ]);

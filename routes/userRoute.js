@@ -70,7 +70,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // 🔍 1st CHECK: Scan for all potential ONLINE shops in the expanded bounding box
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
-    const [allPotentialOnlineShops] = await pool.query(
+    const [allPotentialOnlineShops] = await pool.execute(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -130,7 +130,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0 and baselineQty > 0)
         // A nearby shop with no stock is not useful to the user.
         // Products without baselineQty are not considered "live" in the new system.
-        const [[productCount]] = await pool.query(
+        const [[productCount]] = await pool.execute(
           "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND COALESCE(baselineQty, 0) > 0",
           [shop.id]
         );
@@ -143,7 +143,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         }
 
         // Fresh status check: Re-verify online and verified status one last time
-        const [[freshStatus]] = await pool.query(
+        const [[freshStatus]] = await pool.execute(
           "SELECT is_online, is_verified FROM shopkeepers WHERE id = ?",
           [shop.id]
         );
@@ -173,7 +173,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
     // Returns distance in km (not meters) to be compatible with formatDistance
-    const [allPotentialOfflineShops] = await pool.query(
+    const [allPotentialOfflineShops] = await pool.execute(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -212,7 +212,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     // Check for unverified shops nearby (for debugging)
     // Returns distance in km (not meters) to be compatible with formatDistance
-    const [unverifiedShops] = await pool.query(
+    const [unverifiedShops] = await pool.execute(
       `SELECT id, name, shop_name, is_verified, is_online,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -259,15 +259,21 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Only include products with stock > 0 and a set baselineQty > 0
     // Products without baselineQty are not considered "live" in the new system
     const shopIds = onlineShops.map((s) => s.id);
-    const [products] = await pool.query(
-      `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
-       FROM products
-       WHERE shop_id IN (?) 
-         AND stock > 0 
-         AND COALESCE(baselineQty, 0) > 0
-       ORDER BY created_at DESC`,
-      [shopIds]
-    );
+    let products = [];
+    
+    if (shopIds.length > 0) {
+      const placeholders = shopIds.map(() => "?").join(",");
+      const [productsResult] = await pool.execute(
+        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+         FROM products
+         WHERE shop_id IN (${placeholders})
+           AND stock > 0 
+           AND COALESCE(baselineQty, 0) > 0
+         ORDER BY created_at DESC`,
+        shopIds
+      );
+      products = productsResult;
+    }
 
     console.log(
       `📦 Found ${products.length} products across ${shopIds.length} shops`
@@ -317,7 +323,7 @@ userrouter.get("/shop-info/:shopId", async (req, res) => {
         .json({ success: false, message: "Invalid shop ID" });
     }
 
-    const [shop] = await pool.query(
+    const [shop] = await pool.execute(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, 
               is_online, is_verified, home_delivery_active
        FROM shopkeepers 
@@ -360,7 +366,7 @@ userrouter.post(
       const validatedData = req.validatedData;
 
       // Check if user already exists
-      const [existingUser] = await pool.query(
+      const [existingUser] = await pool.execute(
         "SELECT * FROM users WHERE email = ?",
         [validatedData.email]
       );
@@ -374,19 +380,19 @@ userrouter.post(
       const hashedPassword = await bcrypt.hash(validatedData.password, 12); // Increased rounds for better security
 
       // Get the next available ID (since auto-increment isn't working)
-      const [maxIdResult] = await pool.query(
+      const [maxIdResult] = await pool.execute(
         "SELECT MAX(id) as maxId FROM users"
       );
       const nextId = (maxIdResult[0].maxId || 0) + 1;
 
       // Insert new user into database with explicit ID
-      await pool.query(
+      await pool.execute(
         "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
         [nextId, validatedData.name, validatedData.email, hashedPassword]
       );
 
       // Fetch the newly created user
-      const [userRows] = await pool.query(
+      const [userRows] = await pool.execute(
         "SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?",
         [nextId]
       );
@@ -416,7 +422,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
         .json({ success: false, message: "Email and password are required" });
     }
 
-    const [user] = await pool.query("SELECT * FROM users WHERE email = ?", [
+    const [user] = await pool.execute("SELECT * FROM users WHERE email = ?", [
       email,
     ]);
     if (user.length === 0)
@@ -481,7 +487,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 // PROFILE
 userrouter.get("/profile/:id", async (req, res) => {
   try {
-    const [user] = await pool.query(
+    const [user] = await pool.execute(
       "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
       [req.params.id]
     );
@@ -511,7 +517,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
     const { id } = req.params;
 
     // First, check if user exists
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool.execute(
       "SELECT id FROM users WHERE id = ?",
       [id]
     );
@@ -596,10 +602,10 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     values.push(id);
     const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = ?`;
-    await pool.query(sql, values);
+    await pool.execute(sql, values);
 
     // Fetch updated user data
-    const [userRows] = await pool.query(
+    const [userRows] = await pool.execute(
       "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
       [id]
     );
@@ -629,7 +635,7 @@ userrouter.post("/push-token", verifyToken, async (req, res) => {
         .status(400)
         .json({ success: false, message: "token is required" });
 
-    await pool.query("UPDATE users SET expo_push_token = ? WHERE id = ?", [
+    await pool.execute("UPDATE users SET expo_push_token = ? WHERE id = ?", [
       token,
       req.user.id,
     ]);
@@ -658,7 +664,7 @@ userrouter.get("/products", async (req, res) => {
       LIMIT 50
     `;
 
-    const [products] = await pool.query(query);
+    const [products] = await pool.execute(query);
 
     if (!latitude || !longitude) {
       console.log(
@@ -684,7 +690,7 @@ userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
   try {
     const { shopId } = req.params;
 
-    const [shop] = await pool.query(
+    const [shop] = await pool.execute(
       `
       SELECT id, shop_name, name as shopkeeper_name, address, 
              latitude, longitude, phone, created_at

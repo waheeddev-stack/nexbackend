@@ -20,7 +20,7 @@ import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
   try {
-    const [user] = await pool.query("SELECT * FROM shopkeepers WHERE id = ?", [
+    const [user] = await pool.execute("SELECT * FROM shopkeepers WHERE id = ?", [
       req.user.id,
     ]);
 
@@ -86,7 +86,7 @@ shopkeeperRouter.get(
       const shopkeeper_id = req.user.id;
 
       // Get top selling product for this specific shopkeeper (products table contains shop_id)
-      const [[topProduct]] = await pool.query(
+      const [[topProduct]] = await pool.execute(
         `
         SELECT p.name, SUM(oi.quantity) AS sold
         FROM order_items oi
@@ -101,23 +101,23 @@ shopkeeperRouter.get(
       );
 
       // Get stats for this specific shopkeeper only
-      const [[totalSales]] = await pool.query(
+      const [[totalSales]] = await pool.execute(
         "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status='Completed' AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
-      const [[totalDelivered]] = await pool.query(
+      const [[totalDelivered]] = await pool.execute(
         "SELECT COUNT(*) AS totalDelivered FROM orders WHERE status='Completed' AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
-      const [[totalPending]] = await pool.query(
+      const [[totalPending]] = await pool.execute(
         "SELECT COUNT(*) AS totalPending FROM orders WHERE status='Pending' AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
-      const [[totalCancelled]] = await pool.query(
+      const [[totalCancelled]] = await pool.execute(
         "SELECT COUNT(*) AS totalCancelled FROM orders WHERE status='Cancelled' AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
-      const [[totalCompleted]] = await pool.query(
+      const [[totalCompleted]] = await pool.execute(
         "SELECT COUNT(*) AS totalCompleted FROM orders WHERE status IN ('Completed','Cancelled') AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
@@ -152,7 +152,7 @@ shopkeeperRouter.get(
       const shopkeeper_id = req.user.id;
 
       // Get shopkeeper details including online status and home delivery status
-      const [[shopkeeper]] = await pool.query(
+      const [[shopkeeper]] = await pool.execute(
         "SELECT is_online, subscription_status, last_payment_date, next_payment_due FROM shopkeepers WHERE id = ?",
         [shopkeeper_id]
       );
@@ -166,25 +166,25 @@ shopkeeperRouter.get(
       // No trial period - billing starts from day 1
 
       // Get total sales (only completed/delivered orders)
-      const [[salesData]] = await pool.query(
+      const [[salesData]] = await pool.execute(
         "SELECT SUM(total_amount) AS totalSales FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
 
       // Get orders delivered count
-      const [[deliveredData]] = await pool.query(
+      const [[deliveredData]] = await pool.execute(
         "SELECT COUNT(*) AS ordersDelivered FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
 
       // Get cancelled orders count
-      const [[cancelledData]] = await pool.query(
+      const [[cancelledData]] = await pool.execute(
         "SELECT COUNT(*) AS cancelledOrders FROM orders WHERE status = 'Cancelled' AND shopkeeper_id = ?",
         [shopkeeper_id]
       );
 
       // Get top selling product
-      const [[topProduct]] = await pool.query(
+      const [[topProduct]] = await pool.execute(
         `
       SELECT p.id as productId, p.name, SUM(oi.quantity) AS unitsSold
       FROM order_items oi
@@ -202,7 +202,7 @@ shopkeeperRouter.get(
       // If no column exists, we'll default to true
       let homeDeliveryActive = true;
       try {
-        const [[deliveryStatus]] = await pool.query(
+        const [[deliveryStatus]] = await pool.execute(
           "SELECT home_delivery_active FROM shopkeepers WHERE id = ?",
           [shopkeeper_id]
         );
@@ -260,7 +260,7 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "isOnline must be a boolean" });
       }
 
-      await pool.query("UPDATE shopkeepers SET is_online = ? WHERE id = ?", [
+      await pool.execute("UPDATE shopkeepers SET is_online = ? WHERE id = ?", [
         isOnline ? 1 : 0,
         shopkeeper_id,
       ]);
@@ -299,7 +299,7 @@ shopkeeperRouter.patch(
 
       // Check if column exists, if not, add it
       try {
-        await pool.query(
+        await pool.execute(
           "UPDATE shopkeepers SET home_delivery_active = ? WHERE id = ?",
           [homeDeliveryActive ? 1 : 0, shopkeeper_id]
         );
@@ -307,11 +307,11 @@ shopkeeperRouter.patch(
         // If column doesn't exist, try to add it
         if (updateErr.code === "ER_BAD_FIELD_ERROR") {
           try {
-            await pool.query(
+            await pool.execute(
               "ALTER TABLE shopkeepers ADD COLUMN home_delivery_active TINYINT(1) DEFAULT 1"
             );
             // Retry update
-            await pool.query(
+            await pool.execute(
               "UPDATE shopkeepers SET home_delivery_active = ? WHERE id = ?",
               [homeDeliveryActive ? 1 : 0, shopkeeper_id]
             );
@@ -369,7 +369,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     }
 
     // Check if shopkeeper already exists
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool.execute(
       "SELECT id FROM shopkeepers WHERE email = ?",
       [email]
     );
@@ -414,7 +414,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     // WORKAROUND: Manual ID generation for TiDB Cloud
     // TiDB Cloud doesn't support AUTO_INCREMENT on existing columns
     // Generate ID manually until table is recreated with AUTO_RANDOM
-    const [maxIdResult] = await pool.query(
+    const [maxIdResult] = await pool.execute(
       "SELECT COALESCE(MAX(id), 0) as max_id FROM shopkeepers"
     );
     const nextId = maxIdResult[0].max_id + 1;
@@ -422,7 +422,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     console.log("Manually generating ID:", nextId);
 
     // Insert new shopkeeper with explicit ID
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nextId,
@@ -450,7 +450,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
     }
 
     // Get the created shopkeeper
-    const [userRows] = await pool.query(
+    const [userRows] = await pool.execute(
       "SELECT id, name, email, phone, shop_name FROM shopkeepers WHERE id = ?",
       [newShopkeeperId]
     );
@@ -514,7 +514,7 @@ shopkeeperRouter.post("/signin", async (req, res) => {
         .json({ success: false, message: "Email and password are required" });
     }
 
-    const [user] = await pool.query(
+    const [user] = await pool.execute(
       "SELECT * FROM shopkeepers WHERE email = ?",
       [email]
     );
@@ -644,7 +644,7 @@ shopkeeperRouter.get("/profile/:id", verifyToken, async (req, res) => {
       });
     }
 
-    const [user] = await pool.query(
+    const [user] = await pool.execute(
       "SELECT id, email, name, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, is_deleted, created_at, home_delivery_active FROM shopkeepers WHERE id = ?",
       [requestedId]
     );
@@ -805,7 +805,7 @@ shopkeeperRouter.put(
 
       values.push(requestedId);
       const sql = `UPDATE shopkeepers SET ${fields.join(", ")} WHERE id = ?`;
-      const [updateResult] = await pool.query(sql, values);
+      const [updateResult] = await pool.execute(sql, values);
 
       if (updateResult.affectedRows === 0) {
         return res
@@ -813,7 +813,7 @@ shopkeeperRouter.put(
           .json({ success: false, message: "Shopkeeper not found" });
       }
 
-      const [userRows] = await pool.query(
+      const [userRows] = await pool.execute(
         "SELECT id, name, email, phone, address, shop_name, img, upi_id, upi_qr, latitude, longitude, expo_push_token, is_verified, created_at, home_delivery_active FROM shopkeepers WHERE id = ?",
         [requestedId]
       );
@@ -854,7 +854,7 @@ shopkeeperRouter.patch(
 
       const onlineStatus = is_online ? 1 : 0;
 
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         "UPDATE shopkeepers SET is_online = ? WHERE id = ?",
         [onlineStatus, shopkeeper_id]
       );
@@ -885,7 +885,7 @@ shopkeeperRouter.get("/shop-status", verifyToken, async (req, res) => {
   try {
     const shopkeeper_id = req.user.id;
 
-    const [[shop]] = await pool.query(
+    const [[shop]] = await pool.execute(
       "SELECT is_online FROM shopkeepers WHERE id = ?",
       [shopkeeper_id]
     );
@@ -946,7 +946,7 @@ shopkeeperRouter.get(
       }
 
       // Fetch orders with delivery type classification
-      const [orderRows] = await pool.query(
+      const [orderRows] = await pool.execute(
         `SELECT
         o.id AS order_id,
         o.user_id,
@@ -984,7 +984,7 @@ shopkeeperRouter.get(
       // Fetch order items for all orders
       if (orderRows.length > 0) {
         const orderIds = orderRows.map((o) => o.order_id);
-        const [itemRows] = await pool.query(
+        const [itemRows] = await pool.execute(
           `SELECT
           oi.order_id,
           oi.product_id,
@@ -1109,7 +1109,7 @@ shopkeeperRouter.patch(
         cancellation_reason = cancellation_reason.trim().substring(0, 500);
       }
 
-      const [orderCheck] = await pool.query(
+      const [orderCheck] = await pool.execute(
         "SELECT id FROM orders WHERE id = ? AND shopkeeper_id = ?",
         [orderIdNum, shopkeeper_id]
       );
@@ -1122,14 +1122,14 @@ shopkeeperRouter.patch(
       }
 
       if (status === "Cancelled") {
-        await pool.query("START TRANSACTION");
+        await pool.execute("START TRANSACTION");
         try {
-          await pool.query(
+          await pool.execute(
             "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
             [cancellation_reason, orderIdNum]
           );
 
-          await pool.query(
+          await pool.execute(
             `
           UPDATE order_timers
           SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
@@ -1144,30 +1144,30 @@ shopkeeperRouter.patch(
             cancellation_reason || "Shopkeeper cancellation"
           );
 
-          const [[orderData]] = await pool.query(
+          const [[orderData]] = await pool.execute(
             "SELECT credits_used, user_id FROM orders WHERE id = ?",
             [orderIdNum]
           );
           if (orderData?.credits_used > 0) {
-            await pool.query(
+            await pool.execute(
               "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
               [orderData.credits_used, orderData.user_id]
             );
           }
 
-          await pool.query("COMMIT");
+          await pool.execute("COMMIT");
         } catch (err) {
-          await pool.query("ROLLBACK");
+          await pool.execute("ROLLBACK");
           throw err;
         }
       } else if (status === "Completed") {
-        await pool.query(
+        await pool.execute(
           "UPDATE orders SET status = 'Completed' WHERE id = ?",
           [orderIdNum]
         );
 
         try {
-          const [[orderDetails]] = await pool.query(
+          const [[orderDetails]] = await pool.execute(
             "SELECT user_id, created_at, timer_started_at, total_amount, order_type, delivery_mode FROM orders WHERE id = ?",
             [orderIdNum]
           );
@@ -1188,14 +1188,14 @@ shopkeeperRouter.patch(
           console.error("Error awarding points:", pointsErr);
         }
       } else {
-        await pool.query("UPDATE orders SET status = ? WHERE id = ?", [
+        await pool.execute("UPDATE orders SET status = ? WHERE id = ?", [
           status,
           orderIdNum,
         ]);
       }
 
       if (req.io) {
-        const [[orderRow]] = await pool.query(
+        const [[orderRow]] = await pool.execute(
           "SELECT user_id, shopkeeper_id, total_amount, has_timer FROM orders WHERE id = ?",
           [orderIdNum]
         );
@@ -1214,7 +1214,7 @@ shopkeeperRouter.patch(
         req.io.to("admin").emit("orderStatusUpdate", payload);
       }
 
-      const [[target]] = await pool.query(
+      const [[target]] = await pool.execute(
         "SELECT expo_push_token FROM users WHERE id = (SELECT user_id FROM orders WHERE id = ?)",
         [orderIdNum]
       );
@@ -1250,7 +1250,7 @@ shopkeeperRouter.get(
   async (req, res) => {
     try {
       const shop_id = req.user.id;
-      const [products] = await pool.query(
+      const [products] = await pool.execute(
         "SELECT * FROM products WHERE shop_id = ? ORDER BY created_at DESC",
         [shop_id]
       );
@@ -1335,7 +1335,7 @@ shopkeeperRouter.post(
         }
       }
 
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         `INSERT INTO products (shop_id, name, description, category, price, stock, baselineQty, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
@@ -1349,7 +1349,7 @@ shopkeeperRouter.post(
         ]
       );
 
-      const [created] = await pool.query(
+      const [created] = await pool.execute(
         "SELECT * FROM products WHERE id = ?",
         [result.insertId]
       );
@@ -1383,7 +1383,7 @@ shopkeeperRouter.put(
       const { name, description, category, price, stock, baselineQty } =
         req.body;
 
-      const [existing] = await pool.query(
+      const [existing] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1475,12 +1475,12 @@ shopkeeperRouter.put(
           .json({ success: false, message: "No fields to update" });
 
       values.push(productId, shop_id);
-      await pool.query(
+      await pool.execute(
         `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
         values
       );
 
-      const [updated] = await pool.query(
+      const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1508,7 +1508,7 @@ shopkeeperRouter.delete(
       const shop_id = req.user.id;
       const productId = req.params.id;
 
-      const [existing] = await pool.query(
+      const [existing] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1518,7 +1518,7 @@ shopkeeperRouter.delete(
           .json({ success: false, message: "Product not found" });
 
       // Check if product is referenced in any order_items
-      const [usedInOrders] = await pool.query(
+      const [usedInOrders] = await pool.execute(
         `SELECT COUNT(*) AS c FROM order_items WHERE product_id = ?`,
         [productId]
       );
@@ -1528,7 +1528,7 @@ shopkeeperRouter.delete(
           message: "Cannot delete product involved in orders",
         });
 
-      await pool.query("DELETE FROM products WHERE id = ? AND shop_id = ?", [
+      await pool.execute("DELETE FROM products WHERE id = ? AND shop_id = ?", [
         productId,
         shop_id,
       ]);
@@ -1549,7 +1549,7 @@ shopkeeperRouter.get(
   async (req, res) => {
     try {
       // Get shopkeeper's scale
-      const [shopkeeper] = await pool.query(
+      const [shopkeeper] = await pool.execute(
         "SELECT shop_scale FROM shopkeepers WHERE id = ?",
         [req.user.id]
       );
@@ -1563,7 +1563,7 @@ shopkeeperRouter.get(
       const shopScale = shopkeeper[0].shop_scale || "small";
 
       // Get products available for this shop scale
-      const [rows] = await pool.query(
+      const [rows] = await pool.execute(
         `
       SELECT 
         id, 
@@ -1652,7 +1652,7 @@ shopkeeperRouter.post(
       }
 
       // Verify global product exists
-      const [gpRows] = await pool.query(
+      const [gpRows] = await pool.execute(
         "SELECT * FROM global_products WHERE id = ?",
         [global_product_id]
       );
@@ -1664,7 +1664,7 @@ shopkeeperRouter.post(
       const gp = gpRows[0];
 
       // Prevent duplicate addition for same shop
-      const [exists] = await pool.query(
+      const [exists] = await pool.execute(
         "SELECT id FROM products WHERE shop_id = ? AND global_product_id = ?",
         [shop_id, global_product_id]
       );
@@ -1683,7 +1683,7 @@ shopkeeperRouter.post(
       }
 
       // Set both stock and baselineQty to the same value
-      const [result] = await pool.query(
+      const [result] = await pool.execute(
         `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, baselineQty, image)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -1699,7 +1699,7 @@ shopkeeperRouter.post(
         ]
       );
 
-      const [created] = await pool.query(
+      const [created] = await pool.execute(
         "SELECT * FROM products WHERE id = ?",
         [result.insertId]
       );
@@ -1739,7 +1739,7 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "Invalid stock value" });
       }
 
-      const [existing] = await pool.query(
+      const [existing] = await pool.execute(
         "SELECT id FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1749,11 +1749,11 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "Product not found" });
       }
 
-      await pool.query(
+      await pool.execute(
         "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
         [parsedStock, productId, shop_id]
       );
-      const [updated] = await pool.query(
+      const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1783,7 +1783,7 @@ shopkeeperRouter.post(
           .status(400)
           .json({ success: false, message: "token is required" });
 
-      await pool.query(
+      await pool.execute(
         "UPDATE shopkeepers SET expo_push_token = ? WHERE id = ?",
         [token, req.user.id]
       );
@@ -1807,7 +1807,7 @@ shopkeeperRouter.get(
       const shopkeeper_id = req.user.id;
 
       // Get shopkeeper subscription info
-      const [shopkeeper] = await pool.query(
+      const [shopkeeper] = await pool.execute(
         `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due 
        FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
@@ -1834,7 +1834,7 @@ shopkeeperRouter.get(
         .catch(() => [[{ pending_amount: 0 }]]);
 
       // Get order stats
-      const [orderStats] = await pool.query(
+      const [orderStats] = await pool.execute(
         `SELECT 
         COUNT(*) as total_orders,
         COUNT(CASE WHEN status = 'Delivered' THEN 1 END) as delivered_orders,
@@ -1916,7 +1916,7 @@ shopkeeperRouter.get(
       const shopkeeper_id = req.user.id;
 
       // Get shopkeeper subscription details
-      const [shopkeeper] = await pool.query(
+      const [shopkeeper] = await pool.execute(
         `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due, last_payment_date
        FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
@@ -1975,7 +1975,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
 
     // No trial period - billing starts immediately
 
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       "UPDATE shopkeepers SET shop_scale = ?, subscription_status = 'active' WHERE id = ?",
       [shop_scale, shopkeeperId]
     );
@@ -1990,7 +1990,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
     let productsAdded = 0;
     try {
       // Get global products available for this scale (matching scale or "all")
-      const [globalProducts] = await pool.query(
+      const [globalProducts] = await pool.execute(
         `
         SELECT id, name, description, category, price, image
         FROM global_products 
@@ -2001,7 +2001,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       );
 
       // Get existing products for this shopkeeper to avoid duplicates
-      const [existingProducts] = await pool.query(
+      const [existingProducts] = await pool.execute(
         "SELECT global_product_id FROM products WHERE shop_id = ? AND global_product_id IS NOT NULL",
         [shopkeeperId]
       );
@@ -2012,7 +2012,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       // Add products that don't already exist
       for (const gp of globalProducts) {
         if (!existingGlobalIds.has(gp.id)) {
-          await pool.query(
+          await pool.execute(
             `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [
@@ -2054,7 +2054,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
 // Get subscription status
 shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   try {
-    const [shopkeeper] = await pool.query(
+    const [shopkeeper] = await pool.execute(
       "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due, grace_period_end FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
@@ -2116,7 +2116,7 @@ shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
     }
 
     // Insert payment request
-    const [result] = await pool.query(
+    const [result] = await pool.execute(
       `INSERT INTO billing_payments (shopkeeper_id, amount, payment_method, transaction_id, status) 
        VALUES (?, ?, ?, ?, 'pending')`,
       [shopkeeper_id, amount, payment_method || "upi", transaction_id || null]
@@ -2155,7 +2155,7 @@ shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
 // Get payment history
 shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
   try {
-    const [payments] = await pool.query(
+    const [payments] = await pool.execute(
       "SELECT * FROM billing_payments WHERE shopkeeper_id = ? ORDER BY payment_date DESC",
       [req.user.id]
     );
@@ -2172,7 +2172,7 @@ shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
 // Helper function to check if timer tables exist
 const checkTimerTablesExist = async () => {
   try {
-    const [tables] = await pool.query(`
+    const [tables] = await pool.execute(`
       SELECT TABLE_NAME 
       FROM information_schema.TABLES 
       WHERE TABLE_SCHEMA = DATABASE() 
@@ -2213,7 +2213,7 @@ shopkeeperRouter.post(
       }
 
       // Check if order belongs to this shopkeeper and is in correct status
-      const [orderCheck] = await pool.query(
+      const [orderCheck] = await pool.execute(
         "SELECT id, status FROM orders WHERE id = ? AND shopkeeper_id = ?",
         [orderIdNum, shopkeeper_id]
       );
@@ -2243,7 +2243,7 @@ shopkeeperRouter.post(
 
       // Create or update timer record
       try {
-        await pool.query(
+        await pool.execute(
           `
         INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
         VALUES (?, ?, ?, ?, ?, TRUE)
@@ -2264,7 +2264,7 @@ shopkeeperRouter.post(
       }
 
       // Update orders table
-      await pool.query(
+      await pool.execute(
         `
       UPDATE orders 
       SET has_timer = TRUE, pickup_code = ?, timer_started_at = ?, timer_expires_at = ?
@@ -2331,7 +2331,7 @@ shopkeeperRouter.post(
       // Get order info (without timer table join to avoid errors if table doesn't exist)
       let orderInfo;
       try {
-        [orderInfo] = await pool.query(
+        [orderInfo] = await pool.execute(
           `
         SELECT o.id, o.status, o.pickup_code, o.user_id, o.created_at, o.timer_started_at, o.timer_expires_at, o.total_amount, o.order_type, o.delivery_mode
         FROM orders o
@@ -2394,7 +2394,7 @@ shopkeeperRouter.post(
       // Mark order as Completed ONLY if status is still Pending
       // This prevents duplicate reward awards from concurrent requests
       try {
-        const [updateResult] = await pool.query(
+        const [updateResult] = await pool.execute(
           `
         UPDATE orders 
         SET status = 'Completed', has_timer = FALSE
@@ -2427,7 +2427,7 @@ shopkeeperRouter.post(
       // Stop timer in order_timers table (create record if it doesn't exist)
       try {
         // First, try to update existing record
-        const [timerUpdateResult] = await pool.query(
+        const [timerUpdateResult] = await pool.execute(
           `
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
@@ -2439,7 +2439,7 @@ shopkeeperRouter.post(
         // If no record was updated, create one
         if (timerUpdateResult.affectedRows === 0) {
           console.log("No timer record found, creating one...");
-          await pool.query(
+          await pool.execute(
             `
           INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active, is_expired, stopped_at)
           VALUES (?, ?, 420, ?, ?, FALSE, ?, ?)
@@ -2574,7 +2574,7 @@ shopkeeperRouter.post(
 
       // Send push notification to customer
       try {
-        const [[customer]] = await pool.query(
+        const [[customer]] = await pool.execute(
           `SELECT expo_push_token FROM users WHERE id = ?`,
           [order.user_id]
         );
@@ -2663,7 +2663,7 @@ shopkeeperRouter.get(
       }
 
       // Get timer info
-      const [timerInfo] = await pool.query(
+      const [timerInfo] = await pool.execute(
         `
       SELECT o.id, o.pickup_code, o.has_timer, o.timer_started_at, o.timer_expires_at,
              ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at
@@ -2691,7 +2691,7 @@ shopkeeperRouter.get(
 
         // Auto-expire if time is up
         if (timeLeft === 0 && timer.is_active) {
-          await pool.query(
+          await pool.execute(
             `
           UPDATE order_timers 
           SET is_active = FALSE, is_expired = TRUE
@@ -2746,7 +2746,7 @@ shopkeeperRouter.get(
       console.log(`🔄 Force refreshing timer status for order ${orderIdNum}`);
 
       // Get complete order and timer info
-      const [orderInfo] = await pool.query(
+      const [orderInfo] = await pool.execute(
         `
       SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
              ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
@@ -2862,7 +2862,7 @@ shopkeeperRouter.post(
       const now = new Date();
 
       // Find and expire active timers that have passed their expiry time
-      const [expiredTimers] = await pool.query(
+      const [expiredTimers] = await pool.execute(
         `
       SELECT ot.order_id 
       FROM order_timers ot
@@ -2876,7 +2876,7 @@ shopkeeperRouter.post(
 
         // Mark timers as expired and inactive (removes from active timer list)
         // But order remains visible and can still be completed via code/QR or cancelled
-        await pool.query(
+        await pool.execute(
           `
         UPDATE order_timers 
         SET is_active = FALSE, is_expired = TRUE
@@ -2888,7 +2888,7 @@ shopkeeperRouter.post(
         // Broadcast timerExpired events for UI indication
         if (req.io) {
           const placeholders = orderIds.map(() => "?").join(",");
-          const [orders] = await pool.query(
+          const [orders] = await pool.execute(
             `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at 
            FROM orders 
            WHERE id IN (${placeholders})`,
@@ -2948,7 +2948,7 @@ shopkeeperRouter.post(
       }
 
       // Get shopkeeper's registered location
-      const [shopkeeper] = await pool.query(
+      const [shopkeeper] = await pool.execute(
         "SELECT latitude, longitude, address FROM shopkeepers WHERE id = ?",
         [shopkeeper_id]
       );
@@ -2991,7 +2991,7 @@ shopkeeperRouter.post(
       const verified = distance <= tolerance;
 
       // Log location verification attempt
-      await pool.query(
+      await pool.execute(
         `
       INSERT INTO location_verifications (shopkeeper_id, latitude, longitude, distance, verified, created_at)
       VALUES (?, ?, ?, ?, ?, NOW())
@@ -3024,7 +3024,7 @@ shopkeeperRouter.get(
     try {
       const shopkeeper_id = req.user.id;
 
-      const [history] = await pool.query(
+      const [history] = await pool.execute(
         `
       SELECT latitude, longitude, distance, verified, created_at
       FROM location_verifications

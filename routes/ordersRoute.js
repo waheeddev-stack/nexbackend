@@ -481,7 +481,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
     }
 
     // Check if order exists and belongs to the user or shopkeeper
-    const [orderRows] = await pool.query(
+    const [orderRows] = await pool.execute(
       "SELECT id, user_id, shopkeeper_id, status FROM orders WHERE id = ?",
       [orderIdNum]
     );
@@ -510,17 +510,17 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
     }
 
     // Start transaction for cancellation and stock restoration
-    await pool.query("START TRANSACTION");
+    await pool.execute("START TRANSACTION");
 
     try {
       // Update order status
-      await pool.query(
+      await pool.execute(
         "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
         [cancellation_reason, orderIdNum]
       );
 
       // Stop timer if order has one
-      await pool.query(
+      await pool.execute(
         `
         UPDATE order_timers 
         SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
@@ -536,7 +536,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         cancellation_reason
       );
 
-      await pool.query("COMMIT");
+      await pool.execute("COMMIT");
 
       // Notify via socket
       if (req.io) {
@@ -561,7 +561,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         stockRestoration,
       });
     } catch (transactionError) {
-      await pool.query("ROLLBACK");
+      await pool.execute("ROLLBACK");
       throw transactionError;
     }
   } catch (error) {
@@ -587,7 +587,7 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
     }
 
     // First, delete order items
-    await pool.query(
+    await pool.execute(
       `DELETE oi FROM order_items oi
        INNER JOIN orders o ON oi.order_id = o.id
        WHERE o.user_id = ?`,
@@ -595,7 +595,7 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
     );
 
     // Then delete orders
-    const [result] = await pool.query("DELETE FROM orders WHERE user_id = ?", [
+    const [result] = await pool.execute("DELETE FROM orders WHERE user_id = ?", [
       userId,
     ]);
 
@@ -805,7 +805,7 @@ router.get("/:orderId/timer", verifyToken, async (req, res) => {
     const userId = req.user.id;
     const { orderId } = req.params;
 
-    const [timerInfo] = await pool.query(
+    const [timerInfo] = await pool.execute(
       `
       SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
              ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
@@ -871,7 +871,7 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
     const userId = req.user.id;
     const { orderId } = req.params;
 
-    const [orderInfo] = await pool.query(
+    const [orderInfo] = await pool.execute(
       `
       SELECT id, id as orderId, status, has_timer, pickup_code, timer_started_at, timer_expires_at,
              total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
@@ -1559,15 +1559,15 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     if (dbStatus === "Cancelled") {
       console.log(`📦 Order ${orderIdNum} being cancelled by ${userRole}`);
 
-      await pool.query("START TRANSACTION");
+      await pool.execute("START TRANSACTION");
       try {
-        await pool.query(
+        await pool.execute(
           "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
           [cancellation_reason || `${userRole} cancellation`, orderIdNum]
         );
 
         // Stop timer
-        await pool.query(
+        await pool.execute(
           `
           UPDATE order_timers 
           SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
@@ -1584,24 +1584,24 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         );
 
         // Refund credits if any
-        const [[creditsData]] = await pool.query(
+        const [[creditsData]] = await pool.execute(
           "SELECT credits_used FROM orders WHERE id = ?",
           [orderIdNum]
         );
         if (creditsData?.credits_used > 0) {
-          await pool.query(
+          await pool.execute(
             "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
             [creditsData.credits_used, order.user_id]
           );
         }
 
-        await pool.query("COMMIT");
+        await pool.execute("COMMIT");
       } catch (err) {
-        await pool.query("ROLLBACK");
+        await pool.execute("ROLLBACK");
         throw err;
       }
     } else if (dbStatus === "Completed") {
-      await pool.query("UPDATE orders SET status = 'Completed' WHERE id = ?", [
+      await pool.execute("UPDATE orders SET status = 'Completed' WHERE id = ?", [
         orderIdNum,
       ]);
 
@@ -1620,7 +1620,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         console.error("Error awarding points:", pointsErr);
       }
     } else {
-      await pool.query("UPDATE orders SET status = ? WHERE id = ?", [
+      await pool.execute("UPDATE orders SET status = ? WHERE id = ?", [
         dbStatus,
         orderIdNum,
       ]);
@@ -1646,7 +1646,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
       const targetId =
         userRole === "user" ? order.shopkeeper_id : order.user_id;
       const targetTable = userRole === "user" ? "shopkeepers" : "users";
-      const [[target]] = await pool.query(
+      const [[target]] = await pool.execute(
         `SELECT expo_push_token FROM ${targetTable} WHERE id = ?`,
         [targetId]
       );
