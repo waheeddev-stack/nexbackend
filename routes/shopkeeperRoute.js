@@ -1409,7 +1409,6 @@ shopkeeperRouter.post("/products/from-global", verifyToken, verifyShopkeeperStat
     if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) {
       return res.status(400).json({ success: false, message: "Invalid stock or baseline quantity" });
     }
-    }
 
     // Verify global product exists
     const [gpRows] = await pool.query("SELECT * FROM global_products WHERE id = ?", [global_product_id]);
