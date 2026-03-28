@@ -411,6 +411,9 @@ router.get("/", verifyToken, async (req, res) => {
 
       return {
         ...order,
+        // Add pickup_code at top level for both snake_case and camelCase compatibility
+        pickup_code: order.pickupCode,
+        pickupCode: order.pickupCode,
         items: orderItems
           .filter((item) => item.orderId === order.id)
           .map((item) => ({
