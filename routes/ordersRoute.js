@@ -1113,9 +1113,10 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Precompute timer timestamps for click & collect
     const now = new Date();
-    const timerStartedAt = hasTimer ? now : null;
+    // Convert to ISO string format for proper MySQL/TiDB handling
+    const timerStartedAt = hasTimer ? now.toISOString().slice(0, 19).replace('T', ' ') : null;
     const timerExpiresAt = hasTimer
-      ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000)
+      ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000).toISOString().slice(0, 19).replace('T', ' ')
       : null;
 
     // Insert order
@@ -1336,10 +1337,10 @@ router.post("/", verifyToken, async (req, res) => {
         pickup_code: pickupCode, // Add for compatibility
         hasTimer: hasTimer === 1,
         has_timer: hasTimer === 1, // Add for compatibility
-        timerStartedAt: timerStartedAt ? timerStartedAt.toISOString() : null,
-        timer_started_at: timerStartedAt ? timerStartedAt.toISOString() : null, // Add for compatibility
-        timerExpiresAt: timerExpiresAt ? timerExpiresAt.toISOString() : null,
-        timer_expires_at: timerExpiresAt ? timerExpiresAt.toISOString() : null, // Add for compatibility
+        timerStartedAt: timerStartedAt ? new Date(timerStartedAt).toISOString() : null,
+        timer_started_at: timerStartedAt ? new Date(timerStartedAt).toISOString() : null, // Add for compatibility
+        timerExpiresAt: timerExpiresAt ? new Date(timerExpiresAt).toISOString() : null,
+        timer_expires_at: timerExpiresAt ? new Date(timerExpiresAt).toISOString() : null, // Add for compatibility
         deliverySlot,
         delivery_slot: deliverySlot, // Add for compatibility
         deliveryAddress,
@@ -1370,10 +1371,10 @@ router.post("/", verifyToken, async (req, res) => {
                 hasTimer: true,
                 pickupCode,
                 timerStartedAt: timerStartedAt
-                  ? timerStartedAt.toISOString()
+                  ? new Date(timerStartedAt).toISOString()
                   : null,
                 timerExpiresAt: timerExpiresAt
-                  ? timerExpiresAt.toISOString()
+                  ? new Date(timerExpiresAt).toISOString()
                   : null,
                 isExpired: false,
               }
