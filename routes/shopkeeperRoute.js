@@ -984,6 +984,7 @@ shopkeeperRouter.get(
       // Fetch order items for all orders
       if (orderRows.length > 0) {
         const orderIds = orderRows.map((o) => o.order_id);
+        const placeholders = orderIds.map(() => '?').join(',');
         const [itemRows] = await pool.execute(
           `SELECT
           oi.order_id,
@@ -994,8 +995,8 @@ shopkeeperRouter.get(
           oi.price
          FROM order_items oi
          LEFT JOIN products p ON oi.product_id = p.id
-         WHERE oi.order_id IN (?)`,
-          [orderIds]
+         WHERE oi.order_id IN (${placeholders})`,
+          orderIds
         );
 
         // Group items by order_id

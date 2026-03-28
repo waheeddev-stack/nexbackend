@@ -50,9 +50,10 @@ notificationRouter.post("/send", async (req, res) => {
       };
       const column = allowedTables[targetTable];
       if (column) {
+        const placeholders = result.invalidTokens.map(() => '?').join(',');
         await pool.execute(
-          `UPDATE ${targetTable} SET ${column} = NULL WHERE id = ? AND ${column} IN (?)`,
-          [targetId, result.invalidTokens]
+          `UPDATE ${targetTable} SET ${column} = NULL WHERE id = ? AND ${column} IN (${placeholders})`,
+          [targetId, ...result.invalidTokens]
         );
       }
     }
