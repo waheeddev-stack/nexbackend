@@ -1,5 +1,6 @@
 import admin from 'firebase-admin';
 import dotenv from 'dotenv';
+import pool from '../config/db.js'; // Import the database pool
 
 dotenv.config();
 
@@ -144,7 +145,11 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
           error.code === 'messaging/registration-token-not-registered'
         ) {
           results.invalidTokens.push(token);
-          console.warn(`⚠️ FCM: Invalid token detected, should be removed from database`);
+          console.warn(`⚠️ FCM: Invalid token detected, removing from database...`);
+          // Asynchronously remove the invalid token from both users and shopkeepers tables
+          removeInvalidToken(token).catch(removeError => {
+            console.error('❌ Failed to remove invalid token:', removeError);
+          });
         }
         
         results.errors.push({
@@ -186,6 +191,35 @@ export function isFCMToken(token) {
   // Expo tokens start with "ExponentPushToken["
   // FCM tokens are long alphanumeric strings
   return !token.startsWith('ExponentPushToken[') && token.length > 50;
+}
+
+/**
+ * Removes an invalid push token from the database.
+ * @param {string} token - The invalid token to remove.
+ */
+async function removeInvalidToken(token) {
+  if (!token) return;
+  try {
+    // Remove from users table
+    const [userResult] = await pool.query(
+      "UPDATE users SET expo_push_token = NULL WHERE expo_push_token = ?",
+      [token]
+    );
+    if (userResult.affectedRows > 0) {
+      console.log(`✅ Removed invalid token from ${userResult.affectedRows} user(s)`);
+    }
+
+    // Remove from shopkeepers table
+    const [shopkeeperResult] = await pool.query(
+      "UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token = ?",
+      [token]
+    );
+    if (shopkeeperResult.affectedRows > 0) {
+      console.log(`✅ Removed invalid token from ${shopkeeperResult.affectedRows} shopkeeper(s)`);
+    }
+  } catch (dbError) {
+    console.error(`Database error while removing invalid token: ${dbError.message}`);
+  }
 }
 
 export default { sendFCMPush, isFCMToken };

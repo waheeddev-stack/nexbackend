@@ -101,7 +101,7 @@ function defineInventoryModels(sequelize) {
       field: 'restockAt'
     }
   }, {
-    tableName: 'inventory_products',
+    tableName: 'products',
     timestamps: true,
     createdAt: 'createdAt',
     updatedAt: 'updatedAt'

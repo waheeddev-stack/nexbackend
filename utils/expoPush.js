@@ -1,4 +1,5 @@
 import { Expo } from "expo-server-sdk";
+import pool from '../config/db.js'; // Import the database pool
 
 // Replaces previous implementation with full expo-server-sdk usage
 
@@ -93,6 +94,10 @@ export async function sendExpoPush(tokens, title, body, data = {}) {
           const errCode = detail.error;
           if (errCode === "DeviceNotRegistered" || errCode === "InvalidCredentials") {
             invalidTokens.add(token);
+            // Asynchronously remove the invalid token
+            removeInvalidToken(token).catch(removeError => {
+              console.error('❌ Failed to remove invalid Expo token:', removeError);
+            });
           }
         }
       }
@@ -121,4 +126,33 @@ export async function sendExpoPushToToken(token, title, body, data = {}) {
 // NEW: export validator for token format so routes can quickly validate
 export function isExpoPushToken(token) {
   return Expo.isExpoPushToken(token);
+}
+
+/**
+ * Removes an invalid push token from the database.
+ * @param {string} token - The invalid token to remove.
+ */
+async function removeInvalidToken(token) {
+  if (!token) return;
+  try {
+    // Remove from users table
+    const [userResult] = await pool.query(
+      "UPDATE users SET expo_push_token = NULL WHERE expo_push_token = ?",
+      [token]
+    );
+    if (userResult.affectedRows > 0) {
+      console.log(`✅ Removed invalid Expo token from ${userResult.affectedRows} user(s)`);
+    }
+
+    // Remove from shopkeepers table
+    const [shopkeeperResult] = await pool.query(
+      "UPDATE shopkeepers SET expo_push_token = NULL WHERE expo_push_token = ?",
+      [token]
+    );
+    if (shopkeeperResult.affectedRows > 0) {
+      console.log(`✅ Removed invalid Expo token from ${shopkeeperResult.affectedRows} shopkeeper(s)`);
+    }
+  } catch (dbError) {
+    console.error(`Database error while removing invalid Expo token: ${dbError.message}`);
+  }
 }
