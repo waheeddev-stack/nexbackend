@@ -1167,7 +1167,7 @@ shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkSubs
 shopkeeperRouter.post("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, upload.single("image"), async (req, res) => {
   try {
     const shop_id = req.user.id;
-    const { name, description, category, price, stock } = req.body;
+    const { name, description, category, price, stock, baselineQty } = req.body;
 
     if (!name || price == null) {
       return res.status(400).json({ success: false, message: "Name and price are required" });
