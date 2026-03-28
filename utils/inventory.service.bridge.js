@@ -94,10 +94,11 @@ export async function deductStockForOrder(orderId, connection = null) {
     }
     
     // Log stock deduction
+    const totalQty = deductions.reduce((sum, d) => sum + d.quantityDeducted, 0);
     await conn.execute(
-      `INSERT INTO stock_restoration_log (order_id, action, details, created_at) 
-       VALUES (?, 'DEDUCT', ?, NOW())`,
-      [orderId, JSON.stringify(deductions)]
+      `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
+       VALUES (?, 'SYSTEM_DEDUCT', ?, ?, ?, NOW())`,
+      [orderId, 'Stock deducted for order placement', deductions.length, -totalQty]
     );
     
     if (!useTransaction) {
@@ -130,7 +131,7 @@ export async function restoreStockForOrder(orderId, reason = 'ORDER_CANCELLED', 
     // Check if stock was already restored
     const [existingRestore] = await conn.execute(
       `SELECT id FROM stock_restoration_log 
-       WHERE order_id = ? AND action = 'RESTORE' 
+       WHERE order_id = ? AND cancelled_by = 'SYSTEM_RESTORE' 
        LIMIT 1`,
       [orderId]
     );
@@ -187,10 +188,11 @@ export async function restoreStockForOrder(orderId, reason = 'ORDER_CANCELLED', 
     }
     
     // Log stock restoration
+    const totalQty = restorations.reduce((sum, r) => sum + r.quantityRestored, 0);
     await conn.execute(
-      `INSERT INTO stock_restoration_log (order_id, action, reason, details, created_at) 
-       VALUES (?, 'RESTORE', ?, ?, NOW())`,
-      [orderId, reason, JSON.stringify(restorations)]
+      `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
+       VALUES (?, 'SYSTEM_RESTORE', ?, ?, ?, NOW())`,
+      [orderId, reason, restorations.length, totalQty]
     );
     
     if (!useTransaction) {
