@@ -658,8 +658,8 @@ router.post("/", verifyToken, async (req, res) => {
       paymentMethod = 'cod',
       deliveryAddress: reqDeliveryAddress,
       address,
-      latitude,
-      longitude,
+      latitude = null,
+      longitude = null,
       creditsUsed: reqCreditsUsed,
       pointsToRedeem,
       scheduled_time: reqScheduledTime
@@ -670,7 +670,7 @@ router.post("/", verifyToken, async (req, res) => {
     const deliveryType = reqDeliveryType || order_type || 'home_delivery';
     const totalAmount = reqTotalAmount || grandTotal || total;
     const shopkeeperId = reqShopkeeperId || shopId;
-    const deliveryAddress = reqDeliveryAddress || address;
+    const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
 
@@ -811,8 +811,8 @@ router.post("/", verifyToken, async (req, res) => {
     // Insert order items
     for (const item of items) {
       const productId = item.productId || item.product_id;
-      const quantity = item.quantity || item.qty;
-      const price = item.price;
+      const quantity = item.quantity || item.qty || 1;
+      const price = item.price || 0;
 
       if (!productId) {
         console.warn("Skipping item with missing productId", item);
@@ -875,8 +875,8 @@ router.post("/", verifyToken, async (req, res) => {
       const itemsWithDetails = [];
       for (const item of items) {
         const productId = item.productId || item.product_id;
-        const quantity = item.quantity || item.qty;
-        const price = item.price;
+        const quantity = item.quantity || item.qty || 1;
+        const price = item.price || 0;
 
         if (!productId) continue;
 
@@ -891,7 +891,7 @@ router.post("/", verifyToken, async (req, res) => {
           productImage: product.image || null,
           productCategory: product.category || null,
           quantity: quantity,
-          price: parseFloat(price)
+          price: parseFloat(price) || 0
         });
       }
 
