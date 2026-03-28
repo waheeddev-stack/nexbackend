@@ -1019,9 +1019,12 @@ router.post("/", verifyToken, async (req, res) => {
 
     // CRITICAL FIX #3: Validate stock availability with row-level locking
     // Lock rows for update to prevent concurrent modifications
+    const productIds = items.map(item => item.productId || item.product_id);
+    const placeholders = productIds.map(() => '?').join(',');
+    
     const [products_check] = await connection.execute(
-      `SELECT id, stock FROM products WHERE id IN (?) AND shop_id = ? FOR UPDATE`,
-      [items.map(item => item.productId || item.product_id), shopkeeperId]
+      `SELECT id, stock FROM products WHERE id IN (${placeholders}) AND shop_id = ? FOR UPDATE`,
+      [...productIds, shopkeeperId]
     );
     
     // Validate stock for each item
