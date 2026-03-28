@@ -475,6 +475,22 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.error('❌ Failed to initialize stock restoration table:', error);
   }
   
+  // FIX: Ensure all products have a baselineQty to make them "live"
+  // This addresses the "stock not visible" issue for existing products
+  try {
+    const [fixResult] = await db.query(`
+      UPDATE products 
+      SET baselineQty = stock 
+      WHERE (baselineQty IS NULL OR baselineQty = 0) 
+      AND stock > 0
+    `);
+    if (fixResult.affectedRows > 0) {
+      console.log(`✅ Data Fix: Updated ${fixResult.affectedRows} products to have baselineQty = stock`);
+    }
+  } catch (fixError) {
+    console.warn('⚠️ Could not run baselineQty data fix:', fixError.message);
+  }
+  
   // Initialize inventory integration
   try {
     console.log('🔧 Initializing inventory management integration...');
