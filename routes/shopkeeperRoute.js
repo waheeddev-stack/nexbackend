@@ -715,6 +715,146 @@ shopkeeperRouter.get("/shop-status", verifyToken, async (req, res) => {
 });
 
 /**
+ * GET all orders for the logged-in shopkeeper
+ * Supports filtering by status and delivery type
+ */
+shopkeeperRouter.get("/orders", verifyToken, verifyShopkeeperStatus, async (req, res) => {
+  try {
+    const shopkeeper_id = req.user.id;
+    const { status, deliveryType } = req.query;
+
+    let whereClause = "WHERE o.shopkeeper_id = ?";
+    const params = [shopkeeper_id];
+
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      if (status === 'pending') {
+        whereClause += " AND o.status = 'Pending'";
+      } else if (status === 'completed') {
+        whereClause += " AND o.status = 'Completed'";
+      } else if (status === 'cancelled') {
+        whereClause += " AND o.status = 'Cancelled'";
+      }
+    }
+
+    // Filter by delivery type if provided
+    if (deliveryType) {
+      if (deliveryType === 'click_and_collect' || deliveryType === 'store_pickup') {
+        whereClause += " AND o.has_timer = 1";
+      } else if (deliveryType === 'home_delivery') {
+        whereClause += " AND (o.has_timer = 0 OR o.has_timer IS NULL)";
+      }
+    }
+
+    // Fetch orders with delivery type classification
+    const [orderRows] = await pool.query(
+      `SELECT
+        o.id AS order_id,
+        o.user_id,
+        o.shopkeeper_id,
+        o.status,
+        o.total_amount,
+        o.credits_used,
+        o.credits_earned,
+        o.created_at,
+        o.latitude,
+        o.longitude,
+        o.delivery_address,
+        o.order_type,
+        o.scheduled_time,
+        o.has_timer,
+        o.pickup_code,
+        o.timer_started_at,
+        o.timer_expires_at,
+        o.payment_method,
+        CASE
+          WHEN o.has_timer = 1 THEN 'click_and_collect'
+          ELSE 'home_delivery'
+        END as delivery_type,
+        u.name AS customer_name,
+        u.phone AS customer_phone,
+        u.email AS customer_email
+       FROM orders o
+       LEFT JOIN users u ON o.user_id = u.id
+       ${whereClause}
+       ORDER BY o.created_at DESC`,
+      params
+    );
+
+    // Fetch order items for all orders
+    if (orderRows.length > 0) {
+      const orderIds = orderRows.map(o => o.order_id);
+      const [itemRows] = await pool.query(
+        `SELECT
+          oi.order_id,
+          oi.product_id,
+          COALESCE(p.name, 'Product Unavailable') AS product_name,
+          p.image AS product_image,
+          oi.quantity,
+          oi.price
+         FROM order_items oi
+         LEFT JOIN products p ON oi.product_id = p.id
+         WHERE oi.order_id IN (?)`,
+        [orderIds]
+      );
+
+      // Group items by order_id
+      const itemsByOrder = {};
+      for (const item of itemRows) {
+        if (!itemsByOrder[item.order_id]) {
+          itemsByOrder[item.order_id] = [];
+        }
+        itemsByOrder[item.order_id].push({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          product_image: item.product_image,
+          quantity: item.quantity,
+          price: item.price
+        });
+      }
+
+      // Compute delivery slots for home delivery orders
+      const computeDeliverySlot = (createdAt) => {
+        const created = new Date(createdAt);
+        const start = new Date(created);
+        const minutes = start.getMinutes();
+        const roundedMinutes = minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
+        start.setMinutes(roundedMinutes, 0, 0);
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
+        const limit = new Date(created.getTime() + 12 * 60 * 60 * 1000);
+        if (start > limit) {
+          start.setTime(limit.getTime());
+          end.setTime(limit.getTime() + 30 * 60 * 1000);
+        }
+        const label = `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        return { startISO: start.toISOString(), endISO: end.toISOString(), label };
+      };
+
+      // Attach items and computed fields to orders
+      const orders = orderRows.map(order => ({
+        ...order,
+        items: itemsByOrder[order.order_id] || [],
+        deliverySlot: order.delivery_type === 'home_delivery' ? computeDeliverySlot(order.created_at) : null,
+        timerInfo: order.delivery_type === 'click_and_collect' ? {
+          hasTimer: order.has_timer === 1,
+          pickupCode: order.pickup_code,
+          timerStartedAt: order.timer_started_at,
+          timerExpiresAt: order.timer_expires_at,
+          isExpired: order.timer_expires_at ? new Date() > new Date(order.timer_expires_at) : false
+        } : null
+      }));
+
+      return res.json({ success: true, orders });
+    }
+
+    res.json({ success: true, orders: [] });
+  } catch (err) {
+    console.error("Get shopkeeper orders error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/**
  * GET all products of the logged-in shopkeeper
  */
 shopkeeperRouter.get("/products", verifyToken, verifyShopkeeperStatus, checkSubscriptionStatus, async (req, res) => {
@@ -930,15 +1070,17 @@ shopkeeperRouter.get("/global-products", verifyToken, verifyShopkeeperStatus, as
       ORDER BY created_at DESC
     `, [JSON.stringify(shopScale)]);
     
-    // Parse shop_scales for response
+    // Parse shop_scales for response - handle both JSON arrays and plain strings
     const products = rows.map(product => {
       let shopScales = ['all'];
       if (product.shop_scales) {
         try {
-          shopScales = JSON.parse(product.shop_scales);
+          const parsed = JSON.parse(product.shop_scales);
+          // Handle both array and plain string formats
+          shopScales = Array.isArray(parsed) ? parsed : [parsed];
         } catch (e) {
-          console.warn('Failed to parse shop_scales for product', product.id, ':', e.message);
-          shopScales = ['all'];
+          // Fallback: treat plain string as single-item array
+          shopScales = [product.shop_scales];
         }
       }
       return {

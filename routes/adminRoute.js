@@ -572,15 +572,17 @@ adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
       "SELECT id, name, price, category, description, image, brand, barcode, shop_scales, created_at FROM global_products ORDER BY created_at DESC"
     );
 
-    // Parse shop_scales JSON for each product
+    // Parse shop_scales JSON for each product - handle both JSON arrays and plain strings
     const products = rows.map(product => {
       let shopScales = ['all'];
       if (product.shop_scales) {
         try {
-          shopScales = JSON.parse(product.shop_scales);
+          const parsed = JSON.parse(product.shop_scales);
+          // Handle both array and plain string formats
+          shopScales = Array.isArray(parsed) ? parsed : [parsed];
         } catch (e) {
-          console.warn('Failed to parse shop_scales for product', product.id, ':', e.message);
-          shopScales = ['all'];
+          // Fallback: treat plain string as single-item array
+          shopScales = [product.shop_scales];
         }
       }
       return {
