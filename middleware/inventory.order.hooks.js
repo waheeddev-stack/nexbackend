@@ -116,7 +116,7 @@ export async function validateStockAvailability(orderItems, connection = null) {
     
     for (const item of orderItems) {
       const [products] = await conn.execute(
-        'SELECT id, name, stock FROM products WHERE id = ?',
+        'SELECT id, name, stock, baselineQty FROM products WHERE id = ?',
         [item.product_id || item.productId]
       );
       
@@ -124,20 +124,33 @@ export async function validateStockAvailability(orderItems, connection = null) {
         unavailableItems.push({
           productId: item.product_id || item.productId,
           reason: 'Product not found',
-          requested: item.quantity,
-          available: 0
+          requested: item.quantity
+          // removed available field to hide exact stock count from customer
         });
         continue;
       }
       
       const product = products[0];
+
+      // Check if product is live (baselineQty > 0)
+      if (product.baselineQty <= 0) {
+        unavailableItems.push({
+          productId: product.id,
+          productName: product.name,
+          reason: 'Product no longer available',
+          requested: item.quantity
+          // removed available field to hide exact stock count from customer
+        });
+        continue;
+      }
+
       if (product.stock < item.quantity) {
         unavailableItems.push({
           productId: product.id,
           productName: product.name,
           reason: 'Insufficient stock',
-          requested: item.quantity,
-          available: product.stock
+          requested: item.quantity
+          // removed available field to hide exact stock count from customer
         });
       }
     }

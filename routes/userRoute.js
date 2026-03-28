@@ -117,10 +117,11 @@ userrouter.get("/nearby-shops", async (req, res) => {
           continue;
         }
 
-        // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0)
+        // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0 and baselineQty > 0)
         // A nearby shop with no stock is not useful to the user.
+        // Products without baselineQty are not considered "live" in the new system.
         const [[productCount]] = await pool.query(
-          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0",
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND baselineQty > 0",
           [shop.id]
         );
 
@@ -226,13 +227,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each online shop directly from products table (products.shop_id)
-    // Only include products with stock > 0
-    // baselineQty check removed to ensure all available products are shown, even if not yet configured for auto-restock
+    // Only include products with stock > 0 and a set baselineQty
+    // Products without baselineQty are not considered "live" in the new system
     const shopIds = onlineShops.map(s => s.id);
     const [products] = await pool.query(
-      `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+      `SELECT id AS product_id, shop_id, name, description, image, category, price, created_at
        FROM products
-       WHERE shop_id IN (?) AND stock > 0
+       WHERE shop_id IN (?) AND stock > 0 AND baselineQty > 0
        ORDER BY created_at DESC`,
       [shopIds]
     );
@@ -240,7 +241,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     console.log(`📦 Found ${products.length} products across ${shopIds.length} shops`);
 
     // Group products under their shop, ensure address is never null/undefined
-    // Add unit field based on stock quantity
+    // Hide exact stock count from customer (only visible to shopkeeper)
     const shopsWithProducts = onlineShops.map(shop => ({
       ...shop,
       // Provide fallback address if not set
@@ -249,7 +250,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         .filter(p => p.shop_id === shop.id)
         .map(p => ({
           ...p,
-          unit: p.stock > 1 ? `${p.stock} units available` : `${p.stock} unit available`
+          unit: "In stock"
         })),
     }));
 
@@ -673,9 +674,9 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: "Shop not found or not verified" });
     }
 
-    // Verify all products belong to this shop AND have sufficient stock
+    // Verify all products belong to this shop AND have sufficient stock AND are live
     const productIds = products.map(p => p.product_id);
-    const [prodRows] = await pool.query("SELECT id, shop_id, name, stock FROM products WHERE id IN (?)", [productIds]);
+    const [prodRows] = await pool.query("SELECT id, shop_id, name, stock, baselineQty FROM products WHERE id IN (?)", [productIds]);
     
     // Create a map for quick lookup
     const productMap = new Map(prodRows.map(p => [p.id, p]));
@@ -697,12 +698,20 @@ userrouter.post("/orders", verifyToken, async (req, res) => {
           message: "All products must belong to the same shop. Please order from one shop at a time." 
         });
       }
+
+      // Check if product is live (baselineQty > 0)
+      if (product.baselineQty <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `"${product.name}" is no longer available. Please remove it from your cart.` 
+        });
+      }
       
-      // Check stock availability
+      // Check stock availability (generic error to hide exact stock count)
       if (product.stock < orderItem.quantity) {
         return res.status(400).json({ 
           success: false, 
-          message: `Insufficient stock for "${product.name}". Available: ${product.stock}, Requested: ${orderItem.quantity}` 
+          message: `Insufficient stock for "${product.name}". Please reduce quantity or remove it from your cart.` 
         });
       }
       
