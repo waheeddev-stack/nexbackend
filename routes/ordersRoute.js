@@ -25,6 +25,13 @@ import {
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
+import {
+  getCachedShopkeeper,
+  getCachedProducts,
+  getCachedUserPoints,
+  invalidateProductCache,
+  invalidateUserPointsCache,
+} from "../utils/orderPrefetchCache.js";
 
 const router = express.Router();
 
@@ -897,26 +904,40 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 // ============================================================================
 // POST /api/orders
 router.post("/", verifyToken, async (req, res) => {
+  const startTime = Date.now();
   const connection = await pool.getConnection();
 
   try {
-    // CRITICAL FIX #5: Check shopkeeper subscription status BEFORE creating order
-    const [shopkeeperCheck] = await connection.execute(
-      `SELECT id, subscription_status, is_deleted FROM shopkeepers WHERE id = ? LIMIT 1`,
-      [req.body.shopkeeperId || req.body.shopId]
-    );
+    const shopkeeperId = req.body.shopkeeperId || req.body.shopId;
     
-    if (!shopkeeperCheck || shopkeeperCheck.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Shopkeeper not found',
-        code: 'SHOP_NOT_FOUND'
-      });
+    // OPTIMIZATION: Try to get shopkeeper data from cache first
+    let shopkeeper = getCachedShopkeeper(shopkeeperId);
+    let usedCache = false;
+    
+    if (shopkeeper) {
+      console.log(`⚡ Using cached shopkeeper data for ${shopkeeperId}`);
+      usedCache = true;
+    } else {
+      // Fallback to database query if not cached
+      console.log(`🔍 Cache miss - fetching shopkeeper ${shopkeeperId} from DB`);
+      const [shopkeeperCheck] = await connection.execute(
+        `SELECT id, subscription_status, is_deleted FROM shopkeepers WHERE id = ? LIMIT 1`,
+        [shopkeeperId]
+      );
+      
+      if (!shopkeeperCheck || shopkeeperCheck.length === 0) {
+        connection.release();
+        return res.status(404).json({
+          success: false,
+          message: 'Shopkeeper not found',
+          code: 'SHOP_NOT_FOUND'
+        });
+      }
+      
+      shopkeeper = shopkeeperCheck[0];
     }
     
-    const shopkeeper = shopkeeperCheck[0];
-    
+    // Validate shopkeeper status
     if (shopkeeper.is_deleted) {
       connection.release();
       return res.status(400).json({
