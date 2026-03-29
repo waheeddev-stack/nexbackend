@@ -261,9 +261,9 @@ router.get("/", verifyToken, async (req, res) => {
       }
     }
 
-    // Add delivery type filter
+    // Add delivery type filter (supports both store_pickup and click_and_collect)
     if (deliveryType) {
-      if (deliveryType === "store_pickup") {
+      if (deliveryType === "store_pickup" || deliveryType === "click_and_collect") {
         whereConditions.push("o.has_timer = 1");
       } else if (deliveryType === "home_delivery") {
         whereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
@@ -288,7 +288,7 @@ router.get("/", verifyToken, async (req, res) => {
     }
 
     if (deliveryType) {
-      if (deliveryType === "store_pickup") {
+      if (deliveryType === "store_pickup" || deliveryType === "click_and_collect") {
         countWhereConditions.push("o.has_timer = 1");
       } else if (deliveryType === "home_delivery") {
         countWhereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
@@ -1032,8 +1032,8 @@ router.post("/", verifyToken, async (req, res) => {
       }
     }
 
-    // Determine if this is a store pickup order
-    const hasTimer = deliveryType === "store_pickup" ? 1 : 0;
+    // Determine if this is a store pickup order (supports both store_pickup and click_and_collect)
+    const hasTimer = (deliveryType === "store_pickup" || deliveryType === "click_and_collect") ? 1 : 0;
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Handle wellness points redemption if requested
@@ -1136,10 +1136,10 @@ router.post("/", verifyToken, async (req, res) => {
         pickupCode,
         timerStartedAt,
         timerExpiresAt,
-        deliveryType === "store_pickup" || deliveryType === "pickup"
+        deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
           ? "pickup"
           : "delivery",
-        deliveryType === "store_pickup" || deliveryType === "pickup"
+        deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
           ? "pickup"
           : "delivery",
         scheduledTime,
@@ -1285,19 +1285,19 @@ router.post("/", verifyToken, async (req, res) => {
         deliveryType,
         delivery_type: deliveryType, // Add for compatibility
         orderType:
-          deliveryType === "store_pickup" || deliveryType === "pickup"
+          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
             ? "pickup"
             : "delivery",
         order_type:
-          deliveryType === "store_pickup" || deliveryType === "pickup"
+          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
             ? "pickup"
             : "delivery",
         deliveryMode:
-          deliveryType === "store_pickup" || deliveryType === "pickup"
+          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
             ? "pickup"
             : "delivery",
         delivery_mode:
-          deliveryType === "store_pickup" || deliveryType === "pickup"
+          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
             ? "pickup"
             : "delivery",
         status: "pending",

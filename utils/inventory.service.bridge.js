@@ -13,7 +13,7 @@ import pool from "../config/db.js";
  * Handle auto-restock logic
  * Schedules restock when product stock reaches 0
  */
-const DAY_MS = 10000; // 10 seconds for testing (original: 24 * 60 * 60 * 1000)
+const DAY_MS = 24 * 60 * 60 * 1000; // 24 hours (86,400,000 ms)
 
 export async function handleAutoRestock(productId, currentStock) {
   if (currentStock === 0) {

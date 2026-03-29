@@ -120,12 +120,16 @@ CREATE TABLE IF NOT EXISTS `products` (
   `stock` INT(11) DEFAULT NULL,
   `image` VARCHAR(255) DEFAULT NULL,
   `barcode` VARCHAR(255) UNIQUE DEFAULT NULL,
+  `baselineQty` INT DEFAULT 0 COMMENT 'Baseline quantity for auto-restock (set by shopkeeper)',
+  `restockAt` DATETIME DEFAULT NULL COMMENT 'Scheduled time for next restock',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `fk_shop_id` (`shop_id`),
   KEY `fk_global_product` (`global_product_id`),
   INDEX `idx_barcode` (`barcode`),
+  INDEX `idx_restock_at` (`restockAt`),
+  INDEX `idx_baseline_qty` (`baselineQty`),
   FOREIGN KEY (`shop_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`global_product_id`) REFERENCES `global_products`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=600001;
