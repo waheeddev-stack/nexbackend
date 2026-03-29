@@ -6,8 +6,7 @@ import { Server } from "socket.io";
 import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
-// OPTIMIZED: Use fast order route for 20x performance improvement
-import ordersRouter from "./routes/ordersRoute.fast.js";
+import ordersRouter from "./routes/ordersRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
 import authRouter from "./routes/authRoute.js";
 import googleAuthRouter from "./routes/googleAuthRoute.js";
