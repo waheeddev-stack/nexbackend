@@ -2372,10 +2372,13 @@ shopkeeperRouter.post(
         });
       }
 
-      // Verify pickup code
-      if (order.pickup_code !== pickup_code) {
+      // Verify pickup code (ensure both are strings for comparison)
+      const expectedCode = String(order.pickup_code || '').trim();
+      const providedCode = String(pickup_code || '').trim();
+      
+      if (expectedCode !== providedCode) {
         console.error(
-          `Invalid pickup code: expected=${order.pickup_code}, got=${pickup_code}`
+          `Invalid pickup code: expected="${expectedCode}" (type=${typeof order.pickup_code}), got="${providedCode}" (type=${typeof pickup_code})`
         );
         return res.status(400).json({
           success: false,
