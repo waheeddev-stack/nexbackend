@@ -148,6 +148,8 @@ export async function sendFCMPush(tokens, title, body, data = {}) {
               priority: "high",
               defaultSound: true,
               defaultVibrateTimings: true,
+              icon: "notification_icon", // Add notification icon
+              color: "#023c69", // Brand color
             },
           },
           apns: {
