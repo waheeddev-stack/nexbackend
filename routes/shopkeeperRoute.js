@@ -2323,11 +2323,13 @@ shopkeeperRouter.post(
       }
 
       if (!pickup_code) {
-        console.error("Pickup code missing");
+        console.error("Pickup code missing in request body");
         return res
           .status(400)
           .json({ success: false, message: "Pickup code is required" });
       }
+
+      console.log(`📥 Received verify-pickup request: orderId=${orderIdNum}, pickup_code="${pickup_code}" (type=${typeof pickup_code}, length=${pickup_code?.length})`);
 
       // Get order info (without timer table join to avoid errors if table doesn't exist)
       let orderInfo;
@@ -2360,8 +2362,20 @@ shopkeeperRouter.post(
 
       const order = orderInfo[0];
       console.log(
-        `Order found: status=${order.status}, pickup_code=${order.pickup_code}`
+        `Order found: status=${order.status}, pickup_code="${order.pickup_code}" (type=${typeof order.pickup_code}, length=${order.pickup_code?.length})`
       );
+      console.log(
+        `Received pickup_code from request: "${pickup_code}" (type=${typeof pickup_code}, length=${pickup_code?.length})`
+      );
+
+      // Check if order has a pickup code
+      if (!order.pickup_code) {
+        console.error(`Order ${orderIdNum} has no pickup code in database`);
+        return res.status(400).json({
+          success: false,
+          message: "This order does not have a pickup code. It may be a delivery order.",
+        });
+      }
 
       // Check if order is already completed
       if (order.status === "Completed") {

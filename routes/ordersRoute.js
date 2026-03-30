@@ -1054,9 +1054,9 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Determine if this is a store pickup order (supports both store_pickup and click_and_collect)
     const hasTimer = (deliveryType === "store_pickup" || deliveryType === "click_and_collect") ? 1 : 0;
-    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const pickupCode = hasTimer ? Math.floor(100000 + Math.random() * 900000).toString() : null;
     
-    console.log(`📋 Order creation: hasTimer=${hasTimer}, pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
+    console.log(`📋 Order creation: deliveryType="${deliveryType}", hasTimer=${hasTimer}, pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
 
     // OPTIMIZATION #2: Use cached user data for points (saves ~30-50ms)
     let pointsDiscount = 0;
@@ -1265,6 +1265,7 @@ router.post("/", verifyToken, async (req, res) => {
         orderId,
         totalAmount: finalTotal,
         pickupCode,
+        pickup_code: pickupCode, // Add snake_case for compatibility
         creditsEarned,
         processingTime: responseTime,
       },
