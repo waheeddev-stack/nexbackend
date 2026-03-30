@@ -1566,19 +1566,19 @@ shopkeeperRouter.get(
       // Get products available for this shop scale
       const [rows] = await pool.execute(
         `
-      SELECT 
-        id, 
-        name, 
+      SELECT
+        id,
+        name,
         price,
-        category, 
-        description, 
-        image, 
+        category,
+        description,
+        image,
         brand,
         barcode,
         shop_scales,
-        created_at 
-      FROM global_products 
-      WHERE JSON_CONTAINS(shop_scales, '"all"') 
+        created_at
+      FROM global_products
+      WHERE JSON_CONTAINS(shop_scales, '"all"')
          OR JSON_CONTAINS(shop_scales, ?)
       ORDER BY created_at DESC
     `,
@@ -1809,7 +1809,7 @@ shopkeeperRouter.get(
 
       // Get shopkeeper subscription info
       const [shopkeeper] = await pool.execute(
-        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due 
+        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due
        FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
       );
@@ -1817,8 +1817,8 @@ shopkeeperRouter.get(
       // Get total payments made by this shopkeeper
       const [payments] = await pool
         .query(
-          `SELECT COALESCE(SUM(amount), 0) as total_paid 
-       FROM billing_payments 
+          `SELECT COALESCE(SUM(amount), 0) as total_paid
+       FROM billing_payments
        WHERE shopkeeper_id = ? AND status = 'approved'`,
           [shopkeeper_id]
         )
@@ -1827,8 +1827,8 @@ shopkeeperRouter.get(
       // Get pending payments
       const [pendingPayments] = await pool
         .query(
-          `SELECT COALESCE(SUM(amount), 0) as pending_amount 
-       FROM billing_payments 
+          `SELECT COALESCE(SUM(amount), 0) as pending_amount
+       FROM billing_payments
        WHERE shopkeeper_id = ? AND status = 'pending'`,
           [shopkeeper_id]
         )
@@ -1836,11 +1836,11 @@ shopkeeperRouter.get(
 
       // Get order stats
       const [orderStats] = await pool.execute(
-        `SELECT 
+        `SELECT
         COUNT(*) as total_orders,
         COUNT(CASE WHEN status = 'Delivered' THEN 1 END) as delivered_orders,
         COALESCE(SUM(CASE WHEN status = 'Delivered' THEN total_amount END), 0) as total_sales
-       FROM orders 
+       FROM orders
        WHERE shopkeeper_id = ?`,
         [shopkeeper_id]
       );
@@ -1880,7 +1880,7 @@ shopkeeperRouter.get(
       // Get payment history from billing_payments table
       const [payments] = await pool
         .query(
-          `SELECT 
+          `SELECT
         id,
         amount,
         payment_method,
@@ -1888,7 +1888,7 @@ shopkeeperRouter.get(
         status,
         notes,
         payment_date as created_at
-       FROM billing_payments 
+       FROM billing_payments
        WHERE shopkeeper_id = ?
        ORDER BY payment_date DESC
        LIMIT 50`,
@@ -1935,8 +1935,8 @@ shopkeeperRouter.get(
       const [monthPayments] = await pool
         .query(
           `SELECT COALESCE(SUM(amount), 0) as paid_this_month
-       FROM billing_payments 
-       WHERE shopkeeper_id = ? 
+       FROM billing_payments
+       WHERE shopkeeper_id = ?
        AND status = 'approved'
        AND MONTH(payment_date) = MONTH(CURRENT_DATE())
        AND YEAR(payment_date) = YEAR(CURRENT_DATE())`,
@@ -1994,8 +1994,8 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       const [globalProducts] = await pool.execute(
         `
         SELECT id, name, description, category, price, image
-        FROM global_products 
-        WHERE JSON_CONTAINS(shop_scales, '"all"') 
+        FROM global_products
+        WHERE JSON_CONTAINS(shop_scales, '"all"')
            OR JSON_CONTAINS(shop_scales, ?)
       `,
         [JSON.stringify(shop_scale)]
@@ -2118,7 +2118,7 @@ shopkeeperRouter.post("/submit-payment", verifyToken, async (req, res) => {
 
     // Insert payment request
     const [result] = await pool.execute(
-      `INSERT INTO billing_payments (shopkeeper_id, amount, payment_method, transaction_id, status) 
+      `INSERT INTO billing_payments (shopkeeper_id, amount, payment_method, transaction_id, status)
        VALUES (?, ?, ?, ?, 'pending')`,
       [shopkeeper_id, amount, payment_method || "upi", transaction_id || null]
     );
@@ -2174,9 +2174,9 @@ shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
 const checkTimerTablesExist = async () => {
   try {
     const [tables] = await pool.execute(`
-      SELECT TABLE_NAME 
-      FROM information_schema.TABLES 
-      WHERE TABLE_SCHEMA = DATABASE() 
+      SELECT TABLE_NAME
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME IN ('order_timers')
     `);
     return tables.length > 0;
@@ -2267,7 +2267,7 @@ shopkeeperRouter.post(
       // Update orders table
       await pool.execute(
         `
-      UPDATE orders 
+      UPDATE orders
       SET has_timer = TRUE, pickup_code = ?, timer_started_at = ?, timer_expires_at = ?
       WHERE id = ?
     `,
@@ -2389,7 +2389,7 @@ shopkeeperRouter.post(
       // Verify pickup code (ensure both are strings for comparison)
       const expectedCode = String(order.pickup_code || '').trim();
       const providedCode = String(pickup_code || '').trim();
-      
+     
       if (expectedCode !== providedCode) {
         console.error(
           `Invalid pickup code: expected="${expectedCode}" (type=${typeof order.pickup_code}), got="${providedCode}" (type=${typeof pickup_code})`
@@ -2414,10 +2414,12 @@ shopkeeperRouter.post(
       try {
         const [updateResult] = await pool.execute(
           `
-        UPDATE orders 
-        SET status = 'Completed', has_timer = FALSE
-        WHERE id = ? AND status NOT IN ('Completed', 'Cancelled')
-      `,
+          UPDATE orders
+          -- Do NOT clear has_timer here: preserving has_timer/delivery_type keeps
+          -- pickup orders correctly classified in consuming clients (shopkeeper app)
+          SET status = 'Completed'
+          WHERE id = ? AND status NOT IN ('Completed', 'Cancelled')
+        `,
           [orderIdNum]
         );
 
@@ -2447,7 +2449,7 @@ shopkeeperRouter.post(
         // First, try to update existing record
         const [timerUpdateResult] = await pool.execute(
           `
-        UPDATE order_timers 
+        UPDATE order_timers
         SET is_active = FALSE, stopped_at = ?, is_expired = ?
         WHERE order_id = ?
       `,
@@ -2711,7 +2713,7 @@ shopkeeperRouter.get(
         if (timeLeft === 0 && timer.is_active) {
           await pool.execute(
             `
-          UPDATE order_timers 
+          UPDATE order_timers
           SET is_active = FALSE, is_expired = TRUE
           WHERE order_id = ?
         `,
@@ -2882,7 +2884,7 @@ shopkeeperRouter.post(
       // Find and expire active timers that have passed their expiry time
       const [expiredTimers] = await pool.execute(
         `
-      SELECT ot.order_id 
+      SELECT ot.order_id
       FROM order_timers ot
       WHERE ot.is_active = TRUE AND ot.timer_expires_at < ?
     `,
@@ -2896,7 +2898,7 @@ shopkeeperRouter.post(
         // But order remains visible and can still be completed via code/QR or cancelled
         await pool.execute(
           `
-        UPDATE order_timers 
+        UPDATE order_timers
         SET is_active = FALSE, is_expired = TRUE
         WHERE order_id IN (${orderIds.map(() => "?").join(",")})
       `,
@@ -2907,8 +2909,8 @@ shopkeeperRouter.post(
         if (req.io) {
           const placeholders = orderIds.map(() => "?").join(",");
           const [orders] = await pool.execute(
-            `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at 
-           FROM orders 
+            `SELECT id, user_id, shopkeeper_id, pickup_code, timer_started_at, timer_expires_at
+           FROM orders
            WHERE id IN (${placeholders})`,
             orderIds
           );
