@@ -565,6 +565,40 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         req.io.to(customerRoom).emit("orderStatusUpdate", payload);
       }
 
+      // Send push notification to the other party (not the canceller)
+      try {
+        const targetId = userRole === "user" ? order.shopkeeper_id : order.user_id;
+        const targetTable = userRole === "user" ? "shopkeepers" : "users";
+        const [[target]] = await pool.execute(
+          `SELECT expo_push_token FROM ${targetTable} WHERE id = ?`,
+          [targetId]
+        );
+
+        if (target?.expo_push_token) {
+          const cancelledBy = userRole === "user" ? "customer" : "shopkeeper";
+          const title = `Order #${orderIdNum} Cancelled`;
+          const body = `Order was cancelled by ${cancelledBy}${cancellation_reason ? `: ${cancellation_reason}` : ''}`;
+          const pushPayload = { 
+            orderId: String(orderIdNum), 
+            status: "Cancelled",
+            cancellation_reason,
+            cancelled_by: cancelledBy
+          };
+
+          try {
+            if (isFCMToken(target.expo_push_token)) {
+              await sendFCMPush(target.expo_push_token, title, body, pushPayload);
+            } else {
+              await sendExpoPush(target.expo_push_token, title, body, pushPayload);
+            }
+          } catch (pushErr) {
+            console.error(`Failed to send cancellation push to ${targetTable}:`, pushErr);
+          }
+        }
+      } catch (pushErr) {
+        console.error("Error sending cancellation push:", pushErr);
+      }
+
       res.json({
         success: true,
         message: "Order cancelled and stock restored successfully",
