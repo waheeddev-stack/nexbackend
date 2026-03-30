@@ -1054,7 +1054,8 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Determine if this is a store pickup order (supports both store_pickup and click_and_collect)
     const hasTimer = (deliveryType === "store_pickup" || deliveryType === "click_and_collect") ? 1 : 0;
-    const pickupCode = hasTimer ? Math.floor(100000 + Math.random() * 900000).toString() : null;
+    // Generate pickup/verification code for ALL orders (both pickup and delivery)
+    const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     console.log(`📋 Order creation: deliveryType="${deliveryType}", hasTimer=${hasTimer}, pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
 
