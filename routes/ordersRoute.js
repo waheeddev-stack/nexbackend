@@ -983,7 +983,8 @@ router.post("/", verifyToken, async (req, res) => {
     const items = reqItems || products;
     const deliveryType = reqDeliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
-    const shopkeeperId = reqShopkeeperId || shopId;
+    // shopkeeperId already declared earlier, just reassign if needed
+    // const shopkeeperId = reqShopkeeperId || shopId;
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
