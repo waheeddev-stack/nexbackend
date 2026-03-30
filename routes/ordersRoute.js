@@ -27,13 +27,18 @@ import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 import {
   getCachedShopkeeper,
-  getCachedProducts,
-  getCachedUserPoints,
+  getCachedProduct,
+  getCachedUser,
   invalidateProductCache,
-  invalidateUserPointsCache,
-} from "../utils/orderPrefetchCache.js";
+  invalidateUserCache,
+  prefetchOrderData,
+  startBackgroundRefresh,
+} from "../services/orderPrefetch.service.js";
 
 const router = express.Router();
+
+// Start background refresh when module loads
+startBackgroundRefresh();
 
 // ============================================================================
 // CRITICAL FIX #9: Background Task Error Handling Helper
@@ -900,7 +905,7 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 });
 
 // ============================================================================
-// CREATE NEW ORDER
+// CREATE NEW ORDER - OPTIMIZED WITH PREFETCH CACHE
 // ============================================================================
 // POST /api/orders
 router.post("/", verifyToken, async (req, res) => {
@@ -908,20 +913,16 @@ router.post("/", verifyToken, async (req, res) => {
   const connection = await pool.getConnection();
 
   try {
+    const userId = req.user.id;
     const shopkeeperId = req.body.shopkeeperId || req.body.shopId;
-    
-    // OPTIMIZATION: Try to get shopkeeper data from cache first
+
+    // OPTIMIZATION #1: Use cached shopkeeper data (saves ~50-100ms)
     let shopkeeper = getCachedShopkeeper(shopkeeperId);
-    let usedCache = false;
     
-    if (shopkeeper) {
-      console.log(`⚡ Using cached shopkeeper data for ${shopkeeperId}`);
-      usedCache = true;
-    } else {
-      // Fallback to database query if not cached
-      console.log(`🔍 Cache miss - fetching shopkeeper ${shopkeeperId} from DB`);
+    if (!shopkeeper) {
+      // Fallback to DB if not cached
       const [shopkeeperCheck] = await connection.execute(
-        `SELECT id, subscription_status, is_deleted FROM shopkeepers WHERE id = ? LIMIT 1`,
+        `SELECT id, subscription_status, is_deleted, expo_push_token FROM shopkeepers WHERE id = ? LIMIT 1`,
         [shopkeeperId]
       );
       
@@ -933,7 +934,6 @@ router.post("/", verifyToken, async (req, res) => {
           code: 'SHOP_NOT_FOUND'
         });
       }
-      
       shopkeeper = shopkeeperCheck[0];
     }
     
@@ -958,8 +958,6 @@ router.post("/", verifyToken, async (req, res) => {
     }
 
     await connection.beginTransaction();
-
-    const userId = req.user.id;
     // Extract with aliases for compatibility with frontend naming conventions
     const {
       items: reqItems,
@@ -985,6 +983,7 @@ router.post("/", verifyToken, async (req, res) => {
     const items = reqItems || products;
     const deliveryType = reqDeliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
+    const shopkeeperId = reqShopkeeperId || shopId;
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
@@ -1056,19 +1055,25 @@ router.post("/", verifyToken, async (req, res) => {
     const hasTimer = (deliveryType === "store_pickup" || deliveryType === "click_and_collect") ? 1 : 0;
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Handle wellness points redemption if requested
+    // OPTIMIZATION #2: Use cached user data for points (saves ~30-50ms)
     let pointsDiscount = 0;
     if (creditsUsed > 0) {
       try {
-        const [[user]] = await connection.execute(
-          "SELECT store_credits FROM users WHERE id = ?",
-          [userId]
-        );
+        let user = getCachedUser(userId);
+        
         if (!user) {
-          await connection.rollback();
-          return res
-            .status(404)
-            .json({ success: false, message: "User not found" });
+          // Fallback to DB if not cached
+          const [[userDb]] = await connection.execute(
+            "SELECT store_credits, expo_push_token FROM users WHERE id = ?",
+            [userId]
+          );
+          if (!userDb) {
+            await connection.rollback();
+            return res
+              .status(404)
+              .json({ success: false, message: "User not found" });
+          }
+          user = userDb;
         }
 
         const validation = validatePointsUsage(
@@ -1089,6 +1094,9 @@ router.post("/", verifyToken, async (req, res) => {
           creditsUsed
         );
         pointsDiscount = pointsResult.discountAmount;
+        
+        // Invalidate user cache after points change
+        invalidateUserCache(userId);
       } catch (pointsError) {
         await connection.rollback();
         return res
@@ -1226,232 +1234,15 @@ router.post("/", verifyToken, async (req, res) => {
     await onOrderCreated(orderId, connection);
 
     await connection.commit();
+    
+    // Invalidate product cache after stock change
+    invalidateProductCache(shopkeeperId);
 
-    // Compute delivery slot (next 12 hours in 30-minute windows)
-    const computeNextDeliverySlot = (baseDate) => {
-      const start = new Date(baseDate);
-      const minutes = start.getMinutes();
-      const roundedMinutes =
-        minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES === 0
-          ? minutes
-          : minutes +
-            (TIME_SLOT_CONFIG.INTERVAL_MINUTES -
-              (minutes % TIME_SLOT_CONFIG.INTERVAL_MINUTES));
-      start.setMinutes(roundedMinutes, 0, 0);
-      const end = new Date(
-        start.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000
-      );
-      const limit = new Date(baseDate.getTime() + 12 * 60 * 60 * 1000);
-      if (start > limit) {
-        // If beyond 12 hours, cap at limit window
-        start.setTime(limit.getTime());
-        end.setTime(
-          limit.getTime() + TIME_SLOT_CONFIG.INTERVAL_MINUTES * 60 * 1000
-        );
-      }
-      const label = `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-      return {
-        startISO: start.toISOString(),
-        endISO: end.toISOString(),
-        label,
-      };
-    };
+    // OPTIMIZATION #3: Calculate response time and send immediate response
+    const responseTime = Date.now() - startTime;
+    console.log(`⚡ Order ${orderId} created in ${responseTime}ms`);
 
-    const deliverySlot =
-      deliveryType === "home_delivery" ? computeNextDeliverySlot(now) : null;
-
-    // Socket broadcast to shopkeeper and customer rooms
-    try {
-      // Get shopkeeper details for the payload (including coordinates and push token)
-      const [shopkeeperDetails] = await connection.execute(
-        "SELECT shop_name, name, phone, address, latitude, longitude, expo_push_token FROM shopkeepers WHERE id = ?",
-        [shopkeeperId]
-      );
-
-      const shopkeeper = shopkeeperDetails[0] || {};
-
-      // Get product details for items
-      const itemsWithDetails = [];
-      for (const item of items) {
-        const productId = item.productId || item.product_id;
-        const quantity = item.quantity || item.qty || 1;
-        const price = item.price || 0;
-
-        if (!productId) continue;
-
-        const [productDetails] = await connection.execute(
-          "SELECT name, image, category FROM products WHERE id = ?",
-          [productId]
-        );
-        const product = productDetails[0] || {};
-        itemsWithDetails.push({
-          productId: productId,
-          productName: product.name || "Unknown Product",
-          productImage: product.image || null,
-          productCategory: product.category || null,
-          quantity: quantity,
-          price: parseFloat(price) || 0,
-        });
-      }
-
-      const payload = {
-        id: orderId,
-        orderId: orderId,
-        order_id: orderId, // Add for compatibility
-        userId,
-        user_id: userId, // Add for compatibility
-        shopkeeperId,
-        shopkeeper_id: shopkeeperId, // Add for compatibility
-        deliveryType,
-        delivery_type: deliveryType, // Add for compatibility
-        orderType:
-          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
-            ? "pickup"
-            : "delivery",
-        order_type:
-          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
-            ? "pickup"
-            : "delivery",
-        deliveryMode:
-          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
-            ? "pickup"
-            : "delivery",
-        delivery_mode:
-          deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
-            ? "pickup"
-            : "delivery",
-        status: "pending",
-        originalStatus: "Pending",
-        totalAmount: parseFloat(finalTotal),
-        total_amount: parseFloat(finalTotal), // Add for compatibility
-        creditsEarned,
-        credits_earned: creditsEarned, // Add for compatibility
-        creditsUsed,
-        credits_used: creditsUsed, // Add for compatibility
-        pickupCode,
-        pickup_code: pickupCode, // Add for compatibility
-        hasTimer: hasTimer === 1,
-        has_timer: hasTimer === 1, // Add for compatibility
-        timerStartedAt: timerStartedAt ? new Date(timerStartedAt).toISOString() : null,
-        timer_started_at: timerStartedAt ? new Date(timerStartedAt).toISOString() : null, // Add for compatibility
-        timerExpiresAt: timerExpiresAt ? new Date(timerExpiresAt).toISOString() : null,
-        timer_expires_at: timerExpiresAt ? new Date(timerExpiresAt).toISOString() : null, // Add for compatibility
-        deliverySlot,
-        delivery_slot: deliverySlot, // Add for compatibility
-        deliveryAddress,
-        delivery_address: deliveryAddress, // Add for compatibility
-        latitude,
-        longitude,
-        paymentMethod,
-        payment_method: paymentMethod, // Add for compatibility
-        createdAt: now.toISOString(),
-        created_at: now.toISOString(), // Add for compatibility
-        shopName: shopkeeper.shop_name,
-        shop_name: shopkeeper.shop_name, // Add for compatibility
-        shopkeeperName: shopkeeper.name,
-        shopkeeper_name: shopkeeper.name, // Add for compatibility
-        shopkeeperPhone: shopkeeper.phone,
-        shopkeeper_phone: shopkeeper.phone, // Add for compatibility
-        shopAddress: shopkeeper.address,
-        shop_address: shopkeeper.address, // Add for compatibility
-        shopLatitude: shopkeeper.latitude,
-        shop_latitude: shopkeeper.latitude, // Add for compatibility
-        shopLongitude: shopkeeper.longitude,
-        shop_longitude: shopkeeper.longitude, // Add for compatibility
-        items: itemsWithDetails,
-        // Add timer info for click & collect
-        timerInfo:
-          hasTimer === 1
-            ? {
-                hasTimer: true,
-                pickupCode,
-                timerStartedAt: timerStartedAt
-                  ? new Date(timerStartedAt).toISOString()
-                  : null,
-                timerExpiresAt: timerExpiresAt
-                  ? new Date(timerExpiresAt).toISOString()
-                  : null,
-                isExpired: false,
-              }
-            : null,
-      };
-
-      console.log(
-        `📡 Socket: Broadcasting new order ${orderId} to shopkeeper ${shopkeeperId} and customer ${userId}`
-      );
-
-      // Emit events used by clients
-      if (req.io) {
-        const shopRoom = `shop_${Number(shopkeeperId)}`;
-        const customerRoom = `customer_${Number(userId)}`;
-
-        req.io.to(shopRoom).emit("newOrder", payload);
-        req.io.to(shopRoom).emit("orderCreated", payload);
-        req.io.to(customerRoom).emit("newOrder", payload);
-        req.io.to(customerRoom).emit("orderCreated", payload);
-        req.io.to("admin").emit("newOrder", payload);
-      }
-
-      // Send push notification to shopkeeper
-      if (shopkeeper.expo_push_token) {
-        const token = shopkeeper.expo_push_token;
-        const title = "📦 New Order Received!";
-        const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
-        const payload = {
-          orderId: String(orderId),
-          shopId: String(shopkeeperId),
-        };
-
-        try {
-          if (isFCMToken(token)) {
-            await sendFCMPush(token, title, body, payload);
-          } else {
-            await sendExpoPush(token, title, body, payload);
-          }
-        } catch (pushErr) {
-          console.error(
-            `Failed to send push to shopkeeper ${shopkeeperId}:`,
-            pushErr
-          );
-        }
-      }
-
-      // Send push notification to customer (Order Confirmed)
-      const [customerRows] = await connection.execute(
-        "SELECT expo_push_token FROM users WHERE id = ?",
-        [userId]
-      );
-      const customer = customerRows[0];
-      if (customer && customer.expo_push_token) {
-        const token = customer.expo_push_token;
-        const title = "Order Placed Successfully!";
-        const body = `Your order #${orderId} has been placed. You can track it in the app.`;
-        const payload = { orderId: String(orderId), status: "Pending" };
-
-        try {
-          if (isFCMToken(token)) {
-            await sendFCMPush(token, title, body, payload);
-          } else {
-            await sendExpoPush(token, title, body, payload);
-          }
-        } catch (pushErr) {
-          console.error(`Failed to send push to customer ${userId}:`, pushErr);
-        }
-      }
-    } catch (notifyErr) {
-      console.error("Error notifying shopkeeper:", notifyErr);
-    }
-
-    // ============================================================================
-    // CRITICAL FIX #9: Execute background tasks without blocking response
-    // ============================================================================
-    // Start background tasks but don't wait for them
-    executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection)
-      .catch(err => {
-        console.error(`Failed to start background tasks for order ${orderId}:`, err);
-        // Don't throw - order is already created successfully
-      });
-
+    // Send immediate response to client
     res.json({
       success: true,
       message: "Order placed successfully",
@@ -1460,8 +1251,121 @@ router.post("/", verifyToken, async (req, res) => {
         orderId,
         totalAmount: finalTotal,
         pickupCode,
+        creditsEarned,
+        processingTime: responseTime,
       },
     });
+
+    // OPTIMIZATION #4: Execute ALL non-critical operations in background
+    // This includes: notifications, socket broadcasts, product details fetching
+    setImmediate(async () => {
+      try {
+        // Use cached shopkeeper data or fetch if needed
+        let shopkeeperData = getCachedShopkeeper(shopkeeperId);
+        let userData = getCachedUser(userId);
+
+        // Parallel fetch if not cached
+        if (!shopkeeperData || !userData) {
+          const fetchPromises = [];
+          
+          if (!shopkeeperData) {
+            fetchPromises.push(
+              connection.execute(
+                "SELECT shop_name, name, phone, address, latitude, longitude, expo_push_token FROM shopkeepers WHERE id = ?",
+                [shopkeeperId]
+              ).then(([rows]) => rows[0])
+            );
+          } else {
+            fetchPromises.push(Promise.resolve(shopkeeperData));
+          }
+
+          if (!userData) {
+            fetchPromises.push(
+              connection.execute(
+                "SELECT expo_push_token FROM users WHERE id = ?",
+                [userId]
+              ).then(([rows]) => rows[0])
+            );
+          } else {
+            fetchPromises.push(Promise.resolve(userData));
+          }
+
+          const [shopData, userDataFetched] = await Promise.all(fetchPromises);
+          shopkeeperData = shopData;
+          userData = userDataFetched;
+        }
+
+        // Send notifications in parallel (non-blocking)
+        const notificationPromises = [];
+
+        // Shopkeeper notification
+        if (shopkeeperData?.expo_push_token) {
+          const token = shopkeeperData.expo_push_token;
+          const title = "📦 New Order Received!";
+          const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
+          const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+
+          notificationPromises.push(
+            (isFCMToken(token) 
+              ? sendFCMPush(token, title, body, payload) 
+              : sendExpoPush(token, title, body, payload)
+            ).catch(err => console.error(`Failed to send push to shopkeeper:`, err))
+          );
+        }
+
+        // Customer notification
+        if (userData?.expo_push_token) {
+          const token = userData.expo_push_token;
+          const title = "Order Placed Successfully!";
+          const body = `Your order #${orderId} has been placed. You can track it in the app.`;
+          const payload = { orderId: String(orderId), status: "Pending" };
+
+          notificationPromises.push(
+            (isFCMToken(token) 
+              ? sendFCMPush(token, title, body, payload) 
+              : sendExpoPush(token, title, body, payload)
+            ).catch(err => console.error(`Failed to send push to customer:`, err))
+          );
+        }
+
+        // Execute all notifications in parallel
+        await Promise.allSettled(notificationPromises);
+
+        // Socket broadcast (minimal payload)
+        if (req.io) {
+          const shopRoom = `shop_${Number(shopkeeperId)}`;
+          const customerRoom = `customer_${Number(userId)}`;
+
+          const socketPayload = {
+            id: orderId,
+            orderId,
+            userId,
+            shopkeeperId,
+            status: "pending",
+            totalAmount: finalTotal,
+            creditsEarned,
+            pickupCode,
+            hasTimer: hasTimer === 1,
+            timerStartedAt,
+            timerExpiresAt,
+            createdAt: now.toISOString(),
+          };
+
+          req.io.to(shopRoom).emit("newOrder", socketPayload);
+          req.io.to(customerRoom).emit("orderCreated", socketPayload);
+          req.io.to("admin").emit("newOrder", socketPayload);
+        }
+
+        // Execute background tasks (wellness points, analytics)
+        await executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection);
+
+        console.log(`✅ Background tasks completed for order ${orderId}`);
+      } catch (bgError) {
+        console.error(`❌ Background task error for order ${orderId}:`, bgError);
+        // Don't throw - order is already created
+      }
+    });
+
   } catch (error) {
     await connection.rollback();
     console.error("Create order error:", error);

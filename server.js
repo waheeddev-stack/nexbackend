@@ -7,7 +7,6 @@ import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
 import ordersRouter from "./routes/ordersRoute.js";
-import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
 import notificationRouter from "./routes/notificationRoute.js";
 import authRouter from "./routes/authRoute.js";
 import googleAuthRouter from "./routes/googleAuthRoute.js";
@@ -15,6 +14,7 @@ import inventoryRouter from "./routes/inventoryRoute.js";
 import passwordResetRouter from "./routes/passwordResetRoute.js";
 import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
 import serviceStatusRouter from "./routes/serviceStatusRoute.js";
+import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -488,7 +488,7 @@ app.use("/api/user", userrouter);
 app.use("/api/shopkeeper", shopkeeperRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/orders", ordersRouter);
-app.use("/api/prefetch", orderPrefetchRouter); // Order pre-fetch routes for optimization
+app.use("/api/prefetch", orderPrefetchRouter); // Order prefetch routes for performance
 app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
 

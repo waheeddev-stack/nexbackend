@@ -1,287 +1,146 @@
 /**
- * Order Pre-fetch API Routes
+ * Order Prefetch Routes
  * 
  * These endpoints allow the frontend to pre-fetch and cache data
- * before order placement, reducing order processing time dramatically.
- * 
- * Usage:
- * 1. Call /prefetch/shop when user views a shop
- * 2. Call /prefetch/products when user adds items to cart
- * 3. Call /prefetch/user-points when user opens cart/checkout
+ * needed for fast order placement.
  */
 
 import express from "express";
 import verifyToken from "../middleware/auth.js";
 import {
-  prefetchShopkeeperData,
-  prefetchProductData,
-  prefetchUserPoints,
-  getCacheStats,
-  clearAllCaches,
-} from "../utils/orderPrefetchCache.js";
+  prefetchUserData,
+  prefetchShopProducts,
+  prefetchOrderData,
+  getCachedShopkeeper,
+  getCachedShopProducts,
+  getCachedUser,
+} from "../services/orderPrefetch.service.js";
 
 const router = express.Router();
 
-/**
- * POST /api/prefetch/shop
- * Pre-fetch shopkeeper data
- */
-router.post("/shop", verifyToken, async (req, res) => {
+// ============================================================================
+// PREFETCH USER DATA
+// ============================================================================
+// GET /api/prefetch/user
+// Call this when user logs in or opens app
+router.get("/user", verifyToken, async (req, res) => {
   try {
-    const { shopkeeperId, shopId } = req.body;
-    const id = shopkeeperId || shopId;
+    const userId = req.user.id;
+    const result = await prefetchUserData(userId);
 
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper ID is required",
-      });
-    }
-
-    const result = await prefetchShopkeeperData(id);
-    
     if (!result.success) {
       return res.status(404).json({
         success: false,
-        message: result.error || "Failed to pre-fetch shopkeeper data",
+        message: result.error || "Failed to prefetch user data",
       });
     }
 
     res.json({
       success: true,
-      message: result.cached ? "Data retrieved from cache" : "Data pre-fetched successfully",
-      cached: result.cached,
-      data: {
-        shopkeeperId: result.data.id,
-        shopName: result.data.shop_name,
-        isActive: result.data.subscription_status === 'active' && !result.data.is_deleted,
-        subscriptionStatus: result.data.subscription_status,
-      },
+      message: "User data prefetched successfully",
+      cached: true,
     });
   } catch (error) {
-    console.error("Pre-fetch shop error:", error);
+    console.error("Prefetch user error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to pre-fetch shop data",
-      error: error.message,
+      message: "Failed to prefetch user data",
     });
   }
 });
 
-/**
- * POST /api/prefetch/products
- * Pre-fetch product data and stock
- */
-router.post("/products", verifyToken, async (req, res) => {
+// ============================================================================
+// PREFETCH SHOP DATA
+// ============================================================================
+// GET /api/prefetch/shop/:shopId
+// Call this when user views a shop or adds items to cart
+router.get("/shop/:shopId", verifyToken, async (req, res) => {
   try {
-    const { productIds, shopkeeperId, shopId } = req.body;
-    const id = shopkeeperId || shopId;
+    const { shopId } = req.params;
+    const result = await prefetchShopProducts(parseInt(shopId));
 
-    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Product IDs array is required",
-      });
-    }
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper ID is required",
-      });
-    }
-
-    const result = await prefetchProductData(productIds, id);
-    
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        message: result.error || "Failed to pre-fetch product data",
-      });
-    }
-
-    // Return stock availability summary
-    const stockSummary = {};
-    for (const productId of productIds) {
-      const product = result.data[productId];
-      if (product) {
-        stockSummary[productId] = {
-          available: product.stock > 0,
-          stock: product.stock,
-          name: product.name,
-        };
-      } else {
-        stockSummary[productId] = {
-          available: false,
-          stock: 0,
-          name: "Unknown",
-        };
-      }
-    }
-
-    res.json({
-      success: true,
-      message: result.cached ? "Data retrieved from cache" : "Data pre-fetched successfully",
-      cached: result.cached,
-      stockSummary,
-    });
-  } catch (error) {
-    console.error("Pre-fetch products error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to pre-fetch product data",
-      error: error.message,
-    });
-  }
-});
-
-/**
- * POST /api/prefetch/user-points
- * Pre-fetch user wellness points
- */
-router.post("/user-points", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const result = await prefetchUserPoints(userId);
-    
     if (!result.success) {
       return res.status(404).json({
         success: false,
-        message: result.error || "Failed to pre-fetch user points",
+        message: result.error || "Failed to prefetch shop data",
       });
     }
 
     res.json({
       success: true,
-      message: result.cached ? "Data retrieved from cache" : "Data pre-fetched successfully",
-      cached: result.cached,
-      data: {
-        storeCredits: result.data.storeCredits,
-        availableForRedemption: Math.min(result.data.storeCredits, 1000), // Max 1000 points per order
-      },
+      message: "Shop data prefetched successfully",
+      productCount: result.count,
+      cached: true,
     });
   } catch (error) {
-    console.error("Pre-fetch user points error:", error);
+    console.error("Prefetch shop error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to pre-fetch user points",
-      error: error.message,
+      message: "Failed to prefetch shop data",
     });
   }
 });
 
-/**
- * POST /api/prefetch/all
- * Pre-fetch all data needed for order placement
- */
-router.post("/all", verifyToken, async (req, res) => {
+// ============================================================================
+// PREFETCH ORDER DATA (COMBINED)
+// ============================================================================
+// POST /api/prefetch/order
+// Call this when user is about to place an order
+// Body: { shopkeeperId: number }
+router.post("/order", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { productIds, shopkeeperId, shopId } = req.body;
-    const id = shopkeeperId || shopId;
+    const { shopkeeperId } = req.body;
 
-    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
+    if (!shopkeeperId) {
       return res.status(400).json({
         success: false,
-        message: "Product IDs array is required",
+        message: "shopkeeperId is required",
       });
     }
 
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper ID is required",
-      });
-    }
-
-    // Pre-fetch all data in parallel
-    const [shopResult, productsResult, userResult] = await Promise.all([
-      prefetchShopkeeperData(id),
-      prefetchProductData(productIds, id),
-      prefetchUserPoints(userId),
-    ]);
-
-    const allSuccess = shopResult.success && productsResult.success && userResult.success;
-
-    if (!allSuccess) {
-      return res.status(400).json({
-        success: false,
-        message: "Failed to pre-fetch some data",
-        errors: {
-          shop: shopResult.success ? null : shopResult.error,
-          products: productsResult.success ? null : productsResult.error,
-          user: userResult.success ? null : userResult.error,
-        },
-      });
-    }
+    const result = await prefetchOrderData(userId, shopkeeperId);
 
     res.json({
       success: true,
-      message: "All data pre-fetched successfully",
-      data: {
-        shop: {
-          isActive: shopResult.data.subscription_status === 'active' && !shopResult.data.is_deleted,
-          cached: shopResult.cached,
-        },
-        products: {
-          count: Object.keys(productsResult.data).length,
-          cached: productsResult.cached,
-        },
-        user: {
-          storeCredits: userResult.data.storeCredits,
-          cached: userResult.cached,
-        },
-      },
+      message: "Order data prefetched successfully",
+      cached: result,
     });
   } catch (error) {
-    console.error("Pre-fetch all error:", error);
+    console.error("Prefetch order error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to pre-fetch data",
-      error: error.message,
+      message: "Failed to prefetch order data",
     });
   }
 });
 
-/**
- * GET /api/prefetch/stats
- * Get cache statistics (admin only)
- */
-router.get("/stats", verifyToken, async (req, res) => {
+// ============================================================================
+// GET CACHED DATA STATUS
+// ============================================================================
+// GET /api/prefetch/status
+// Check what data is currently cached
+router.get("/status", verifyToken, async (req, res) => {
   try {
-    const stats = getCacheStats();
-    res.json({
-      success: true,
-      stats,
-    });
-  } catch (error) {
-    console.error("Get cache stats error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to get cache stats",
-      error: error.message,
-    });
-  }
-});
+    const userId = req.user.id;
+    const { shopId } = req.query;
 
-/**
- * POST /api/prefetch/clear
- * Clear all caches (admin only)
- */
-router.post("/clear", verifyToken, async (req, res) => {
-  try {
-    clearAllCaches();
+    const status = {
+      user: !!getCachedUser(userId),
+      shop: shopId ? !!getCachedShopkeeper(parseInt(shopId)) : false,
+      products: shopId ? !!getCachedShopProducts(parseInt(shopId)) : false,
+    };
+
     res.json({
       success: true,
-      message: "All caches cleared successfully",
+      cached: status,
+      message: "Cache status retrieved",
     });
   } catch (error) {
-    console.error("Clear cache error:", error);
+    console.error("Cache status error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to clear caches",
-      error: error.message,
+      message: "Failed to get cache status",
     });
   }
 });
