@@ -98,18 +98,8 @@ export async function deductStockForOrder(orderId, connection = null) {
       );
     }
 
-    // Log stock deduction
-    const totalQty = deductions.reduce((sum, d) => sum + d.quantityDeducted, 0);
-    await conn.execute(
-      `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
-       VALUES (?, 'SYSTEM_DEDUCT', ?, ?, ?, NOW())`,
-      [
-        orderId,
-        "Stock deducted for order placement",
-        deductions.length,
-        -totalQty,
-      ]
-    );
+    // Note: Stock deduction logging removed - stock_restoration_log should only track restorations
+    // This prevents false positives when checking if stock was already restored
 
     if (!useTransaction) {
       conn.release();
@@ -183,8 +173,8 @@ export async function restoreStockForOrder(
       const product = products[0];
       const newStock = product.stock + item.quantity;
 
-      // Update stock
-      await conn.execute("UPDATE products SET stock = ? WHERE id = ?", [
+      // Update stock and clear restockAt timestamp (cancel scheduled restock)
+      await conn.execute("UPDATE products SET stock = ?, restockAt = NULL WHERE id = ?", [
         newStock,
         item.product_id,
       ]);

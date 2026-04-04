@@ -43,9 +43,9 @@ export const restoreStockForCancelledOrder = async (
       );
     });
 
-    // Check if this order has already been restored
+    // Check if this order has already been restored (only check actual restorations, not deductions)
     const [existingRestoration] = await pool.query(
-      "SELECT id FROM stock_restoration_log WHERE order_id = ?",
+      "SELECT id FROM stock_restoration_log WHERE order_id = ? AND total_quantity_restored > 0",
       [orderId]
     );
 
