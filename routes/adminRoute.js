@@ -1193,6 +1193,17 @@ adminRouter.patch(
       const gracePeriodEnd = new Date(nextPaymentDue);
       gracePeriodEnd.setDate(gracePeriodEnd.getDate() + 2); // 2 days grace period
 
+      // Mark pending payments as approved (keep audit trail, like payment approval)
+      // New cycle starts with zero payable amount
+      await pool.execute(
+        `UPDATE billing_payments 
+         SET status = 'approved',
+             approved_at = NOW(),
+             approved_by = ?
+         WHERE shopkeeper_id = ? AND status = 'pending'`,
+        [req.admin.id, parseInt(shopkeeperId)]
+      );
+
       // Unsuspend the shopkeeper and reset billing cycle
       const [result] = await pool.execute(
         `UPDATE shopkeepers 
@@ -1212,12 +1223,12 @@ adminRouter.patch(
       }
 
       console.log(
-        `✅ Unsuspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name}) - Billing cycle reset`
+        `✅ Unsuspended shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name}) - Billing cycle reset, pending payments approved, new cycle starts with zero`
       );
 
       res.json({
         success: true,
-        message: `Shopkeeper "${shopkeeper.name}" unsuspended successfully. Billing cycle reset.`,
+        message: `Shopkeeper "${shopkeeper.name}" unsuspended successfully. Pending payments approved. New billing cycle starts with zero payable amount.`,
         shopkeeper: {
           id: shopkeeper.id,
           name: shopkeeper.name,
@@ -1227,6 +1238,7 @@ adminRouter.patch(
           last_payment_date: now,
           next_payment_due: nextPaymentDue,
           grace_period_end: gracePeriodEnd,
+          payable_amount: 0,
         },
       });
     } catch (err) {
