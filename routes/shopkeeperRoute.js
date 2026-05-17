@@ -1369,6 +1369,46 @@ shopkeeperRouter.post(
 );
 
 /**
+ * BULK UPDATE baseline quantity for all products
+ */
+shopkeeperRouter.put(
+  "/products/bulk/baseline",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+      const { baselineQty } = req.body;
+
+      if (baselineQty == null) {
+        return res.status(400).json({ success: false, message: "Baseline quantity is required" });
+      }
+
+      const b = Number(baselineQty);
+      if (Number.isNaN(b) || b < 0) {
+        return res.status(400).json({ success: false, message: "Invalid baseline quantity" });
+      }
+
+      const [result] = await pool.execute(
+        "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
+        [b, b, shop_id]
+      );
+
+      res.json({
+        success: true,
+        message: `Successfully updated baseline quantity for ${result.affectedRows} products`,
+        updatedCount: result.affectedRows,
+        baselineQty: b
+      });
+    } catch (err) {
+      console.error("Bulk update baseline error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+/**
  * UPDATE product
  */
 shopkeeperRouter.put(
