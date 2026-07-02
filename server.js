@@ -15,6 +15,7 @@ import passwordResetRouter from "./routes/passwordResetRoute.js";
 import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
 import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
+import recommendationRouter from "./routes/recommendationRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -491,6 +492,8 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/prefetch", orderPrefetchRouter); // Order prefetch routes for performance
 app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
+app.use("/api/user/recommendations", recommendationRouter);
+app.use("/api/recommendations", recommendationRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
