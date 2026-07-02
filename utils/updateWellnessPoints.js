@@ -1,7 +1,7 @@
 import pool from "../config/db";
 import verifyToken from "../middleware/auth";
 import checkSubscriptionStatus from "../middleware/checkSubscription";
-import {shopkeeperRouter} from "../routes/shopkeeperRoute";
+import { shopkeeperRouter } from "../routes/shopkeeperRoute";
 import { awardWellnessPoints } from "./wellnessPoints";
 
 shopkeeperRouter.patch(
@@ -38,6 +38,42 @@ shopkeeperRouter.patch(
 
         } catch (error) {
             console.log("Error occurred while updating credits: " + error)
+            return res.status(500).json({ success: false, message: "Internal Server error" })
+        }
+    }
+)
+
+shopkeeperRouter.get(
+    "/shopkeeper/:shopkeeperid/getcustomers",
+    verifyToken,
+    // verifyShopkeeperStatus,
+    checkSubscriptionStatus,
+    async (req, res) => {
+        try {
+            const { shopkeeperid } = req.params
+
+            if (!shopkeeperid) {
+                return res.status(400).json({ success: false, message: "Shopkeeper Id is empty" })
+            }
+
+            const [rows] = await pool.execute(
+                `SELECT customerid, credits FROM (
+                    SELECT customerid, credits,
+                        ROW_NUMBER() OVER (PARTITION BY customerid ORDER BY created_at DESC) AS rn
+                    FROM credits_table
+                    WHERE shopkeeperid = ?
+                ) ranked WHERE rn = 1 ORDER BY credits DESC`,
+                [shopkeeperid]
+            )
+
+            if (rows.length === 0) {
+                return res.status(404).json({ success: false, message: "No customer records found" })
+            }
+
+            return res.status(200).json({ success: true, result: rows })
+
+        } catch (error) {
+            console.log("Error occurred at get customers: " + error)
             return res.status(500).json({ success: false, message: "Internal Server error" })
         }
     }
