@@ -9,6 +9,8 @@
  * 
  * 2) refer_transaction:
  * columns: refeerid, referedid, refered_at (timestamp)
+ * 
+ * Used NanoId to generate the code
  */
 
 import express from "express"
