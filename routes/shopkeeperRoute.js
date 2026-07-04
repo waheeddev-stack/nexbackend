@@ -3211,29 +3211,29 @@ shopkeeperRouter.patch(
       const credits_awarded = Number(req.body.credits_awarded)
 
       if (!shopkeeperid) {
-        return res.status(404).json({ success: false, message: "Shopkeeper Id is empty" })
+        return res.status(401).json({ success: false, message: "Shopkeeper Id is empty" })
       }
       if (!customerid) {
-        return res.status(404).json({ success: false, message: "Customer Id is empty" })
+        return res.status(401).json({ success: false, message: "Customer Id is empty" })
       }
       if (!Number.isFinite(credits_awarded) || credits_awarded <= 0) {
-        return res.status(404).json({ success: false, message: "New credits were not sent." })
+        return res.status(400).json({ success: false, message: "New credits were not sent." })
       }
       if (credits_awarded > 750) {
         return res.status(400).json({ success: false, message: "The amount of credits is too much" })
       }
 
       const [rows] = await pool.execute(
-        "SELECT user_id FROM orders WHERE shopkeeper_id = ?",
-        [shopkeeperid]
+        "SELECT 1 FROM orders WHERE shopkeeper_id = ? AND user_id = ?",
+        [shopkeeperid, customerid]
       )
 
-      if(rows.length<=0){
-        return res.status(400).json({ success: false, message: "Customer should have made atleast one order from the shop" })
+      if (rows.length <= 0) {
+        return res.status(400).json({ success: false, message: "Customer should have made at least one order from the shop" })
       }
 
       const [result] = await pool.execute(
-        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+        "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
         [credits_awarded, customerid]
       )
 

@@ -52,11 +52,11 @@ async function grantReferralReward(referalCode, referedId) {
 
         // 4. Grant credits to both wallets
         await connection.execute(
-            "UPDATE users SET wallet = wallet + 40 WHERE id = ?",
+            "UPDATE users SET wallet = COALESCE(wallet,0) + 40 WHERE id = ?",
             [referrerid]
         )
         await connection.execute(
-            "UPDATE users SET wallet = wallet + 80 WHERE id = ?",
+            "UPDATE users SET wallet = COALESCE(wallet,0) + 80 WHERE id = ?",
             [referedId]
         )
 
@@ -122,31 +122,31 @@ referalRouter.get(
 )
 
 // POST "/api/refer/claimReward" = Grants the reward in the wallet
-referalRouter.post(
-    // "/claimReward",
-    verifyToken,
-    async (req, res) => {
-        try {
-            const referedId = req.user?.id
-            const { referalCode } = req.body
+// referalRouter.post(
+//     "/claimReward",
+//     verifyToken,
+//     async (req, res) => {
+//         try {
+//             const referedId = req.user?.id
+//             const { referalCode } = req.body
 
-            if (!referedId) {
-                return res.status(401).json({ success: false, message: "Authentication required" })
-            }
-            if (!referalCode || referalCode.trim().length === 0) {
-                return res.status(400).json({ success: false, message: "Referral code is required" })
-            }
+//             if (!referedId) {
+//                 return res.status(401).json({ success: false, message: "Authentication required" })
+//             }
+//             if (!referalCode || referalCode.trim().length === 0) {
+//                 return res.status(400).json({ success: false, message: "Referral code is required" })
+//             }
 
-            const result = await grantReferralReward(referalCode.trim(), referedId)
-            return res.status(result.status).json({ success: result.success, message: result.message })
+//             const result = await grantReferralReward(referalCode.trim(), referedId)
+//             return res.status(result.status).json({ success: result.success, message: result.message })
 
-        } catch (error) {
-            console.log("Error occurred at claimReward route: " + error)
-            return res.status(500).json({ success: false, message: "Internal Server error" })
-        }
-    }
-)
+//         } catch (error) {
+//             console.log("Error occurred at claimReward route: " + error)
+//             return res.status(500).json({ success: false, message: "Internal Server error" })
+//         }
+//     }
+// )
 
-export {generateReferalCode};
+export { generateReferalCode };
 
 export default referalRouter

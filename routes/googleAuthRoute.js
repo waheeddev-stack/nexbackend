@@ -144,22 +144,32 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
-        const referalcode = generateReferalCode(googleUser.name);
-
-        const [result] = await pool.execute(
-          `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referalcode) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            nextGoogleUserId,
-            googleUser.name,
-            googleUser.email,
-            await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
-            googleUser.googleId,
-            googleUser.picture || null,
-            expoPushToken || null,
-            referalcode
-          ]
-        );
+        const MAX_ATTEMPTS = 5
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          const referalcode = generateReferalCode(googleUser.name);
+          try {
+            const [result] = await pool.execute(
+              `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referalcode) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                nextGoogleUserId,
+                googleUser.name,
+                googleUser.email,
+                await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
+                googleUser.googleId,
+                googleUser.picture || null,
+                expoPushToken || null,
+                referalcode
+              ]
+            );
+            break;
+          } catch (error) {
+            if (error.errno === 1062) {
+                continue
+            }
+            console.log("New Referal code couldn't be added: " + error)
+          }
+        }
 
         console.log("✅ INSERT result:", result);
 

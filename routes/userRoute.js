@@ -385,11 +385,23 @@ userrouter.post(
       );
       const nextId = (maxIdResult[0].maxId || 0) + 1;
 
-      // Insert new user into database with explicit ID
-      await pool.execute(
-        "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
-        [nextId, validatedData.name, validatedData.email, hashedPassword]
-      );
+      const MAX_ATTEMPTS = 5
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          const referalcode = generateReferalCode(googleUser.name);
+          try {
+            // Insert new user into database with explicit ID
+            await pool.execute(
+              "INSERT INTO users (id, name, email, password, referalcode) VALUES (?, ?, ?, ?, ?)",
+              [nextId, validatedData.name, validatedData.email, hashedPassword, referalcode]
+            );
+            break;
+          } catch (error) {
+            if (error.errno === 1062) {
+                continue
+            }
+            console.log("New Referal code couldn't be added: " + error)
+          }
+        }
 
       // Fetch the newly created user
       const [userRows] = await pool.execute(
