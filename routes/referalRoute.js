@@ -1,15 +1,3 @@
-/**
- * The file has both function as well as router available
- * Use whatever u feel like
- * 
- * Database Tables needed:
- * 
- * 1) refer_transaction:
- * columns: refeerid, referedid, refered_at (timestamp)
- * 
- * Used NanoId to generate the code
- */
-
 import express from "express"
 import { customAlphabet } from "nanoid";
 import verifyToken from "../middleware/auth.js";
@@ -64,11 +52,11 @@ async function grantReferralReward(referalCode, referedId) {
 
         // 4. Grant credits to both wallets
         await connection.execute(
-            "UPDATE users SET store_credits = store_credits + 40 WHERE id = ?",
+            "UPDATE users SET wallet = wallet + 40 WHERE id = ?",
             [referrerid]
         )
         await connection.execute(
-            "UPDATE users SET store_credits = store_credits + 80 WHERE id = ?",
+            "UPDATE users SET wallet = wallet + 80 WHERE id = ?",
             [referedId]
         )
 
@@ -86,59 +74,6 @@ async function grantReferralReward(referalCode, referedId) {
     } finally {
         connection.release()
     }
-}
-
-/**
- * Creates a new referral code for a user, or returns an existing one if already generated.
- * Handles code collisions with a retry loop (requires UNIQUE constraint on `code`,
- * and UNIQUE constraint on `userid` to guard against concurrent duplicate-user races).
- *
- * @param {number|string} userId
- * @param {string} username
- * @returns {Promise<{success: boolean, status: number, message: string, code?: string}>}
- */
-async function generateReferalCodeForUser(userId, username) {
-    if (!userId) {
-        return { success: false, status: 401, message: "Authentication required" }
-    }
-
-    if (!username || username.trim().length === 0 || !/^[A-Za-z]+$/.test(username.trim())) {
-        return { success: false, status: 400, message: "Invalid username" }
-    }
-
-    const [records] = await pool.execute(
-        "SELECT referalcode FROM users WHERE id = ?",
-        [userId]
-    )
-
-    if (records.length !== 0) {
-        return { success: false, status: 403, message: "Referal code with given userid already exists" }
-    }
-
-    const MAX_ATTEMPTS = 5
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const referalCode = generateReferalCode(username)
-        try {
-            await pool.execute(
-                "UPDATE users SET referalcode = ? WHERE id = ?",
-                [referalCode, userId]
-            )
-            return { success: true, status: 200, message: "Referal code generated", code: referalCode }
-        } catch (error) {
-            if (error.errno === 1062) {
-                if (error.sqlMessage?.includes("userid")) {
-                    // Someone else's concurrent request beat us to it for this userId
-                    return { success: false, status: 403, message: "Referal code with given userid already exists" }
-                }
-                // Code collision — loop and try again with a fresh code
-                continue
-            }
-            console.log("New Referal code couldn't be added: " + error)
-            return { success: false, status: 500, message: "Internal Server error" }
-        }
-    }
-
-    return { success: false, status: 500, message: "Could not generate a unique referral code, please try again" }
 }
 
 /**
@@ -170,67 +105,25 @@ async function getReferalCodeForUser(userId) {
 
 const referalRouter = express.Router();
 
-referalRouter.post(
-    "/generateCode",
+// GET "api/refer/getReferalCode" = gets the referal code of the user
+referalRouter.get(
+    "/getReferalCode",
     verifyToken,
     async (req, res) => {
         try {
             const userId = req.user?.id
-            if (!userId) {
-                return res.status(401).json({ status: false, message: "Authentication required" })
-            }
-
-            const username = req.body.username
-
-            // Validate: must exist, non-blank, letters only (adjust regex if you want to allow spaces/hyphens)
-            if (!username || username.trim().length === 0 || !/^[A-Za-z]+$/.test(username.trim())) {
-                return res.status(400).json({ status: false, message: "Invalid username" })
-            }
-
-            const [records] = await pool.execute(
-                "SELECT referalcode FROM users WHERE id = ?",
-                [userId]
-            )
-
-            if (records.length !== 0) {
-                return res.status(403).json({ status: false, message: "Referal code with given userid already exists" })
-            }
-
-            // Retry loop in case of rare code collisions (requires UNIQUE constraint on `code`)
-            const MAX_ATTEMPTS = 5
-            for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-                const referalCode = generateReferalCode(username)
-                try {
-                    await pool.execute(
-                        "UPDATE users SET referalcode = ? WHERE id = ?",
-                        [referalCode, userId]
-                    )
-                    return res.status(200).json({ status: true, message: "Referal code generated", code: referalCode })
-                } catch (error) {
-                    // ER_DUP_ENTRY = 1062 in MySQL
-                    if (error.errno === 1062) {
-                        if (error.sqlMessage?.includes("userid")) {
-                            // Someone else's concurrent request beat us to it for this userId
-                            return res.status(403).json({ status: false, message: "Referal code with given userid already exists" })
-                        }
-                        // Code collision — loop and try again with a fresh code
-                        continue
-                    }
-                    console.log("New Referal code couldn't be added: " + error)
-                    return res.status(500).json({ status: false, message: "Internal Server error" })
-                }
-            }
-
-            return res.status(500).json({ status: false, message: "Could not generate a unique referral code, please try again" })
-
+            const result = await getReferalCodeForUser(userId)
+            return res.status(result.status).json(result)
         } catch (error) {
-            console.log("Error occurred at Referal Route: " + error)
-            return res.status(500).json({ status: false, message: "Internal Server error" })
+            console.log("Error occurred at getReferalCode route: " + error)
+            return res.status(500).json({ success: false, message: "Internal Server error" })
         }
-    })
+    }
+)
 
+// POST "/api/refer/claimReward" = Grants the reward in the wallet
 referalRouter.post(
-    "/claimReward",
+    // "/claimReward",
     verifyToken,
     async (req, res) => {
         try {
@@ -253,5 +146,7 @@ referalRouter.post(
         }
     }
 )
+
+export {generateReferalCode};
 
 export default referalRouter

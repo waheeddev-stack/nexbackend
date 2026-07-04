@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import pool from "../config/db.js";
 import { createJWEToken } from "../utils/jweToken.js";
 import { OAuth2Client } from "google-auth-library";
+import { generateReferalCode } from "./referalRoute.js";
 
 const router = express.Router();
 
@@ -143,9 +144,11 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
+        const referalCode = generateReferalCode(googleUser.name);
+
         const [result] = await pool.execute(
-          `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token) 
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referalcode) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             nextGoogleUserId,
             googleUser.name,
@@ -154,6 +157,7 @@ router.post("/google/users", async (req, res) => {
             googleUser.googleId,
             googleUser.picture || null,
             expoPushToken || null,
+            referalCode
           ]
         );
 
@@ -170,6 +174,8 @@ router.post("/google/users", async (req, res) => {
           store_credits: 0,
           latitude: null,
           longitude: null,
+          referalCode: referalCode,
+          wallet: 0,
         };
 
         console.log(
@@ -208,6 +214,8 @@ router.post("/google/users", async (req, res) => {
         store_credits: user.store_credits,
         latitude: user.latitude,
         longitude: user.longitude,
+        referalcode: user.referalcode,
+        wallet: user.wallet
       },
       accessToken,
       refreshToken,
