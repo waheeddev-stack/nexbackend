@@ -495,7 +495,7 @@ app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/user/recommendations", recommendationRouter);
 app.use("/api/recommendations", recommendationRouter);
-app.use("/api/refer", referalRouter)
+app.use("/api/refer", referalRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);

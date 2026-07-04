@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS `users` (
   `refresh_token` VARCHAR(500) DEFAULT NULL,
   `referalcode` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `email` (`email`)
+  UNIQUE KEY `email` (`email`),
+  UNIQUE KEY `referalcode` (`referalcode`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=630001;
 
 -- ----------------------------------------------------------------------------
@@ -62,7 +63,7 @@ CREATE TABLE IF NOT EXISTS `refer_transaction`(
   `refered_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_referedid` (`referedid`)
-)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ----------------------------------------------------------------------------
 -- Table: shopkeepers

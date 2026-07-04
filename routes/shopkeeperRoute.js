@@ -3223,13 +3223,22 @@ shopkeeperRouter.patch(
         return res.status(400).json({ success: false, message: "The amount of credits is too much" })
       }
 
+      const [rows] = await pool.execute(
+        "SELECT user_id FROM orders WHERE shopkeeper_id = ?",
+        [shopkeeperid]
+      )
+
+      if(rows.length<=0){
+        return res.status(400).json({ success: false, message: "Customer should have made atleast one order from the shop" })
+      }
+
       const [result] = await pool.execute(
         "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
         [credits_awarded, customerid]
       )
 
       if (result.affectedRows === 0) {
-        return res.status(404).json({ success: false, message: "Cutomer Not found." })
+        return res.status(404).json({ success: false, message: "Customer Not found." })
       }
 
       return res.status(200).json({ success: true, message: "Credits awarded successfully" })
@@ -3261,7 +3270,7 @@ shopkeeperRouter.get(
       const shopkeeperid = shopkeeperIdFromToken
 
       const [rows] = await pool.execute(
-        `SELECT DISTINCT u.id AS user_id, u.name, u.credits
+        `SELECT DISTINCT u.id AS user_id, u.name, u.store_credits
      FROM orders o
      JOIN users u ON u.id = o.user_id
      WHERE o.shopkeeper_id = ?`,

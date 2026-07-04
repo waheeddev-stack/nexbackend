@@ -92,7 +92,7 @@ async function getReferalCodeForUser(userId) {
         [userId]
     )
 
-    if (rows.length === 0) {
+    if (rows.length === 0 || rows[0].referalcode === null) {
         return { success: false, status: 404, message: "No referral code found for this user" }
     }
 

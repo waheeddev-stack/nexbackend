@@ -144,7 +144,7 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
-        const referalCode = generateReferalCode(googleUser.name);
+        const referalcode = generateReferalCode(googleUser.name);
 
         const [result] = await pool.execute(
           `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referalcode) 
@@ -157,7 +157,7 @@ router.post("/google/users", async (req, res) => {
             googleUser.googleId,
             googleUser.picture || null,
             expoPushToken || null,
-            referalCode
+            referalcode
           ]
         );
 
@@ -174,7 +174,7 @@ router.post("/google/users", async (req, res) => {
           store_credits: 0,
           latitude: null,
           longitude: null,
-          referalCode: referalCode,
+          referalcode: referalcode,
           wallet: 0,
         };
 
