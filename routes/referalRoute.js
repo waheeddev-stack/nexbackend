@@ -4,10 +4,7 @@
  * 
  * Database Tables needed:
  * 
- * 1) referalcodes:
- * Columns: userid(index), code (unique)
- * 
- * 2) refer_transaction:
+ * 1) refer_transaction:
  * columns: refeerid, referedid, refered_at (timestamp)
  * 
  * Used NanoId to generate the code
@@ -15,8 +12,8 @@
 
 import express from "express"
 import { customAlphabet } from "nanoid";
-import verifyToken from "../middleware/auth";
-import pool from "../config/db";
+import verifyToken from "../middleware/auth.js";
+import pool from "../config/db.js";
 
 function generateReferalCode(name) {
     const prefix = name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, "X")
@@ -31,7 +28,7 @@ async function grantReferralReward(referalCode, referedId) {
 
         // 1. Look up the referrer from the referral code
         const [codeRows] = await connection.execute(
-            "SELECT userid FROM referalcodes WHERE code = ?",
+            "SELECT id FROM users WHERE referalcode = ?",
             [referalCode]
         )
 
@@ -40,7 +37,7 @@ async function grantReferralReward(referalCode, referedId) {
             return { success: false, status: 404, message: "Invalid referral code" }
         }
 
-        const referrerid = codeRows[0].userid
+        const referrerid = codeRows[0].id
 
         // Prevent self-referral
         if (String(referrerid) === String(referedId)) {
@@ -61,20 +58,19 @@ async function grantReferralReward(referalCode, referedId) {
 
         // 3. Record the referral transaction
         await connection.execute(
-            "INSERT INTO refer_transaction(refeerid, referedid, refered_at) VALUES (?, ?, NOW())",
+            "INSERT INTO refer_transaction(refererid, referedid, refered_at) VALUES (?, ?, NOW())",
             [referrerid, referedId]
         )
 
         // 4. Grant credits to both wallets
-        // TODO: uncomment and adjust once wallet table/schema is confirmed
-        // await connection.execute(
-        //     "UPDATE wallet SET credits = credits + 40 WHERE userid = ?",
-        //     [referrerid]
-        // )
-        // await connection.execute(
-        //     "UPDATE wallet SET credits = credits + 80 WHERE userid = ?",
-        //     [referedId]
-        // )
+        await connection.execute(
+            "UPDATE users SET store_credits = store_credits + 40 WHERE id = ?",
+            [referrerid]
+        )
+        await connection.execute(
+            "UPDATE users SET store_credits = store_credits + 80 WHERE id = ?",
+            [referedId]
+        )
 
         await connection.commit()
         return { success: true, status: 200, message: "Referral reward granted successfully" }
@@ -111,7 +107,7 @@ async function generateReferalCodeForUser(userId, username) {
     }
 
     const [records] = await pool.execute(
-        "SELECT * FROM referalcodes WHERE userid = ?",
+        "SELECT referalcode FROM users WHERE id = ?",
         [userId]
     )
 
@@ -124,8 +120,8 @@ async function generateReferalCodeForUser(userId, username) {
         const referalCode = generateReferalCode(username)
         try {
             await pool.execute(
-                "INSERT INTO referalcodes(userid, code) VALUES(?,?)",
-                [userId, referalCode]
+                "UPDATE users SET referalcode = ? WHERE id = ?",
+                [referalCode, userId]
             )
             return { success: true, status: 200, message: "Referal code generated", code: referalCode }
         } catch (error) {
@@ -157,7 +153,7 @@ async function getReferalCodeForUser(userId) {
     }
 
     const [rows] = await pool.execute(
-        "SELECT code FROM referalcodes WHERE userid = ?",
+        "SELECT referalcode FROM users WHERE id = ?",
         [userId]
     )
 
@@ -165,7 +161,7 @@ async function getReferalCodeForUser(userId) {
         return { success: false, status: 404, message: "No referral code found for this user" }
     }
 
-    return { success: true, status: 200, message: "Referral code fetched", code: rows[0].code }
+    return { success: true, status: 200, message: "Referral code fetched", code: rows[0].referalcode }
 }
 
 // ===================================
@@ -175,7 +171,7 @@ async function getReferalCodeForUser(userId) {
 const referalRouter = express.Router();
 
 referalRouter.post(
-    "/refer/generateCode",
+    "/generateCode",
     verifyToken,
     async (req, res) => {
         try {
@@ -192,7 +188,7 @@ referalRouter.post(
             }
 
             const [records] = await pool.execute(
-                "SELECT * FROM referalcodes WHERE userid = ?",
+                "SELECT referalcode FROM users WHERE id = ?",
                 [userId]
             )
 
@@ -206,8 +202,8 @@ referalRouter.post(
                 const referalCode = generateReferalCode(username)
                 try {
                     await pool.execute(
-                        "INSERT INTO referalcodes(userid, code) VALUES(?,?)",
-                        [userId, referalCode]
+                        "UPDATE users SET referalcode = ? WHERE id = ?",
+                        [referalCode, userId]
                     )
                     return res.status(200).json({ status: true, message: "Referal code generated", code: referalCode })
                 } catch (error) {
@@ -234,7 +230,7 @@ referalRouter.post(
     })
 
 referalRouter.post(
-    "/refer/claimReward",
+    "/claimReward",
     verifyToken,
     async (req, res) => {
         try {

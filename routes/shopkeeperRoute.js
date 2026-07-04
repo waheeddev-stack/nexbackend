@@ -227,10 +227,10 @@ shopkeeperRouter.get(
           cancelledOrders: parseInt(cancelledData?.cancelledOrders || 0),
           topSelling: topProduct
             ? {
-                productId: topProduct.productId,
-                name: topProduct.name,
-                unitsSold: parseInt(topProduct.unitsSold),
-              }
+              productId: topProduct.productId,
+              name: topProduct.name,
+              unitsSold: parseInt(topProduct.unitsSold),
+            }
             : null,
         },
       });
@@ -1047,14 +1047,14 @@ shopkeeperRouter.get(
           timerInfo:
             order.delivery_type === "click_and_collect"
               ? {
-                  hasTimer: order.has_timer === 1,
-                  pickupCode: order.pickup_code,
-                  timerStartedAt: order.timer_started_at,
-                  timerExpiresAt: order.timer_expires_at,
-                  isExpired: order.timer_expires_at
-                    ? new Date() > new Date(order.timer_expires_at)
-                    : false,
-                }
+                hasTimer: order.has_timer === 1,
+                pickupCode: order.pickup_code,
+                timerStartedAt: order.timer_started_at,
+                timerExpiresAt: order.timer_expires_at,
+                isExpired: order.timer_expires_at
+                  ? new Date() > new Date(order.timer_expires_at)
+                  : false,
+              }
               : null,
         }));
 
@@ -2429,7 +2429,7 @@ shopkeeperRouter.post(
       // Verify pickup code (ensure both are strings for comparison)
       const expectedCode = String(order.pickup_code || '').trim();
       const providedCode = String(pickup_code || '').trim();
-     
+
       if (expectedCode !== providedCode) {
         console.error(
           `Invalid pickup code: expected="${expectedCode}" (type=${typeof order.pickup_code}), got="${providedCode}" (type=${typeof pickup_code})`
@@ -3192,6 +3192,91 @@ shopkeeperRouter.post(
         message: "Failed to check access",
         error: err.message,
       });
+    }
+  }
+);
+
+// ========================== Grant Wellness Points ====================================
+
+// UPDATE /api/shopkeeper/updateCredits - Updates the wellness points of any customer
+shopkeeperRouter.patch(
+  "/updateCredits",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shopkeeperid = req.user?.id
+      const customerid = req.body.customerid
+      const credits_awarded = Number(req.body.credits_awarded)
+
+      if (!shopkeeperid) {
+        return res.status(404).json({ success: false, message: "Shopkeeper Id is empty" })
+      }
+      if (!customerid) {
+        return res.status(404).json({ success: false, message: "Customer Id is empty" })
+      }
+      if (!Number.isFinite(credits_awarded) || credits_awarded <= 0) {
+        return res.status(404).json({ success: false, message: "New credits were not sent." })
+      }
+      if (credits_awarded > 750) {
+        return res.status(400).json({ success: false, message: "The amount of credits is too much" })
+      }
+
+      const [result] = await pool.execute(
+        "UPDATE users SET store_credits = store_credits + ? WHERE id = ?",
+        [credits_awarded, customerid]
+      )
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ success: false, message: "Cutomer Not found." })
+      }
+
+      return res.status(200).json({ success: true, message: "Credits awarded successfully" })
+
+    } catch (error) {
+      console.log("Error occurred while updating credits: " + error)
+      return res.status(500).json({ success: false, message: "Internal Server error" })
+    }
+  }
+);
+
+// UPDATE /api/shopkeeper/:shopkeeperid/getcustomers - Get all the Nexkirana customers of the shop 
+shopkeeperRouter.get(
+  "/:shopkeeperid/getcustomers",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shopkeeperIdFromToken = req.user?.id
+      const { shopkeeperid: shopkeeperIdFromParams } = req.params
+
+      if (!shopkeeperIdFromToken) {
+        return res.status(401).json({ success: false, message: "Authentication required" })
+      }
+      if (String(shopkeeperIdFromParams) !== String(shopkeeperIdFromToken)) {
+        return res.status(403).json({ success: false, message: "Forbidden" })
+      }
+      const shopkeeperid = shopkeeperIdFromToken
+
+      const [rows] = await pool.execute(
+        `SELECT DISTINCT u.id AS user_id, u.name, u.credits
+     FROM orders o
+     JOIN users u ON u.id = o.user_id
+     WHERE o.shopkeeper_id = ?`,
+        [shopkeeperid]
+      )
+
+      if (rows.length === 0) {
+        return res.status(404).json({ success: false, message: "No customer records found" })
+      }
+
+      return res.status(200).json({ success: true, result: rows })
+
+    } catch (error) {
+      console.log("Error occurred at get customers: " + error)
+      return res.status(500).json({ success: false, message: "Internal Server error" })
     }
   }
 );
