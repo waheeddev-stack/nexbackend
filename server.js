@@ -13,6 +13,7 @@ import googleAuthRouter from "./routes/googleAuthRoute.js";
 import inventoryRouter from "./routes/inventoryRoute.js";
 import passwordResetRouter from "./routes/passwordResetRoute.js";
 import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
+import navigationRouter from "./navigation.js";
 import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
 import recommendationRouter from "./routes/recommendationRoute.js";
@@ -497,6 +498,7 @@ app.use("/api/recommendations", recommendationRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
+app.use("/api/navigation", navigationRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
