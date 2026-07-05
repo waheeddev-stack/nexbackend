@@ -3,21 +3,21 @@ import { customAlphabet } from "nanoid";
 import verifyToken from "../middleware/auth.js";
 import pool from "../config/db.js";
 
-function generateReferalCode(name) {
+function generatereferralCode(name) {
     const prefix = name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, "X")
     const generateSuffix = customAlphabet("ABCDEFGHIJKLMNPQRSTUVWXYZ123456789", 5)
     return `${prefix}${generateSuffix()}`
 }
 
-async function grantReferralReward(referalCode, referedId) {
+async function grantReferralReward(referralCode, referedId) {
     const connection = await pool.getConnection()
     try {
         await connection.beginTransaction()
 
         // 1. Look up the referrer from the referral code
         const [codeRows] = await connection.execute(
-            "SELECT id FROM users WHERE referalcode = ?",
-            [referalCode]
+            "SELECT id FROM users WHERE referralcode = ?",
+            [referralCode]
         )
 
         if (codeRows.length === 0) {
@@ -82,62 +82,62 @@ async function grantReferralReward(referalCode, referedId) {
  * @param {number|string} userId
  * @returns {Promise<{success: boolean, status: number, message: string, code?: string}>}
  */
-async function getReferalCodeForUser(userId) {
+async function getreferralCodeForUser(userId) {
     if (!userId) {
         return { success: false, status: 401, message: "Authentication required" }
     }
 
     const [rows] = await pool.execute(
-        "SELECT referalcode FROM users WHERE id = ?",
+        "SELECT referralcode FROM users WHERE id = ?",
         [userId]
     )
 
-    if (rows.length === 0 || rows[0].referalcode === null) {
+    if (rows.length === 0 || rows[0].referralcode === null) {
         return { success: false, status: 404, message: "No referral code found for this user" }
     }
 
-    return { success: true, status: 200, message: "Referral code fetched", code: rows[0].referalcode }
+    return { success: true, status: 200, message: "Referral code fetched", code: rows[0].referralcode }
 }
 
 // ===================================
 //  Use the below router if needed
 // ===================================
 
-const referalRouter = express.Router();
+const referralRouter = express.Router();
 
-// GET "api/refer/getReferalCode" = gets the referal code of the user
-referalRouter.get(
-    "/getReferalCode",
+// GET "api/refer/getreferralCode" = gets the referral code of the user
+referralRouter.get(
+    "/getreferralCode",
     verifyToken,
     async (req, res) => {
         try {
             const userId = req.user?.id
-            const result = await getReferalCodeForUser(userId)
+            const result = await getreferralCodeForUser(userId)
             return res.status(result.status).json(result)
         } catch (error) {
-            console.log("Error occurred at getReferalCode route: " + error)
+            console.log("Error occurred at getreferralCode route: " + error)
             return res.status(500).json({ success: false, message: "Internal Server error" })
         }
     }
 )
 
 // POST "/api/refer/claimReward" = Grants the reward in the wallet
-// referalRouter.post(
+// referralRouter.post(
 //     "/claimReward",
 //     verifyToken,
 //     async (req, res) => {
 //         try {
 //             const referedId = req.user?.id
-//             const { referalCode } = req.body
+//             const { referralCode } = req.body
 
 //             if (!referedId) {
 //                 return res.status(401).json({ success: false, message: "Authentication required" })
 //             }
-//             if (!referalCode || referalCode.trim().length === 0) {
+//             if (!referralCode || referralCode.trim().length === 0) {
 //                 return res.status(400).json({ success: false, message: "Referral code is required" })
 //             }
 
-//             const result = await grantReferralReward(referalCode.trim(), referedId)
+//             const result = await grantReferralReward(referralCode.trim(), referedId)
 //             return res.status(result.status).json({ success: result.success, message: result.message })
 
 //         } catch (error) {
@@ -147,6 +147,6 @@ referalRouter.get(
 //     }
 // )
 
-export { generateReferalCode };
+export { generatereferralCode };
 
-export default referalRouter
+export default referralRouter

@@ -45,10 +45,10 @@ CREATE TABLE IF NOT EXISTS `users` (
   `latitude` DECIMAL(10,8) DEFAULT NULL,
   `longitude` DECIMAL(11,8) DEFAULT NULL,
   `refresh_token` VARCHAR(500) DEFAULT NULL,
-  `referalcode` VARCHAR(10) DEFAULT NULL,
+  `referralcode` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
-  UNIQUE KEY `referalcode` (`referalcode`)
+  UNIQUE KEY `referralcode` (`referralcode`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=630001;
 
 -- ----------------------------------------------------------------------------
@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS `refer_transaction`(
   `referedid` INT(11) NOT NULL,
   `refered_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_referedid` (`referedid`)
+  UNIQUE KEY `unique_referedid` (`referedid`),
+  KEY `idx_refererid` (`refererid`),
+  CONSTRAINT `fk_refer_transaction_refererid` FOREIGN KEY (`refererid`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_refer_transaction_referedid` FOREIGN KEY (`referedid`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ----------------------------------------------------------------------------

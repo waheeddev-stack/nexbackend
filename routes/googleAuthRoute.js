@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import pool from "../config/db.js";
 import { createJWEToken } from "../utils/jweToken.js";
 import { OAuth2Client } from "google-auth-library";
-import { generateReferalCode } from "./referalRoute.js";
+import { generatereferralCode } from "./referralRoute.js";
 
 const router = express.Router();
 
@@ -145,11 +145,13 @@ router.post("/google/users", async (req, res) => {
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
         const MAX_ATTEMPTS = 5
+        let referralcode = ""
+        let result = []
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-          const referalcode = generateReferalCode(googleUser.name);
+          referralcode = generatereferralCode(googleUser.name);
           try {
-            const [result] = await pool.execute(
-              `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referalcode) 
+            [result] = await pool.execute(
+              `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referralcode) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 nextGoogleUserId,
@@ -159,18 +161,24 @@ router.post("/google/users", async (req, res) => {
                 googleUser.googleId,
                 googleUser.picture || null,
                 expoPushToken || null,
-                referalcode
+                referralcode
               ]
             );
             break;
           } catch (error) {
             if (error.errno === 1062) {
-                continue
+              continue
             }
-            console.log("New Referal code couldn't be added: " + error)
+            console.log("New referral code couldn't be added: " + error)
           }
         }
 
+        if (!(result) || (result.length === 0)) {
+          return res.status(500).json({
+            success: false,
+            message: "Failed to generate a unique referral code. Please try again.",
+          });
+        }
         console.log("✅ INSERT result:", result);
 
         user = {
@@ -184,7 +192,7 @@ router.post("/google/users", async (req, res) => {
           store_credits: 0,
           latitude: null,
           longitude: null,
-          referalcode: referalcode,
+          referralcode: referralcode,
           wallet: 0,
         };
 
@@ -224,7 +232,7 @@ router.post("/google/users", async (req, res) => {
         store_credits: user.store_credits,
         latitude: user.latitude,
         longitude: user.longitude,
-        referalcode: user.referalcode,
+        referralcode: user.referralcode,
         wallet: user.wallet
       },
       accessToken,
