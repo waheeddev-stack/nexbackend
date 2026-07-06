@@ -44,7 +44,7 @@ const calculateWellnessPoints = (
 };
 
 // Get point value in rupees
-const getPointValue = () => 0.25; // ₹0.25 per point
+const getPointValue = () => 0.1; // ₹0.1 per point
 
 // Calculate maximum points allowed (30% of order value)
 const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
