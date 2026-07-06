@@ -49,6 +49,7 @@ const __dirname = dirname(__filename);
 import { getConfig, validateEnvironment } from "./config/environment.js";
 import securityMiddleware from "./middleware/security.js";
 import { createRateLimiter } from "./middleware/validation.js";
+import referralRouter from "./routes/referralRoute.js";
 
 // Validate environment on startup
 try {
@@ -494,6 +495,7 @@ app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/user/recommendations", recommendationRouter);
 app.use("/api/recommendations", recommendationRouter);
+app.use("/api/refer", referralRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);

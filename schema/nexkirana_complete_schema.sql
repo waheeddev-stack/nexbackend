@@ -41,12 +41,32 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `expo_push_token` VARCHAR(255) DEFAULT NULL,
   `store_credits` INT(11) DEFAULT 0,
+  `wallet` DECIMAL(10,2) DEFAULT 0,
   `latitude` DECIMAL(10,8) DEFAULT NULL,
   `longitude` DECIMAL(11,8) DEFAULT NULL,
   `refresh_token` VARCHAR(500) DEFAULT NULL,
+  `referralcode` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `email` (`email`)
+  UNIQUE KEY `email` (`email`),
+  UNIQUE KEY `referralcode` (`referralcode`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=630001;
+
+-- ----------------------------------------------------------------------------
+-- Table: refer_transaction
+-- Description: Records the refering transaction which have been made
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `refer_transaction`(
+  `id` INT(11) NOT NULL AUTO_INCREMENT,
+  `refererid` INT(11) NOT NULL,
+  `referedid` INT(11) NOT NULL,
+  `refered_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_referedid` (`referedid`),
+  KEY `idx_refererid` (`refererid`),
+  CONSTRAINT `fk_refer_transaction_refererid` FOREIGN KEY (`refererid`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_refer_transaction_referedid` FOREIGN KEY (`referedid`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ----------------------------------------------------------------------------
 -- Table: shopkeepers
@@ -435,5 +455,6 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- Inventory Tables: 4 (inventory_logs, price_history, inventory_alerts, barcode_scans)
 -- Billing Tables: 2 (billing_payments, payment_info)
 -- Utility Tables: 1 (stock_restoration_log)
--- Total Tables: 15
+-- Refer Records Table: 1
+-- Total Tables: 16
 -- ============================================================================

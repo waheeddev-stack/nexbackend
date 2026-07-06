@@ -6,6 +6,7 @@ import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import verifyToken from "../middleware/auth.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { generatereferralCode } from "./referralRoute.js";
 
 dotenv.config();
 
@@ -110,9 +111,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
         const a =
           Math.sin(dLat / 2) * Math.sin(dLat / 2) +
           Math.cos((lat * Math.PI) / 180) *
-            Math.cos((shop.latitude * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
+          Math.cos((shop.latitude * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         const verifiedDistance = R * c * 1000; // Meters
 
@@ -260,7 +261,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Products without baselineQty are not considered "live" in the new system
     const shopIds = onlineShops.map((s) => s.id);
     let products = [];
-    
+
     if (shopIds.length > 0) {
       const placeholders = shopIds.map(() => "?").join(",");
       const [productsResult] = await pool.execute(
@@ -385,11 +386,33 @@ userrouter.post(
       );
       const nextId = (maxIdResult[0].maxId || 0) + 1;
 
-      // Insert new user into database with explicit ID
-      await pool.execute(
-        "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
-        [nextId, validatedData.name, validatedData.email, hashedPassword]
-      );
+      const MAX_ATTEMPTS = 5
+      let inserted = false
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const referralcode = generatereferralCode(validatedData.name);
+        try {
+          // Insert new user into database with explicit ID
+          await pool.execute(
+            "INSERT INTO users (id, name, email, password, referralcode) VALUES (?, ?, ?, ?, ?)",
+            [nextId, validatedData.name, validatedData.email, hashedPassword, referralcode]
+          );
+          inserted = true
+          break;
+        } catch (error) {
+          if (error.errno === 1062) {
+            continue
+          }
+          console.log("New User couldn't be added: " + error)
+          break
+        }
+      }
+
+      if (!inserted) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to register user. Please try again.",
+        })
+      }
 
       // Fetch the newly created user
       const [userRows] = await pool.execute(
