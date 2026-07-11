@@ -178,20 +178,13 @@ CREATE TABLE IF NOT EXISTS `orders` (
   -- Scheduling and delivery mode
   `scheduled_time` DATETIME DEFAULT NULL COMMENT 'Scheduled pickup or delivery time',
   `order_type` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Order type: pickup or delivery',
-  `delivery_mode` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Delivery mode: pickup or delivery',
-  -- Timer functionality
-  `has_timer` TINYINT(1) DEFAULT 0,
   `pickup_code` VARCHAR(10) DEFAULT NULL,
-  `timer_started_at` DATETIME DEFAULT NULL,
-  `timer_expires_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `fk_user_id` (`user_id`),
   KEY `fk_shopkeeper_id` (`shopkeeper_id`),
   INDEX `idx_orders_pickup_code` (`pickup_code`),
-  INDEX `idx_orders_timer` (`has_timer`, `timer_expires_at`),
   INDEX `idx_orders_scheduled` (`scheduled_time`),
-  INDEX `idx_orders_delivery_mode` (`delivery_mode`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`shopkeeper_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2220001;
@@ -212,28 +205,6 @@ CREATE TABLE IF NOT EXISTS `order_items` (
   FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1770001;
-
--- ----------------------------------------------------------------------------
--- Table: order_timers
--- Description: Timer tracking for pickup verification
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `order_timers` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `order_id` INT NOT NULL,
-  `pickup_code` VARCHAR(6) NOT NULL,
-  `timer_duration` INT DEFAULT 420,
-  `timer_started_at` TIMESTAMP NULL,
-  `timer_expires_at` TIMESTAMP NULL,
-  `is_active` BOOLEAN DEFAULT FALSE,
-  `is_expired` BOOLEAN DEFAULT FALSE,
-  `stopped_at` TIMESTAMP NULL,
-  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY `unique_order_timer` (`order_id`),
-  INDEX `idx_pickup_code` (`pickup_code`),
-  INDEX `idx_active_timers` (`is_active`, `timer_expires_at`),
-  FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ============================================================================
 -- INVENTORY MANAGEMENT TABLES

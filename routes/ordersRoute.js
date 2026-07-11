@@ -57,14 +57,14 @@ async function executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalT
           console.error(`❌ Failed to send notifications for order ${orderId}:`, err.message);
           return { success: false, task: 'notifications', error: err.message };
         }),
-      
+
       // Task 2: Award wellness points (non-blocking)
       awardWellnessPointsAsync(userId, finalTotal, orderId)
         .catch(err => {
           console.error(`❌ Failed to award wellness points for order ${orderId}:`, err.message);
           return { success: false, task: 'wellness_points', error: err.message };
         }),
-      
+
       // Task 3: Log order analytics (non-blocking)
       logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal)
         .catch(err => {
@@ -158,7 +158,7 @@ async function awardWellnessPointsAsync(userId, finalTotal, orderId) {
   try {
     // Award 1% of order amount as wellness points
     const pointsToAward = Math.floor(finalTotal * 0.01);
-    
+
     if (pointsToAward > 0) {
       const conn = await pool.getConnection();
       try {
@@ -186,7 +186,7 @@ async function logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal)
   try {
     // Log order creation for analytics
     console.log(`📊 Order Analytics - Order: ${orderId}, User: ${userId}, Shop: ${shopkeeperId}, Amount: ₹${finalTotal}`);
-    
+
     // Could be extended to write to analytics table or external service
     return { success: true, task: 'analytics' };
   } catch (error) {
@@ -208,9 +208,7 @@ router.get("/delivery-slots", verifyToken, async (req, res) => {
   try {
     const { date } = req.query;
     const baseDate = date ? new Date(date) : new Date();
-    
     const slots = calculateDeliverySlots(baseDate);
-    
     res.json({
       success: true,
       slots,
@@ -237,12 +235,12 @@ router.get("/delivery-slots", verifyToken, async (req, res) => {
 // ============================================================================
 // GET ALL ORDERS WITH FILTERS AND COUNTS
 // ============================================================================
-// GET /api/orders?status=all|pending|completed|cancelled&deliveryType=home_delivery|store_pickup
+// GET /api/orders?status=all|pending|completed|cancelled
 router.get("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
-    const { status = "all", deliveryType } = req.query;
+    const { status = "all" } = req.query;
 
     // Build WHERE clause for filtering based on role
     let whereConditions = [];
@@ -273,15 +271,6 @@ router.get("/", verifyToken, async (req, res) => {
       }
     }
 
-    // Add delivery type filter (supports both store_pickup and click_and_collect)
-    if (deliveryType) {
-      if (deliveryType === "store_pickup" || deliveryType === "click_and_collect") {
-        whereConditions.push("o.has_timer = 1");
-      } else if (deliveryType === "home_delivery") {
-        whereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
-      }
-    }
-
     const whereClause =
       whereConditions.length > 0
         ? "WHERE " + whereConditions.join(" AND ")
@@ -297,14 +286,6 @@ router.get("/", verifyToken, async (req, res) => {
     } else if (userRole === "shopkeeper") {
       countWhereConditions.push("o.shopkeeper_id = ?");
       countParams.push(userId);
-    }
-
-    if (deliveryType) {
-      if (deliveryType === "store_pickup" || deliveryType === "click_and_collect") {
-        countWhereConditions.push("o.has_timer = 1");
-      } else if (deliveryType === "home_delivery") {
-        countWhereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
-      }
     }
 
     const countWhereClause =
@@ -337,10 +318,6 @@ router.get("/", verifyToken, async (req, res) => {
         o.shopkeeper_id as shopkeeperId,
         o.shopkeeper_id as shopkeeper_id,
         CASE 
-          WHEN o.has_timer = 1 THEN 'store_pickup'
-          ELSE 'home_delivery'
-        END as delivery_mode,
-        CASE 
           WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
@@ -353,10 +330,7 @@ router.get("/", verifyToken, async (req, res) => {
         o.delivery_address,
         o.latitude,
         o.longitude,
-        o.has_timer,
         o.pickup_code,
-        o.timer_started_at,
-        o.timer_expires_at,
         o.created_at,
         o.scheduled_time,
         o.cancellation_reason,
@@ -398,60 +372,20 @@ router.get("/", verifyToken, async (req, res) => {
       orderItems = items;
     }
 
-    // Attach items and computed fields to each order
-    const ordersWithItems = orders.map((order) => {
-      // Compute delivery slot for home delivery orders (30-minute slots in next 12 hours)
-      const computeDeliverySlot = (createdAt) => {
-        const created = new Date(createdAt);
-        const start = new Date(created);
-        const minutes = start.getMinutes();
-        const roundedMinutes =
-          minutes % 30 === 0 ? minutes : minutes + (30 - (minutes % 30));
-        start.setMinutes(roundedMinutes, 0, 0);
-        const end = new Date(start.getTime() + 30 * 60 * 1000);
-        const limit = new Date(created.getTime() + 12 * 60 * 60 * 1000);
-        if (start > limit) {
-          start.setTime(limit.getTime());
-          end.setTime(limit.getTime() + 30 * 60 * 1000);
-        }
-        const label = `${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-        return {
-          startISO: start.toISOString(),
-          endISO: end.toISOString(),
-          label,
-        };
-      };
-
-      return {
-        ...order,
-        items: orderItems
-          .filter((item) => item.orderId === order.id)
-          .map((item) => ({
-            product_id: item.productId,
-            product_name: item.productName,
-            product_image: item.productImage,
-            product_category: item.productCategory,
-            quantity: item.quantity,
-            price: parseFloat(item.price),
-          })),
-        delivery_slot:
-          order.delivery_mode === "home_delivery"
-            ? computeDeliverySlot(order.created_at)
-            : null,
-        timer_info:
-          order.delivery_mode === "store_pickup"
-            ? {
-                has_timer: order.has_timer === 1,
-                pickup_code: order.pickup_code,
-                timer_started_at: order.timer_started_at,
-                timer_expires_at: order.timer_expires_at,
-                is_expired: order.timer_expires_at
-                  ? new Date() > new Date(order.timer_expires_at)
-                  : false,
-              }
-            : null,
-      };
-    });
+    // Attach items to each order
+    const ordersWithItems = orders.map((order) => ({
+      ...order,
+      items: orderItems
+        .filter((item) => item.orderId === order.id)
+        .map((item) => ({
+          product_id: item.productId,
+          product_name: item.productName,
+          product_image: item.productImage,
+          product_category: item.productCategory,
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+        })),
+    }));
 
     res.json({
       success: true,
@@ -530,15 +464,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         [cancellation_reason, orderIdNum]
       );
 
-      // Stop timer if order has one
-      await pool.execute(
-        `
-        UPDATE order_timers 
-        SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
-        WHERE order_id = ? AND is_active = TRUE
-      `,
-        [orderIdNum]
-      );
+      
 
       // Restore stock using manager utility
       const stockRestoration = await restoreStockForCancelledOrder(
@@ -578,8 +504,8 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
           const cancelledBy = userRole === "user" ? "customer" : "shopkeeper";
           const title = `Order #${orderIdNum} Cancelled`;
           const body = `Order was cancelled by ${cancelledBy}${cancellation_reason ? `: ${cancellation_reason}` : ''}`;
-          const pushPayload = { 
-            orderId: String(orderIdNum), 
+          const pushPayload = {
+            orderId: String(orderIdNum),
             status: "Cancelled",
             cancellation_reason,
             cancelled_by: cancelledBy
@@ -693,10 +619,6 @@ router.get("/status/:status", verifyToken, async (req, res) => {
         o.id as order_id,
         o.user_id,
         CASE 
-          WHEN o.has_timer = 1 THEN 'store_pickup'
-          ELSE 'home_delivery'
-        END as delivery_mode,
-        CASE 
           WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
@@ -774,10 +696,6 @@ router.get("/:orderId", verifyToken, async (req, res) => {
         o.user_id,
         o.shopkeeper_id,
         CASE 
-          WHEN o.has_timer = 1 THEN 'store_pickup'
-          ELSE 'home_delivery'
-        END as delivery_mode,
-        CASE 
           WHEN o.status = 'Completed' THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           WHEN o.status = 'Paid' THEN 'paid'
@@ -843,72 +761,6 @@ router.get("/:orderId", verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/orders/:orderId/timer
-router.get("/:orderId/timer", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { orderId } = req.params;
-
-    const [timerInfo] = await pool.execute(
-      `
-      SELECT o.id, o.status, o.has_timer, o.pickup_code, o.timer_started_at, o.timer_expires_at,
-             ot.timer_duration, ot.is_active, ot.is_expired, ot.stopped_at,
-             s.shop_name, s.name as shopkeeperName, s.phone as shopkeeperPhone, 
-             s.address as shopAddress, s.latitude as shopLatitude, s.longitude as shopLongitude
-      FROM orders o
-      LEFT JOIN order_timers ot ON o.id = ot.order_id
-      LEFT JOIN shopkeepers s ON o.shopkeeper_id = s.id
-      WHERE o.id = ? AND o.user_id = ?
-    `,
-      [orderId, userId]
-    );
-
-    if (timerInfo.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
-    }
-
-    const timer = timerInfo[0];
-    let timeLeft = 0;
-
-    if (timer.is_active && timer.timer_expires_at) {
-      const now = new Date();
-      const expiresAt = new Date(timer.timer_expires_at);
-      timeLeft = Math.max(0, Math.floor((expiresAt - now) / 1000));
-    }
-
-    res.json({
-      success: true,
-      timer: {
-        order_id: timer.id,
-        orderId: timer.id,
-        status: timer.status,
-        has_timer: timer.has_timer,
-        pickup_code: timer.pickup_code,
-        is_active: timer.is_active,
-        is_expired: timer.is_expired,
-        time_left: timeLeft,
-        timer_duration: timer.timer_duration,
-        started_at: timer.timer_started_at,
-        expires_at: timer.timer_expires_at,
-        stopped_at: timer.stopped_at,
-        shop_info: {
-          shopName: timer.shop_name,
-          shopkeeperName: timer.shopkeeperName,
-          shopkeeperPhone: timer.shopkeeperPhone,
-          shopAddress: timer.shopAddress,
-          shopLatitude: timer.shopLatitude,
-          shopLongitude: timer.shopLongitude,
-        },
-      },
-    });
-  } catch (err) {
-    console.error("Get order timer error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // GET /api/orders/:orderId/status
 router.get("/:orderId/status", verifyToken, async (req, res) => {
   try {
@@ -917,8 +769,8 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 
     const [orderInfo] = await pool.execute(
       `
-      SELECT id, id as orderId, status, has_timer, pickup_code, timer_started_at, timer_expires_at,
-             total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
+      SELECT id, id as orderId, status, pickup_code,
+      total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
       FROM orders 
       WHERE id = ? AND user_id = ?
     `,
@@ -942,7 +794,7 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 // CREATE NEW ORDER - OPTIMIZED WITH PREFETCH CACHE
 // ============================================================================
 // POST /api/orders
-router.post("/", verifyToken, async (req, res) => {
+async function createOrderHandler(req, res) {
   const startTime = Date.now();
   const connection = await pool.getConnection();
 
@@ -952,14 +804,14 @@ router.post("/", verifyToken, async (req, res) => {
 
     // OPTIMIZATION #1: Use cached shopkeeper data (saves ~50-100ms)
     let shopkeeper = getCachedShopkeeper(shopkeeperId);
-    
+
     if (!shopkeeper) {
       // Fallback to DB if not cached
       const [shopkeeperCheck] = await connection.execute(
         `SELECT id, subscription_status, is_deleted, expo_push_token FROM shopkeepers WHERE id = ? LIMIT 1`,
         [shopkeeperId]
       );
-      
+
       if (!shopkeeperCheck || shopkeeperCheck.length === 0) {
         connection.release();
         return res.status(404).json({
@@ -970,7 +822,7 @@ router.post("/", verifyToken, async (req, res) => {
       }
       shopkeeper = shopkeeperCheck[0];
     }
-    
+
     // Validate shopkeeper status
     if (shopkeeper.is_deleted) {
       connection.release();
@@ -980,7 +832,7 @@ router.post("/", verifyToken, async (req, res) => {
         code: 'SHOP_DELETED'
       });
     }
-    
+
     if (shopkeeper.subscription_status !== 'active') {
       connection.release();
       return res.status(400).json({
@@ -996,7 +848,6 @@ router.post("/", verifyToken, async (req, res) => {
     const {
       items: reqItems,
       products,
-      deliveryType: reqDeliveryType,
       order_type,
       totalAmount: reqTotalAmount,
       total,
@@ -1015,7 +866,7 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Use aliases if main fields are missing
     const items = reqItems || products;
-    const deliveryType = reqDeliveryType || order_type || "home_delivery";
+    const orderType = reqDeliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
     // shopkeeperId already declared earlier, just reassign if needed
     // const shopkeeperId = reqShopkeeperId || shopId;
@@ -1052,17 +903,17 @@ router.post("/", verifyToken, async (req, res) => {
     // Lock rows for update to prevent concurrent modifications
     const productIds = items.map(item => item.productId || item.product_id);
     const placeholders = productIds.map(() => '?').join(',');
-    
+
     const [products_check] = await connection.execute(
       `SELECT id, stock FROM products WHERE id IN (${placeholders}) AND shop_id = ? FOR UPDATE`,
       [...productIds, shopkeeperId]
     );
-    
+
     // Validate stock for each item
     for (const item of items) {
       const productId = item.productId || item.product_id;
       const product = products_check.find(p => p.id === productId);
-      
+
       if (!product) {
         await connection.rollback();
         return res.status(404).json({
@@ -1072,7 +923,7 @@ router.post("/", verifyToken, async (req, res) => {
           productId
         });
       }
-      
+
       if (product.stock < item.quantity) {
         await connection.rollback();
         return res.status(400).json({
@@ -1086,19 +937,17 @@ router.post("/", verifyToken, async (req, res) => {
       }
     }
 
-    // Determine if this is a store pickup order (supports both store_pickup and click_and_collect)
-    const hasTimer = (deliveryType === "store_pickup" || deliveryType === "click_and_collect") ? 1 : 0;
     // Generate pickup/verification code for ALL orders (both pickup and delivery)
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    console.log(`📋 Order creation: deliveryType="${deliveryType}", hasTimer=${hasTimer}, pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
+
+    console.log(`📋 Order creation: deliveryType="${orderType}", pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
 
     // OPTIMIZATION #2: Use cached user data for points (saves ~30-50ms)
     let pointsDiscount = 0;
     if (creditsUsed > 0) {
       try {
         let user = getCachedUser(userId);
-        
+
         if (!user) {
           // Fallback to DB if not cached
           const [[userDb]] = await connection.execute(
@@ -1132,7 +981,7 @@ router.post("/", verifyToken, async (req, res) => {
           creditsUsed
         );
         pointsDiscount = pointsResult.discountAmount;
-        
+
         // Invalidate user cache after points change
         invalidateUserCache(userId);
       } catch (pointsError) {
@@ -1150,18 +999,12 @@ router.post("/", verifyToken, async (req, res) => {
       "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
     );
     const orderId = maxOrderId[0].nextId;
-    
+
     // Calculate credits earned (1% of total amount)
     const creditsEarned = Math.floor(finalTotal * 0.01);
 
     // Precompute timer timestamps for click & collect
     const now = new Date();
-    // Convert to ISO string format for proper MySQL/TiDB handling
-    const timerStartedAt = hasTimer ? now.toISOString().slice(0, 19).replace('T', ' ') : null;
-    const timerExpiresAt = hasTimer
-      ? new Date(now.getTime() + TIMER_DURATION_SECONDS * 1000).toISOString().slice(0, 19).replace('T', ' ')
-      : null;
-
     // Insert order
     await connection.execute(
       `
@@ -1177,15 +1020,11 @@ router.post("/", verifyToken, async (req, res) => {
         delivery_address,
         latitude,
         longitude,
-        has_timer,
         pickup_code,
-        timer_started_at,
-        timer_expires_at,
         order_type,
-        delivery_mode,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -1198,40 +1037,13 @@ router.post("/", verifyToken, async (req, res) => {
         deliveryAddress,
         latitude,
         longitude,
-        hasTimer,
         pickupCode,
-        timerStartedAt,
-        timerExpiresAt,
-        deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
-          ? "pickup"
-          : "delivery",
-        deliveryType === "store_pickup" || deliveryType === "click_and_collect" || deliveryType === "pickup"
+        orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup"
           ? "pickup"
           : "delivery",
         scheduledTime,
       ]
     );
-
-    // Create timer record in order_timers table (only for pickup orders)
-    if (hasTimer) {
-      try {
-        await connection.execute(
-          `
-          INSERT INTO order_timers (order_id, pickup_code, timer_duration, timer_started_at, timer_expires_at, is_active)
-          VALUES (?, ?, ?, ?, ?, TRUE)
-        `,
-          [
-            orderId,
-            pickupCode,
-            TIMER_DURATION_SECONDS,
-            timerStartedAt,
-            timerExpiresAt,
-          ]
-        );
-      } catch (timerError) {
-        console.warn("Timer record creation failed:", timerError.message);
-      }
-    }
 
     // OPTIMIZATION: Batch insert order items (saves ~200-400ms per item)
     if (items.length > 0) {
@@ -1259,10 +1071,10 @@ router.post("/", verifyToken, async (req, res) => {
         // Add to batch insert
         itemValues.push('(?, ?, ?, ?, ?)');
         itemParams.push(itemId, orderId, productId, quantity, price);
-        
+
         // Prepare stock update
         stockUpdates.push({ productId, quantity });
-        
+
         itemId++;
       }
 
@@ -1283,7 +1095,7 @@ router.post("/", verifyToken, async (req, res) => {
     // Stock deduction will happen via inventory hook after response is sent
 
     await connection.commit();
-    
+
     // Invalidate product cache after stock change
     invalidateProductCache(shopkeeperId);
 
@@ -1322,7 +1134,7 @@ router.post("/", verifyToken, async (req, res) => {
         // Parallel fetch if not cached
         if (!shopkeeperData || !userData) {
           const fetchPromises = [];
-          
+
           if (!shopkeeperData) {
             fetchPromises.push(
               connection.execute(
@@ -1361,8 +1173,8 @@ router.post("/", verifyToken, async (req, res) => {
           const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
 
           notificationPromises.push(
-            (isFCMToken(token) 
-              ? sendFCMPush(token, title, body, payload) 
+            (isFCMToken(token)
+              ? sendFCMPush(token, title, body, payload)
               : sendExpoPush(token, title, body, payload)
             ).catch(err => console.error(`Failed to send push to shopkeeper:`, err))
           );
@@ -1376,8 +1188,8 @@ router.post("/", verifyToken, async (req, res) => {
           const payload = { orderId: String(orderId), status: "Pending" };
 
           notificationPromises.push(
-            (isFCMToken(token) 
-              ? sendFCMPush(token, title, body, payload) 
+            (isFCMToken(token)
+              ? sendFCMPush(token, title, body, payload)
               : sendExpoPush(token, title, body, payload)
             ).catch(err => console.error(`Failed to send push to customer:`, err))
           );
@@ -1400,9 +1212,6 @@ router.post("/", verifyToken, async (req, res) => {
             totalAmount: finalTotal,
             creditsEarned,
             pickupCode,
-            hasTimer: hasTimer === 1,
-            timerStartedAt,
-            timerExpiresAt,
             createdAt: now.toISOString(),
           };
 
@@ -1432,6 +1241,63 @@ router.post("/", verifyToken, async (req, res) => {
     });
   } finally {
     connection.release();
+  }
+}
+router.post("/", verifyToken, createOrderHandler);
+
+router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const orderId = req.params.orderid;
+    const [verifyOrder] = await pool.execute(
+      `SELECT EXISTS ( SELECT 1 FROM orders WHERE id = ? AND user_id = ?) AS order_exists;`,
+      [orderId, userId]
+    );
+    if (!verifyOrder[0].order_exists) {
+      return res.status(404).json({
+        success: false,
+        message: "No order of the user found of the specified id."
+      });
+    }
+    // Fetch the items from that order
+    const [items] = await pool.query(
+      `SELECT product_id, quantity, price FROM order_items WHERE order_id = ?`,
+      [orderId]
+    );
+
+    if (items.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No items found for this order'
+      });
+    }
+
+    const totalAmount = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+
+    // Reshape req.body to match what createOrderHandler expects
+    req.body = {
+      items: items.map(i => ({
+        productId: i.product_id,
+        quantity: i.quantity,
+        price: i.price,
+      })),
+      shopkeeperId: oldOrder.shopkeeper_id,
+      deliveryType: oldOrder.order_type || "delivery",
+      totalAmount,
+      paymentMethod: oldOrder.payment_method || 'cod',
+      deliveryAddress: oldOrder.delivery_address,
+      latitude: oldOrder.latitude,
+      longitude: oldOrder.longitude,
+    };
+
+    // Delegate to the shared order-creation logic
+    return createOrderHandler(req, res);
+  } catch (err) {
+    console.error('Error creating repeat order:', err);
+    res.status(500).json({ success: false, message: 'Error creating repeat order' });
   }
 });
 
@@ -1481,7 +1347,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     // Check if order exists and get details for authorization and notifications
     const [orderRows] = await pool.execute(
       `
-      SELECT id, status, user_id, shopkeeper_id, total_amount, has_timer, timer_started_at, order_type, delivery_mode
+      SELECT id, status, user_id, shopkeeper_id, total_amount, order_type
       FROM orders 
       WHERE id = ?
     `,
@@ -1520,16 +1386,6 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           [cancellation_reason || `${userRole} cancellation`, orderIdNum]
         );
 
-        // Stop timer
-        await pool.execute(
-          `
-          UPDATE order_timers 
-          SET is_active = FALSE, stopped_at = NOW(), is_expired = FALSE
-          WHERE order_id = ? AND is_active = TRUE
-        `,
-          [orderIdNum]
-        );
-
         // Restore stock
         await restoreStockForCancelledOrder(
           orderIdNum,
@@ -1561,12 +1417,11 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
 
       // Award wellness points
       try {
-        const orderType = order.order_type || order.delivery_mode || "pickup";
+        const orderType = order.order_type || "pickup";
         await awardWellnessPoints(
           pool,
           order.user_id,
           new Date(),
-          order.timer_started_at || new Date(),
           order.total_amount,
           orderType
         );

@@ -1399,7 +1399,7 @@ adminRouter.get("/admins", verifyAdminToken, async (req, res) => {
 // Fetch all orders (admin)
 adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
   try {
-    const { status = "all", deliveryType } = req.query;
+    const { status = "all" } = req.query;
 
     // Build WHERE clause for filtering
     let whereConditions = [];
@@ -1413,15 +1413,6 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
         whereConditions.push("o.status IN ('Completed', 'Delivered')");
       } else if (status === "cancelled") {
         whereConditions.push("o.status = 'Cancelled'");
-      }
-    }
-
-    // Add delivery type filter
-    if (deliveryType) {
-      if (deliveryType === "store_pickup") {
-        whereConditions.push("o.has_timer = 1");
-      } else if (deliveryType === "home_delivery") {
-        whereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
       }
     }
 
@@ -1459,15 +1450,8 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
          o.latitude,
          o.longitude,
          o.delivery_address as deliveryAddress,
-         o.has_timer as hasTimer,
          o.pickup_code as pickupCode,
-         o.timer_started_at as timerStartedAt,
-         o.timer_expires_at as timerExpiresAt,
          o.created_at as createdAt,
-         CASE 
-           WHEN o.has_timer = 1 THEN 'store_pickup'
-           ELSE 'home_delivery'
-         END as deliveryType,
          u.name AS customerName,
          u.email AS customerEmail,
          u.phone AS customerPhone,

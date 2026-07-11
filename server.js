@@ -32,10 +32,6 @@ import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
 // Import subscription status cron job
 import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
-import {
-  startTimerCleanupCron,
-  getTimerCleanupCronStatus,
-} from "./cron/timer.cleanup.cron.js";
 
 // Import timer table initialization
 import { fileURLToPath } from "url";
@@ -576,40 +572,6 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.error("❌ Failed to initialize service status tables:", error);
   }
 
-  // Initialize timer tables
-  try {
-    console.log("🔧 Initializing timer tables...");
-    const schemaPath = join(__dirname, "schema", "order_timers.sql");
-
-    if (fs.existsSync(schemaPath)) {
-      const schema = fs.readFileSync(schemaPath, "utf8");
-      const statements = schema
-        .split(";")
-        .map((stmt) => stmt.trim())
-        .filter((stmt) => stmt.length > 0 && !stmt.startsWith("--"));
-
-      for (const statement of statements) {
-        try {
-          await db.query(statement);
-        } catch (error) {
-          if (
-            !error.message.includes("already exists") &&
-            !error.message.includes("Duplicate column name") &&
-            !error.message.includes("Duplicate key name")
-          ) {
-            console.warn("Timer table setup warning:", error.message);
-          }
-        }
-      }
-      console.log("✅ Timer tables initialized");
-    } else {
-      console.warn(
-        "⚠️ Timer schema file not found, skipping timer table initialization"
-      );
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize timer tables:", error);
-  }
 
   // Start subscription status cron job
   try {
@@ -617,17 +579,6 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.log("✅ Subscription status monitoring activated");
   } catch (error) {
     console.error("❌ Failed to start subscription status cron:", error);
-  }
-
-  // Start timer cleanup cron job
-  try {
-    startTimerCleanupCron(undefined, io);
-    const timerCronStatus = getTimerCleanupCronStatus();
-    console.log(
-      `✅ Timer cleanup cron started (interval ${timerCronStatus.intervalMs}ms)`
-    );
-  } catch (error) {
-    console.error("❌ Failed to start timer cleanup cron:", error);
   }
 
   console.log("📋 Available endpoints:");
