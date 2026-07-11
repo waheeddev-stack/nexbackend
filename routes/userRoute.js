@@ -753,4 +753,31 @@ userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
   }
 });
 
+userrouter.get("/leaderboard", async (req, res) => {
+
+  const userId = req.user.id;
+
+  const [leaderboard] = await pool.execute(
+    `SELECT id, store_credits, 
+    DENSE_RANK() OVER (ORDER BY store_credits DESC) AS rank 
+    FROM users ORDER BY store_credits DESC LIMIT 10;`
+  );
+
+  const [rows] = await pool.execute(
+    `SELECT id, store_credits, rank FROM (
+     SELECT id, store_credits,
+      DENSE_RANK() OVER (ORDER BY store_credits DESC) AS rank
+      FROM users
+    ) ranked
+   WHERE id = ?`,
+    [userId]
+  );
+
+  const userRank = rows[0];
+
+  if (!userRank) { return res.status(404).json({ success: false, message: "User is not found" }) };
+
+  return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
+});
+
 export default userrouter;
