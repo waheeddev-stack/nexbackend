@@ -2,46 +2,13 @@ import express from "express";
 import cors from "cors";
 import http from "http";
 import { Server } from "socket.io";
-
-import userrouter from "./routes/userRoute.js";
-import shopkeeperRouter from "./routes/shopkeeperRoute.js";
-import adminRouter from "./routes/adminRoute.js";
-import ordersRouter from "./routes/ordersRoute.js";
-import notificationRouter from "./routes/notificationRoute.js";
-import authRouter from "./routes/authRoute.js";
-import googleAuthRouter from "./routes/googleAuthRoute.js";
-import inventoryRouter from "./routes/inventoryRoute.js";
-import passwordResetRouter from "./routes/passwordResetRoute.js";
-import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
-import navigationRouter from "./navigation.js";
-import serviceStatusRouter from "./routes/serviceStatusRoute.js";
-import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
-import recommendationRouter from "./routes/recommendationRoute.js";
-import db from "./config/db.js";
-
-// Import inventory management integration components
-import { initializeInventoryDB } from "./config/inventory.db.bridge.js";
-import {
-  startRestockCron,
-  getRestockCronStatus,
-} from "./cron/inventory.restock.cron.js";
-import inventoryMgmtRouter from "./routes/inventory.routes.wrapper.js";
-import { attachInventoryHooks } from "./middleware/inventory.order.hooks.js";
-
-// Import stock manager for table initialization
-import { createStockRestorationLogTable } from "./utils/stockManager.js";
-
-// Import subscription status cron job
-import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
-import {
-  startTimerCleanupCron,
-  getTimerCleanupCronStatus,
-} from "./cron/timer.cleanup.cron.js";
-
-// Import timer table initialization
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import fs from "fs";
+import { dirname } from "path";
+
+import db from "./config/db.js";
+import navigationRouter from "./navigation.js";
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -144,8 +111,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Register inventory middleware (attaches hooks to requests)
-app.use(attachInventoryHooks);
+
 
 // Socket.IO: handle connections and room joins
 io.on("connection", (socket) => {
@@ -480,25 +446,9 @@ app.get("/api/debug-admin", async (req, res) => {
   }
 });
 
-// Routes
-app.use("/api/auth", authRouter);
-app.use("/api/auth", googleAuthRouter); // Google OAuth routes
-app.use("/api/password-reset", passwordResetRouter); // Password reset routes
-app.use("/reset-password", deepLinkRedirectRouter); // Deep link redirect for emails
-app.use("/api/service", serviceStatusRouter); // Service status endpoint (public)
-app.use("/api/user", userrouter);
-app.use("/api/shopkeeper", shopkeeperRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/orders", ordersRouter);
-app.use("/api/prefetch", orderPrefetchRouter); // Order prefetch routes for performance
-app.use("/api/notifications", notificationRouter);
-app.use("/api/inventory", inventoryRouter);
-app.use("/api/user/recommendations", recommendationRouter);
-app.use("/api/recommendations", recommendationRouter);
-
-// Register inventory management routes
-app.use("/api/inventory-mgmt", inventoryMgmtRouter);
+// Navigation routes only
 app.use("/api/navigation", navigationRouter);
+
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
@@ -513,122 +463,8 @@ server.listen(PORT, "0.0.0.0", async () => {
   console.log(`✅ Server successfully started on port ${PORT}`);
   console.log(`🌐 Server accessible at: http://0.0.0.0:${PORT}`);
 
-  // Initialize stock restoration table
-  try {
-    await createStockRestorationLogTable();
-    console.log("✅ Stock restoration table initialized");
-  } catch (error) {
-    console.error("❌ Failed to initialize stock restoration table:", error);
-  }
+  // Navigation-only backend: no extra cron/schema init.
 
-  // Initialize inventory integration
-  try {
-    console.log("🔧 Initializing inventory management integration...");
-
-    // Initialize database bridge
-    await initializeInventoryDB();
-    console.log("✅ Inventory database bridge initialized");
-
-    // Start restock cron job
-    startRestockCron();
-    const cronStatus = getRestockCronStatus();
-    console.log(`✅ Restock cron started (${cronStatus.schedule})`);
-    console.log("✅ Inventory management integration activated");
-  } catch (error) {
-    console.error("❌ Failed to initialize inventory integration:", error);
-  }
-
-  // Initialize timer tables
-  try {
-    console.log("🔧 Initializing service status tables...");
-    const serviceStatusSchemaPath = join(
-      __dirname,
-      "migrations",
-      "001_create_service_status_tables.sql"
-    );
-
-    if (fs.existsSync(serviceStatusSchemaPath)) {
-      const schema = fs.readFileSync(serviceStatusSchemaPath, "utf8");
-      const statements = schema
-        .split(";")
-        .map((stmt) => stmt.trim())
-        .filter((stmt) => stmt.length > 0 && !stmt.startsWith("--"));
-
-      for (const statement of statements) {
-        try {
-          await db.execute(statement);
-        } catch (error) {
-          if (
-            !error.message.includes("already exists") &&
-            !error.message.includes("Duplicate")
-          ) {
-            console.warn("Service status table setup warning:", error.message);
-          }
-        }
-      }
-      console.log("✅ Service status tables initialized");
-    } else {
-      console.warn(
-        "⚠️ Service status schema file not found, skipping initialization"
-      );
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize service status tables:", error);
-  }
-
-  // Initialize timer tables
-  try {
-    console.log("🔧 Initializing timer tables...");
-    const schemaPath = join(__dirname, "schema", "order_timers.sql");
-
-    if (fs.existsSync(schemaPath)) {
-      const schema = fs.readFileSync(schemaPath, "utf8");
-      const statements = schema
-        .split(";")
-        .map((stmt) => stmt.trim())
-        .filter((stmt) => stmt.length > 0 && !stmt.startsWith("--"));
-
-      for (const statement of statements) {
-        try {
-          await db.query(statement);
-        } catch (error) {
-          if (
-            !error.message.includes("already exists") &&
-            !error.message.includes("Duplicate column name") &&
-            !error.message.includes("Duplicate key name")
-          ) {
-            console.warn("Timer table setup warning:", error.message);
-          }
-        }
-      }
-      console.log("✅ Timer tables initialized");
-    } else {
-      console.warn(
-        "⚠️ Timer schema file not found, skipping timer table initialization"
-      );
-    }
-  } catch (error) {
-    console.error("❌ Failed to initialize timer tables:", error);
-  }
-
-  // Start subscription status cron job
-  try {
-    startSubscriptionStatusCron();
-    console.log("✅ Subscription status monitoring activated");
-  } catch (error) {
-    console.error("❌ Failed to start subscription status cron:", error);
-  }
-
-  // Start timer cleanup cron job
-  try {
-    startTimerCleanupCron(undefined, io);
-    const timerCronStatus = getTimerCleanupCronStatus();
-    console.log(
-      `✅ Timer cleanup cron started (interval ${timerCronStatus.intervalMs}ms)`
-    );
-  } catch (error) {
-    console.error("❌ Failed to start timer cleanup cron:", error);
-  }
 
   console.log("📋 Available endpoints:");
   console.log("  - GET  / (Health check)");
