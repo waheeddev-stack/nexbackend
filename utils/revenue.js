@@ -12,7 +12,7 @@
 export function calculateTotalRevenue(orders) {
   if (!Array.isArray(orders)) return 0;
   
-  return orders
+  const totalRevenue = orders
     .filter(order => {
       const status = (order.status || '').toUpperCase();
       return status === 'COMPLETED' || status === 'DELIVERED';
@@ -21,6 +21,8 @@ export function calculateTotalRevenue(orders) {
       const val = order.value !== undefined ? order.value : (order.total_amount || 0);
       return total + Number(val);
     }, 0);
+    
+  return Math.round(totalRevenue);
 }
 
 /**
@@ -49,7 +51,7 @@ export function calculatePlatformFee(totalRevenue) {
   }
 
   // Calculate the actual fee amount
-  const feeAmount = (totalRevenue * feePercentage) / 100;
+  const feeAmount = Math.round((totalRevenue * feePercentage) / 100);
   
   return {
     feePercentage: feePercentage,
@@ -79,7 +81,7 @@ export function generateBill(shopkeeperId, orders) {
     grossRevenue: totalRevenue,
     platformFeePercentage: `${feeDetails.feePercentage}%`,
     platformFeeAmount: feeDetails.feeAmount,
-    netPayoutToShopkeeper: totalRevenue - feeDetails.feeAmount,
+    netPayoutToShopkeeper: Math.round(totalRevenue - feeDetails.feeAmount),
     generatedAt: new Date().toISOString()
   };
 }
