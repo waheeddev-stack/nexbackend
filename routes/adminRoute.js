@@ -8,6 +8,7 @@ import cloudinary from "../config/cloudinary.js";
 import streamifier from "streamifier";
 import { processPaymentApproval } from "../utils/subscription.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { calculatePlatformFee } from "../utils/revenue.js";
 
 const adminRouter = express.Router();
 
@@ -2133,6 +2134,17 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       ORDER BY pending_amount DESC, s.name ASC
     `);
 
+    // Fetch gross sales for all shopkeepers to calculate platform fees
+    const [salesData] = await pool.execute(`
+      SELECT 
+        shopkeeper_id,
+        COALESCE(SUM(total_amount), 0) as gross_revenue,
+        COUNT(*) as completed_orders_count
+      FROM orders
+      WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id IS NOT NULL
+      GROUP BY shopkeeper_id
+    `);
+
     // Calculate payment status for each shopkeeper and normalize subscription_status
     const enrichedEarnings = shopkeeperEarnings.map((earning) => {
       // No trial period - billing starts from day 1
@@ -2157,11 +2169,19 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         }
       }
 
+      const sales = salesData.find(s => s.shopkeeper_id === earning.shopkeeper_id) || { gross_revenue: 0, completed_orders_count: 0 };
+      const feeDetails = calculatePlatformFee(Number(sales.gross_revenue));
+
       return {
         ...earning,
         subscription_status, // Use normalized status
         payment_status,
         next_payment_date: earning.next_payment_due,
+        gross_revenue: Number(sales.gross_revenue),
+        completed_orders_count: sales.completed_orders_count,
+        platform_fee_percentage: `${feeDetails.feePercentage}%`,
+        platform_fee_amount: feeDetails.feeAmount,
+        net_payout: Number(sales.gross_revenue) - feeDetails.feeAmount,
       };
     });
 

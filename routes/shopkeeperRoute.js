@@ -16,6 +16,7 @@ import {
 } from "../utils/subscription.js";
 import { createJWEToken } from "../utils/jweToken.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
+import { generateBill } from "../utils/revenue.js";
 
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
@@ -1806,17 +1807,13 @@ shopkeeperRouter.get(
         )
         .catch(() => [[{ pending_amount: 0 }]]);
 
-      // Get order stats
-      const [orderStats] = await pool.execute(
-        `SELECT
-        COUNT(*) as total_orders,
-        COUNT(CASE WHEN status = 'Delivered' THEN 1 END) as delivered_orders,
-        COALESCE(SUM(CASE WHEN status = 'Delivered' THEN total_amount END), 0) as total_sales
-       FROM orders
-       WHERE shopkeeper_id = ?`,
+      // Get all orders for this shopkeeper to calculate revenue and platform fees
+      const [orders] = await pool.execute(
+        `SELECT status, total_amount FROM orders WHERE shopkeeper_id = ?`,
         [shopkeeper_id]
       );
 
+      const bill = generateBill(shopkeeper_id, orders);
       const shopData = shopkeeper[0] || {};
 
       res.json({
@@ -1828,14 +1825,46 @@ shopkeeperRouter.get(
           shop_scale: shopData.shop_scale || "small",
           trial_ends_at: shopData.trial_ends_at,
           next_payment_due: shopData.next_payment_due,
-          total_orders: orderStats[0].total_orders,
-          delivered_orders: orderStats[0].delivered_orders,
-          total_sales: orderStats[0].total_sales,
+          total_orders: orders.length,
+          delivered_orders: bill.totalOrdersProcessed,
+          total_sales: bill.grossRevenue,
+          platform_fee_percentage: bill.platformFeePercentage,
+          platform_fee_amount: bill.platformFeeAmount,
+          net_payout_to_shopkeeper: bill.netPayoutToShopkeeper,
         },
       });
     } catch (err) {
       console.error("Get billing summary error:", err);
       res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// GET /api/shopkeeper/generate-bill - Generate exact detailed platform fee bill/receipt
+shopkeeperRouter.get(
+  "/generate-bill",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+
+      // Fetch all orders for this shopkeeper
+      const [orders] = await pool.execute(
+        `SELECT status, total_amount FROM orders WHERE shopkeeper_id = ?`,
+        [shopkeeper_id]
+      );
+
+      // Generate the platform fee receipt/bill
+      const bill = generateBill(shopkeeper_id, orders);
+
+      res.json({
+        success: true,
+        bill: bill
+      });
+    } catch (err) {
+      console.error("Generate bill error:", err);
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
 );
