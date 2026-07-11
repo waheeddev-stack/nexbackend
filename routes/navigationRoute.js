@@ -63,67 +63,13 @@ router.get("/nearby", async (req, res) => {
     nearbyShops.sort((a, b) => a.distanceKm - b.distanceKm);
 
     if (nearbyShops.length === 0) {
-      console.warn("⚠️ No nearby shops found in database; returning location-based mock shops.");
-      const mockShops = [
-        {
-          id: 1,
-          shop_name: "Quick Mart Express",
-          address: `Nearby Market @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-          latitude: userLat + 0.0032,
-          longitude: userLng + 0.0028,
-          is_online: 1,
-          phone: "+91-9876543210",
-        },
-        {
-          id: 2,
-          shop_name: "Fresh Grocery Store",
-          address: `Local Grocery @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-          latitude: userLat - 0.0025,
-          longitude: userLng + 0.0041,
-          is_online: 1,
-          phone: "+91-9876543211",
-        },
-        {
-          id: 3,
-          shop_name: "Daily Needs Supermarket",
-          address: `Community Shop @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-          latitude: userLat + 0.0047,
-          longitude: userLng - 0.0036,
-          is_online: 1,
-          phone: "+91-9876543212",
-        },
-        {
-          id: 4,
-          shop_name: "Premium Kirana",
-          address: `City Center Kirana @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-          latitude: userLat - 0.0038,
-          longitude: userLng - 0.0022,
-          is_online: 1,
-          phone: "+91-9876543213",
-        },
-      ];
-
-      const nearbyMockShops = mockShops
-        .map((shop) => ({
-          ...shop,
-          distanceKm: parseFloat(
-            calculateHaversineDistance(userLat, userLng, shop.latitude, shop.longitude).toFixed(2)
-          ),
-        }))
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .map((shop) => ({
-          ...shop,
-          estimatedDeliveryTime: `${Math.round(10 + shop.distanceKm * 3)} mins`,
-        }));
-
       return res.status(200).json({
         success: true,
-        count: nearbyMockShops.length,
+        count: 0,
         center: { lat: userLat, lng: userLng },
         radiusKm: maxRadius,
-        shops: nearbyMockShops,
+        shops: [],
         timestamp: new Date().toISOString(),
-        note: "Using mock data because no database shops were found",
       });
     }
 
@@ -136,72 +82,11 @@ router.get("/nearby", async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("❌ Error fetching nearby shops from database, using mock fallback:", error.message || error);
-
-    const userLat = parseFloat(lat);
-    const userLng = parseFloat(lng);
-    const maxRadiusValue = parseFloat(radiusKm);
-
-    const mockShops = [
-      {
-        id: 1,
-        shop_name: "Quick Mart Express",
-        address: `Nearby Market @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-        latitude: userLat + 0.0032,
-        longitude: userLng + 0.0028,
-        is_online: 1,
-        phone: "+91-9876543210",
-      },
-      {
-        id: 2,
-        shop_name: "Fresh Grocery Store",
-        address: `Local Grocery @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-        latitude: userLat - 0.0025,
-        longitude: userLng + 0.0041,
-        is_online: 1,
-        phone: "+91-9876543211",
-      },
-      {
-        id: 3,
-        shop_name: "Daily Needs Supermarket",
-        address: `Community Shop @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-        latitude: userLat + 0.0047,
-        longitude: userLng - 0.0036,
-        is_online: 1,
-        phone: "+91-9876543212",
-      },
-      {
-        id: 4,
-        shop_name: "Premium Kirana",
-        address: `City Center Kirana @ ${userLat.toFixed(3)}, ${userLng.toFixed(3)}`,
-        latitude: userLat - 0.0038,
-        longitude: userLng - 0.0022,
-        is_online: 1,
-        phone: "+91-9876543213",
-      },
-    ];
-
-    const nearbyMockShops = mockShops
-      .map((shop) => ({
-        ...shop,
-        distanceKm: parseFloat(
-          calculateHaversineDistance(userLat, userLng, shop.latitude, shop.longitude).toFixed(2)
-        ),
-      }))
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .map((shop) => ({
-        ...shop,
-        estimatedDeliveryTime: `${Math.round(10 + shop.distanceKm * 3)} mins`,
-      }));
-
-    return res.status(200).json({
-      success: true,
-      count: nearbyMockShops.length,
-      center: { lat: userLat, lng: userLng },
-      radiusKm: maxRadiusValue,
-      shops: nearbyMockShops,
-      timestamp: new Date().toISOString(),
-      note: "Using mock data - database unavailable",
+    console.error("❌ Error fetching nearby shops from database:", error.message || error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch nearby shops",
+      error: error.message,
     });
   }
 });
@@ -427,32 +312,34 @@ router.get("/order/:orderId", trackingRateLimiter, verifyToken, async (req, res)
       }
     }
 
-    // TODO: Fetch order data from database
-    // For now, returning mock data structure
-    // You'll need to join orders, customers, and shopkeepers tables
+    const [orderDetails] = await pool.execute(
+      `SELECT 
+        o.id as order_id,
+        u.latitude as customer_lat, u.longitude as customer_lng,
+        s.latitude as shop_lat, s.longitude as shop_lng
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       JOIN shopkeepers s ON o.shopkeeper_id = s.id
+       WHERE o.id = ?`,
+      [orderId]
+    );
 
-    // Example query structure:
-    // SELECT 
-    //   o.id as order_id,
-    //   c.latitude as customer_lat, c.longitude as customer_lng,
-    //   s.latitude as shop_lat, s.longitude as shop_lng
-    // FROM orders o
-    // JOIN customers c ON o.customer_id = c.id
-    // JOIN shopkeepers s ON o.shopkeeper_id = s.id
-    // WHERE o.id = ?
+    if (orderDetails.length === 0) {
+      return res.status(404).json({ success: false, message: "Order data not found" });
+    }
 
-    // For development, you can use mock coordinates
-    const mockOrder = {
-      order_id: orderId,
-      shop_location: { latitude: 28.7041, longitude: 77.1025 }, // Delhi shop
-      customer_location: { latitude: 28.5244, longitude: 77.1855 }, // Customer
-      distance_km: 25.5,
-      eta_minutes: 45,
-    };
+    const orderData = orderDetails[0];
+    const shop_location = { latitude: parseFloat(orderData.shop_lat), longitude: parseFloat(orderData.shop_lng) };
+    const customer_location = { latitude: parseFloat(orderData.customer_lat), longitude: parseFloat(orderData.customer_lng) };
 
-    // If you have actual order data, fetch directions using OSRM
+    const distance_km = calculateHaversineDistance(
+      shop_location.latitude, shop_location.longitude,
+      customer_location.latitude, customer_location.longitude
+    );
+    const eta_minutes = Math.round(10 + distance_km * 3);
+
     try {
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${mockOrder.shop_location.longitude},${mockOrder.shop_location.latitude};${mockOrder.customer_location.longitude},${mockOrder.customer_location.latitude}?overview=full&geometries=geojson`;
+      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${shop_location.longitude},${shop_location.latitude};${customer_location.longitude},${customer_location.latitude}?overview=full&geometries=geojson`;
 
       const osrmResponse = await fetch(osrmUrl);
       const osrmData = await osrmResponse.json();
@@ -468,8 +355,8 @@ router.get("/order/:orderId", trackingRateLimiter, verifyToken, async (req, res)
           success: true,
           data: {
             order_id: orderId,
-            shop_location: mockOrder.shop_location,
-            customer_location: mockOrder.customer_location,
+            shop_location: shop_location,
+            customer_location: customer_location,
             polyline: coordinates,
             distance_km: (route.distance / 1000).toFixed(2),
             eta_minutes: Math.round(route.duration / 60),
@@ -479,25 +366,23 @@ router.get("/order/:orderId", trackingRateLimiter, verifyToken, async (req, res)
         });
       }
     } catch (osrmError) {
-      console.warn("⚠️ OSRM API failed, returning mock route:", osrmError.message);
+      console.warn("⚠️ OSRM API failed, returning direct route:", osrmError.message);
     }
 
-    // Fallback: Return mock route if OSRM fails
+    // Fallback: Return direct route if OSRM fails
     return res.status(200).json({
       success: true,
       data: {
         order_id: orderId,
-        shop_location: mockOrder.shop_location,
-        customer_location: mockOrder.customer_location,
+        shop_location: shop_location,
+        customer_location: customer_location,
         polyline: [
-          mockOrder.shop_location,
-          { latitude: 28.6139, longitude: 77.1700 },
-          { latitude: 28.5655, longitude: 77.1700 },
-          mockOrder.customer_location,
+          shop_location,
+          customer_location,
         ],
-        distance_km: mockOrder.distance_km,
-        eta_minutes: mockOrder.eta_minutes,
-        route_steps: ["Head south on Main Road", "Turn right at traffic signal", "Deliver to customer"],
+        distance_km: distance_km.toFixed(2),
+        eta_minutes: eta_minutes,
+        route_steps: ["Head directly to customer"],
       },
       timestamp: new Date().toISOString(),
     });
