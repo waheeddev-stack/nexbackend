@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "NexKirana",
+    "slug": "nexkirana",
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow NexKirana to use your location to find nearby shops."
+        }
+      ]
+    ],
+    "android": {
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "ios": {
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app uses your location to show nearby shops."
+      }
+    }
+  }
+}
