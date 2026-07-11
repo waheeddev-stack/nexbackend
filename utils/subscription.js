@@ -1,7 +1,7 @@
 import pool from "../config/db.js";
 
 // Subscription constants
-const BILLING_CYCLE_DAYS = 15;
+const BILLING_CYCLE_DAYS = 30;
 const GRACE_PERIOD_DAYS = 2;
 
 /**
