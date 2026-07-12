@@ -19,25 +19,35 @@ export async function cleanupExpiredShoppingLists() {
 
     console.log(`🔍 Found ${expiredLists.length} expired shopping list(s) to cleanup`);
 
-    // 2. Delete Cloudinary images if they exist
+    const idsToDelete = [];
+    const failedImageDeletes = [];
+
+    // 2. Delete Cloudinary images (when present) and track which rows can be removed
     for (const list of expiredLists) {
-      if (list.cloudinary_public_id) {
-        try {
-          console.log(`🗑️ Deleting Cloudinary image ${list.cloudinary_public_id} for expired list ${list.id}...`);
-          await cloudinary.uploader.destroy(list.cloudinary_public_id);
-        } catch (cloudinaryError) {
-          console.error(`❌ Failed to delete Cloudinary image for list ${list.id}:`, cloudinaryError);
-        }
+      if (!list.cloudinary_public_id) {
+        idsToDelete.push(list.id);
+        continue;
+      }
+
+      try {
+        console.log(`🗑️ Deleting Cloudinary image ${list.cloudinary_public_id} for expired list ${list.id}...`);
+        await cloudinary.uploader.destroy(list.cloudinary_public_id);
+        idsToDelete.push(list.id);
+      } catch (cloudinaryError) {
+        failedImageDeletes.push(list.id);
+        console.error(`❌ Failed to delete Cloudinary image for list ${list.id}:`, cloudinaryError);
       }
     }
 
-    // 3. Delete records from the database
-    const [result] = await pool.query(`
-      DELETE FROM shopping_lists 
-      WHERE created_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
-    `);
+    // 3. Delete records from the database (skip rows whose image deletion failed so we can retry later)
+    if (idsToDelete.length > 0) {
+      const [result] = await pool.query("DELETE FROM shopping_lists WHERE id IN (?)", [idsToDelete]);
+      console.log(`✅ Deleted ${result.affectedRows} expired shopping list record(s) from database`);
+    }
 
-    console.log(`✅ Deleted ${result.affectedRows} expired shopping list record(s) from database`);
+    if (failedImageDeletes.length > 0) {
+      console.warn(`⚠️ Skipped deleting ${failedImageDeletes.length} record(s) due to Cloudinary deletion failures`);
+    }
   } catch (error) {
     console.error("❌ Expired shopping lists cleanup error:", error);
   }
