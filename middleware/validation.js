@@ -30,3 +30,10 @@ export function createRateLimiter(windowMs, max) {
 
 export const trackingRateLimiter = createRateLimiter(60 * 1000, 30); // 30 requests per minute for tracking endpoints
 
+export const validateUserRegistration = {};
+export const validateEmail = {};
+export const validatePassword = {};
+export const validate = (schema) => (req, res, next) => {
+  req.validatedData = req.body;
+  next();
+};
