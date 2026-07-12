@@ -243,6 +243,183 @@ shopkeeperRouter.get(
 );
 
 // ============================================================================
+// CUSTOMERS API
+// ============================================================================
+// GET /api/shopkeeper/customers - Get all customers who ordered from this shopkeeper
+shopkeeperRouter.get(
+  "/customers",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+      const [customers] = await pool.execute(
+        `SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+         FROM users u 
+         JOIN orders o ON u.id = o.user_id 
+         WHERE o.shopkeeper_id = ?`,
+        [shopkeeper_id]
+      );
+      res.json({ success: true, data: customers });
+    } catch (err) {
+      console.error("Fetch customers error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// PATCH /api/shopkeeper/customers/:id/credits - Update customer's store credits
+shopkeeperRouter.patch(
+  "/customers/:id/credits",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const customerId = req.params.id;
+      const { credits } = req.body;
+      const shopkeeper_id = req.user.id;
+      
+      // Verify the customer has ordered from this shopkeeper before allowing update
+      const [validCustomer] = await pool.execute(
+        `SELECT 1 FROM orders WHERE user_id = ? AND shopkeeper_id = ? LIMIT 1`,
+        [customerId, shopkeeper_id]
+      );
+      
+      if (validCustomer.length === 0) {
+         return res.status(403).json({ success: false, message: "Not authorized to update this customer" });
+      }
+
+      await pool.execute(
+        "UPDATE users SET store_credits = ? WHERE id = ?",
+        [credits, customerId]
+      );
+      res.json({ success: true, message: "Credits updated successfully" });
+    } catch (err) {
+      console.error("Update credits error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// ============================================================================
+// ANALYTICS API
+// ============================================================================
+shopkeeperRouter.get(
+  "/analytics",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+      const timeframe = req.query.timeframe || 'weekly';
+
+      let dateFilter = '';
+      let previousDateFilter = '';
+      let groupBy = '';
+      
+      if (timeframe === 'daily') {
+        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(created_at)';
+      } else if (timeframe === 'monthly') {
+        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        groupBy = 'WEEK(created_at)';
+      } else { // weekly
+        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(created_at)';
+      }
+
+      // Total Sales & Pending Orders
+      const [[currentStats]] = await pool.execute(
+        `SELECT 
+          SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales,
+          COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pendingOrders,
+          COUNT(CASE WHEN status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
+          COUNT(*) as totalOrdersCount
+         FROM orders 
+         WHERE shopkeeper_id = ? ${dateFilter}`,
+        [shopkeeper_id]
+      );
+
+      const [[previousStats]] = await pool.execute(
+        `SELECT SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales
+         FROM orders 
+         WHERE shopkeeper_id = ? ${previousDateFilter}`,
+        [shopkeeper_id]
+      );
+
+      const totalSales = parseFloat(currentStats.totalSales || 0);
+      const prevSales = parseFloat(previousStats.totalSales || 0);
+      let growth = 0;
+      if (prevSales > 0) {
+        growth = ((totalSales - prevSales) / prevSales) * 100;
+      }
+
+      const receivedPct = currentStats.totalOrdersCount > 0 
+        ? (currentStats.completedCount / currentStats.totalOrdersCount) * 100 
+        : 0;
+
+      // Low Stock Count
+      const [[lowStock]] = await pool.execute(
+        `SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND (stock <= baselineQty OR stock <= 5)`,
+        [shopkeeper_id]
+      );
+
+      // Chart Data
+      const [chartRows] = await pool.execute(
+        `SELECT ${groupBy} as day, SUM(total_amount) as revenue 
+         FROM orders 
+         WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered') ${dateFilter}
+         GROUP BY ${groupBy}`,
+        [shopkeeper_id]
+      );
+
+      // Top Products
+      const [topProducts] = await pool.execute(
+        `SELECT p.id, p.name, SUM(oi.quantity) as sold
+         FROM order_items oi
+         JOIN orders o ON oi.order_id = o.id
+         JOIN products p ON oi.product_id = p.id
+         WHERE o.shopkeeper_id = ? AND p.shop_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
+         GROUP BY p.id, p.name
+         ORDER BY sold DESC LIMIT 5`,
+        [shopkeeper_id, shopkeeper_id]
+      );
+
+      // Top Customers
+      const [topCustomers] = await pool.execute(
+        `SELECT u.id, u.name, SUM(o.total_amount) as spent
+         FROM orders o
+         JOIN users u ON o.user_id = u.id
+         WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
+         GROUP BY u.id, u.name
+         ORDER BY spent DESC LIMIT 5`,
+        [shopkeeper_id]
+      );
+
+      res.json({
+        success: true,
+        timeframe,
+        totalSales,
+        growth: parseFloat(growth.toFixed(1)),
+        chartData: chartRows,
+        receivedPct: parseFloat(receivedPct.toFixed(1)),
+        pendingOrders: currentStats.pendingOrders || 0,
+        lowStockCount: lowStock.count || 0,
+        topProducts,
+        topCustomers
+      });
+
+    } catch (err) {
+      console.error("Analytics error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// ============================================================================
 // ONLINE STATUS TOGGLE
 // ============================================================================
 // PATCH /api/shopkeeper/dashboard/online-status - Toggle shop online/offline
