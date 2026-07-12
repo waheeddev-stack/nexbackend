@@ -17,6 +17,7 @@ import navigationRouter from "./navigation.js";
 import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
 import recommendationRouter from "./routes/recommendationRoute.js";
+import shoppingListRouter from "./routes/shoppingListRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -33,6 +34,9 @@ import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
 // Import subscription status cron job
 import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
+
+// Import shopping list cleanup cron job
+import { startShoppingListCleanupCron } from "./cron/shoppingList.cleanup.cron.js";
 
 // Import timer table initialization
 import { fileURLToPath } from "url";
@@ -493,6 +497,7 @@ app.use("/api/inventory", inventoryRouter);
 app.use("/api/user/recommendations", recommendationRouter);
 app.use("/api/recommendations", recommendationRouter);
 app.use("/api/refer", referralRouter);
+app.use("/api/shopping-list", shoppingListRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
@@ -574,6 +579,18 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.error("❌ Failed to initialize service status tables:", error);
   }
 
+  // Start shopping list cleanup cron job
+  try {
+    const [tables] = await db.execute("SHOW TABLES LIKE 'shopping_lists'");
+    if (tables.length === 0) {
+      console.warn("⚠️ shopping_lists table not found; skipping shopping list cleanup cron startup");
+    } else {
+      startShoppingListCleanupCron();
+      console.log("✅ Shopping list cleanup cron job activated");
+    }
+  } catch (error) {
+    console.error("❌ Failed to start shopping list cleanup cron:", error);
+  }
 
   // Start subscription status cron job
   try {
