@@ -349,9 +349,7 @@ userrouter.get("/shop-info/:shopId", async (req, res) => {
 });
 
 import {
-  validateUserRegistration,
   createRateLimiter,
-  validate,
 } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
@@ -361,10 +359,9 @@ const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15
 userrouter.post(
   "/signup",
   authRateLimit,
-  validate(validateUserRegistration),
   async (req, res) => {
     try {
-      const validatedData = req.validatedData;
+      const validatedData = req.body;
 
       // Check if user already exists
       const [existingUser] = await pool.execute(
