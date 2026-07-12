@@ -411,6 +411,22 @@ CREATE TABLE IF NOT EXISTS `service_status_history` (
   FOREIGN KEY (`changed_by`) REFERENCES `admins`(`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ----------------------------------------------------------------------------
+-- Table: shopping_lists
+-- Description: Customer written lists and uploaded image URLs (15-day retention)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `shopping_lists` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `items` TEXT DEFAULT NULL,
+  `image_url` VARCHAR(255) DEFAULT NULL,
+  `cloudinary_public_id` VARCHAR(255) DEFAULT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_user_id` (`user_id`),
+  INDEX `idx_created_at` (`created_at`),
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================================
 -- FINAL SETTINGS
 -- ============================================================================
@@ -427,5 +443,6 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- Billing Tables: 2 (billing_payments, payment_info)
 -- Utility Tables: 1 (stock_restoration_log)
 -- Refer Records Table: 1
--- Total Tables: 16
+-- Shopping Lists Table: 1
+-- Total Tables: 17
 -- ============================================================================
