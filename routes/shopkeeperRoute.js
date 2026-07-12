@@ -242,6 +242,65 @@ shopkeeperRouter.get(
 );
 
 // ============================================================================
+// CUSTOMERS API
+// ============================================================================
+// GET /api/shopkeeper/customers - Get all customers who ordered from this shopkeeper
+shopkeeperRouter.get(
+  "/customers",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+      const [customers] = await pool.execute(
+        `SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+         FROM users u 
+         JOIN orders o ON u.id = o.user_id 
+         WHERE o.shopkeeper_id = ?`,
+        [shopkeeper_id]
+      );
+      res.json({ success: true, data: customers });
+    } catch (err) {
+      console.error("Fetch customers error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// PATCH /api/shopkeeper/customers/:id/credits - Update customer's store credits
+shopkeeperRouter.patch(
+  "/customers/:id/credits",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const customerId = req.params.id;
+      const { credits } = req.body;
+      const shopkeeper_id = req.user.id;
+      
+      // Verify the customer has ordered from this shopkeeper before allowing update
+      const [validCustomer] = await pool.execute(
+        `SELECT 1 FROM orders WHERE user_id = ? AND shopkeeper_id = ? LIMIT 1`,
+        [customerId, shopkeeper_id]
+      );
+      
+      if (validCustomer.length === 0) {
+         return res.status(403).json({ success: false, message: "Not authorized to update this customer" });
+      }
+
+      await pool.execute(
+        "UPDATE users SET store_credits = ? WHERE id = ?",
+        [credits, customerId]
+      );
+      res.json({ success: true, message: "Credits updated successfully" });
+    } catch (err) {
+      console.error("Update credits error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+// ============================================================================
 // ONLINE STATUS TOGGLE
 // ============================================================================
 // PATCH /api/shopkeeper/dashboard/online-status - Toggle shop online/offline
