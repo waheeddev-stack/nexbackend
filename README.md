@@ -29,6 +29,21 @@ npm run dev
 
 # Production
 npm start
+
+# Run test suite
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run service status tests
+npm run test:service-status
+
+# Run service status property-based tests
+npm run test:service-status:pbt
+
+# Run ESLint check
+npm run lint
 ```
 
 ## Environment Variables
@@ -39,24 +54,30 @@ npm start
 | `PORT` | No | `5000` | Server port |
 | `JWT_SECRET` | **Yes** | — | JWE encryption key (min 32 chars) |
 | `DB_HOST` | **Yes** | — | Database host (TiDB Cloud) |
-| `DB_PORT` | No | `4000` | Database port |
+| `DB_PORT` | No | `4000` | Database port (standard fallback for TiDB Cloud) |
 | `DB_USER` | **Yes** | — | Database user |
 | `DB_PASS` | **Yes** | — | Database password |
 | `DB_NAME` | **Yes** | — | Database name |
 | `DB_SSL` | No | `false` | Enable SSL for DB connection |
+| `DB_SSL_CA` | No | — | Optional path to SSL CA certificate |
 | `ADMIN_EMAIL` | No | `nexkirana@kirana.com` | Admin login email |
 | `ADMIN_PASSWORD` | No | `qwI41L5U47RwaI47DasA` | Admin login password |
 | `CLOUDINARY_CLOUD_NAME` | No | — | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | No | — | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | No | — | Cloudinary API secret |
 | `GOOGLE_CLIENT_ID` | No | — | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth client secret |
+| `GOOGLE_CALLBACK_URL` | No | — | Google OAuth redirect callback URL |
 | `SENDGRID_API_KEY` | No | — | SendGrid API key for emails |
 | `SMTP_HOST` | No | — | SMTP host for nodemailer |
 | `SMTP_PORT` | No | `587` | SMTP port |
 | `SMTP_USER` | No | — | SMTP username |
 | `SMTP_PASS` | No | — | SMTP password |
 | `FIREBASE_SERVICE_ACCOUNT` | No | — | Firebase service account JSON |
+| `FIREBASE_SERVICE_ACCOUNT_KEY` | No | — | Firebase service account JSON string (alternative key name) |
 | `ENFORCE_SUBSCRIPTIONS` | No | `false` | Enable subscription enforcement |
+| `RESTOCK_CRON_SCHEDULE` | No | `0 0 * * *` | Cron schedule for inventory restocking |
+| `STAGING_URL` | No | `https://staging-nexbackend.onrender.com` | Staging environment endpoint URL |
 
 ---
 
@@ -156,6 +177,7 @@ npm start
 | `GET` | `/api/shopkeeper/dashboard/summary` | Token+Verified+Sub | Complete dashboard data (sales, orders, top product, online status) |
 | `PATCH` | `/api/shopkeeper/dashboard/online-status` | Token+Verified | Toggle shop online/offline |
 | `PATCH` | `/api/shopkeeper/dashboard/home-delivery-status` | Token+Verified | Toggle home delivery (auto-creates column if missing) |
+| `GET` | `/api/shopkeeper/analytics` | Token+Verified+Sub | Shopkeeper dashboard analytics, including top products/customers, sales growth trends, and stock alerts. Accepts `timeframe` query parameter. See [ANALYTICS_README.md](ANALYTICS_README.md) for detailed spec. |
 
 ### Shop Status
 
@@ -360,14 +382,16 @@ npm start
 
 ## Inventory Management Routes — `/api/inventory-mgmt`
 
-(`inventory.routes.wrapper.js` — 260 lines)
+(`inventory.routes.wrapper.js` — 261 lines)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/api/inventory-mgmt/create-product` | Token | Create inventory product |
-| `POST` | `/api/inventory-mgmt/buy` | Token | Simulate purchase (reduces stock, triggers auto-restock) |
-| `GET` | `/api/inventory-mgmt/status` | Token | Get inventory system status |
-| `POST` | `/api/inventory-mgmt/stock-correction` | Token | Correct stock levels |
+| `POST` | `/api/inventory-mgmt/buy` | Token | Simulate purchase (reduces stock) |
+| `GET` | `/api/inventory-mgmt/product/:id` | Token | Fetch details of a specific inventory product |
+| `GET` | `/api/inventory-mgmt/products` | Token | List all inventory products with auto-restock flag |
+| `POST` | `/api/inventory-mgmt/restock/:id` | Token | Manually add stock quantity to an inventory product |
+| `GET` | `/api/inventory-mgmt/low-stock` | Token | Retrieve products with stock level below threshold (default 10) |
 
 ## Notification Routes — `/api/notifications`
 
@@ -402,15 +426,32 @@ npm start
 - `generatereferralCode(name)` — Generates a referral code: first 3 chars of name + 5 random alphanumeric chars
 - `grantReferralReward(referralCode, referredId)` — Uses transaction: validates code → prevents self-referral → checks duplicate → grants ₹4 to referrer, ₹8 to referred
 
+## Shopping List Routes — `/api/shopping-list`
+
+(`shoppingListRoute.js` — 182 lines)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/shopping-list` | Token | Save a new shopping list (written text list, uploaded image, or both) |
+| `GET` | `/api/shopping-list` | Token | Retrieve all saved shopping lists for the authenticated user |
+| `GET` | `/api/shopping-list/:id/image` | Token | Retrieve / redirect to the uploaded image of a specific shopping list |
+| `DELETE` | `/api/shopping-list/:id` | Token | Manually delete a shopping list and its associated Cloudinary image |
+
+**Data Retention Policy:**
+- Records and uploaded Cloudinary images are automatically purged after 15 days by a daily background cron job.
+
 ## Navigation Routes — `/api/navigation`
 
-(`navigationRoute.js` — 268 lines)
+(`navigationRoute.js` — 419 lines)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/api/navigation/nearby` | No | Find nearby shops within radius (default 5km) with estimated delivery time |
-| `POST` | `/api/navigation/route` | No | Generate optimized route between points |
-| `GET` | `/api/navigation/directions` | No | Get turn-by-turn directions |
+| `GET` | `/api/navigation/directions` | No | Get turn-by-turn directions via OSRM (falls back to curved mathematical interpolation if API is offline) |
+| `GET` | `/api/navigation/geocode` | No | Reverse geocode coordinates to human-readable address via Nominatim |
+| `POST` | `/api/navigation/track` | Token | Stream/broadcast live GPS coordinates to Socket.IO room `tracking_order_${orderId}` |
+| `GET` | `/api/navigation/order/:orderId` | Token | Retrieve order routes and ETA for real-time customer/shopkeeper tracking |
+| `GET` | `/api/navigation/status` | No | Health check for navigation subsystem showing active features |
 
 ## Service Status Routes — `/api/service`
 
@@ -584,6 +625,9 @@ Runs **every hour** to:
 ## `inventory.restock.cron.js` — Auto-Restock
 Runs **daily at midnight** to restore stock for out-of-stock products (stock = 0) back to their `baselineQty`. Configurable via `RESTOCK_CRON_SCHEDULE` env var.
 
+## `shoppingList.cleanup.cron.js` — Shopping List Cleanup
+Runs **daily at midnight** to purge database records and associated Cloudinary uploaded images for shopping lists older than 15 days, enforcing the data retention policy.
+
 ---
 
 # Configuration
@@ -623,6 +667,10 @@ The schema uses a MySQL/TiDB Cloud database with the following main tables:
 | `stock_restoration_log` | Cancelled order stock restoration audit trail |
 | `service_status` | Current platform status (online/offline) |
 | `service_status_history` | Service status change history |
+| `order_timers` | Active session limit timers for pickup/Click & Collect orders |
+| `inventory_alerts` | Low stock inventory alerts and system notifications |
+| `barcode_scans` | Logs of barcode lookup scans performed by clients |
+| `shopping_lists` | Customer persistent shopping lists (written items and Cloudinary image references) |
 
 ---
 
