@@ -581,8 +581,13 @@ server.listen(PORT, "0.0.0.0", async () => {
 
   // Start shopping list cleanup cron job
   try {
-    startShoppingListCleanupCron();
-    console.log("✅ Shopping list cleanup cron job activated");
+    const [tables] = await db.execute("SHOW TABLES LIKE 'shopping_lists'");
+    if (tables.length === 0) {
+      console.warn("⚠️ shopping_lists table not found; skipping shopping list cleanup cron startup");
+    } else {
+      startShoppingListCleanupCron();
+      console.log("✅ Shopping list cleanup cron job activated");
+    }
   } catch (error) {
     console.error("❌ Failed to start shopping list cleanup cron:", error);
   }
