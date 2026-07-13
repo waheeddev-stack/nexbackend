@@ -770,12 +770,12 @@ adminRouter.post(
         }
       }
 
-      // Use database transaction for thread-safe ID generation
-      await pool.execute("START TRANSACTION");
+      const connection = await pool.getConnection();
+      await connection.beginTransaction();
 
       try {
         // Lock the table and get next ID
-        const [maxIdResult] = await pool.execute(
+        const [maxIdResult] = await connection.execute(
           "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE"
         );
         const nextId = maxIdResult[0].next_id;
@@ -783,7 +783,7 @@ adminRouter.post(
         // ✅ FIX: Ensure price is stored with exactly 2 decimal places
         const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
 
-        const [dbResult] = await pool.execute(
+        const [dbResult] = await connection.execute(
           "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             nextId,
@@ -798,7 +798,8 @@ adminRouter.post(
           ]
         );
 
-        await pool.execute("COMMIT");
+        await connection.commit();
+        connection.release();
 
         // Use nextId for response since insertId might be 0
         const actualId = dbResult.insertId || nextId;
@@ -818,7 +819,8 @@ adminRouter.post(
           },
         });
       } catch (transactionError) {
-        await pool.execute("ROLLBACK");
+        await connection.rollback();
+        connection.release();
         throw transactionError;
       }
     } catch (err) {

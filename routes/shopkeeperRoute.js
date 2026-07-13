@@ -1243,9 +1243,10 @@ shopkeeperRouter.patch(
       }
 
       if (status === "Cancelled") {
-        await pool.execute("START TRANSACTION");
+        const cancelConn = await pool.getConnection();
+        await cancelConn.beginTransaction();
         try {
-          await pool.execute(
+          await cancelConn.execute(
             "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
             [cancellation_reason, orderIdNum]
           );
@@ -1253,23 +1254,26 @@ shopkeeperRouter.patch(
           await restoreStockForCancelledOrder(
             orderIdNum,
             "shopkeeper",
-            cancellation_reason || "Shopkeeper cancellation"
+            cancellation_reason || "Shopkeeper cancellation",
+            cancelConn
           );
 
-          const [[orderData]] = await pool.execute(
+          const [[orderData]] = await cancelConn.execute(
             "SELECT credits_used, user_id FROM orders WHERE id = ?",
             [orderIdNum]
           );
           if (orderData?.credits_used > 0) {
-            await pool.execute(
+            await cancelConn.execute(
               "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
               [orderData.credits_used, orderData.user_id]
             );
           }
 
-          await pool.execute("COMMIT");
+          await cancelConn.commit();
+          cancelConn.release();
         } catch (err) {
-          await pool.execute("ROLLBACK");
+          await cancelConn.rollback();
+          cancelConn.release();
           throw err;
         }
       } else if (status === "Completed") {
@@ -1291,6 +1295,7 @@ shopkeeperRouter.patch(
               pool,
               orderDetails.user_id,
               new Date(),
+              orderDetails.created_at,
               orderDetails.total_amount,
               orderType
             );

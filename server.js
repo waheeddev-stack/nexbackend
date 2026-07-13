@@ -524,6 +524,18 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.error("❌ Failed to initialize stock restoration table:", error);
   }
 
+  // Initialize wallet column on users table if missing
+  try {
+    const [columns] = await db.query("SHOW COLUMNS FROM users LIKE 'wallet'");
+    if (columns.length === 0) {
+      console.log("🔧 Adding missing 'wallet' column to 'users' table...");
+      await db.query("ALTER TABLE users ADD COLUMN wallet DECIMAL(10,2) DEFAULT 0.00");
+      console.log("✅ 'wallet' column added successfully");
+    }
+  } catch (error) {
+    console.error("❌ Failed to initialize 'wallet' column:", error);
+  }
+
   // Initialize inventory integration
   try {
     console.log("🔧 Initializing inventory management integration...");
