@@ -508,7 +508,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 userrouter.get("/profile/:id", async (req, res) => {
   try {
     const [user] = await pool.execute(
-      "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, phone, address, area, landmark, pincode, img, wallet, store_credits, created_at FROM users WHERE id = ?",
       [req.params.id]
     );
     if (user.length === 0)
