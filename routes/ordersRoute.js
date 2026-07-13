@@ -1253,6 +1253,48 @@ async function createOrderHandler(req, res) {
 }
 router.post("/", verifyToken, createOrderHandler);
 
+router.get('/repeat-order', verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [orders] = await pool.execute(
+      `SELECT id, total_amount, created_at FROM orders
+       WHERE user_id = ? AND status IN ('Completed', 'Delivered')
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+
+    if (orders.length === 0) {
+      return res.status(404).json({ success: false, message: 'No completed orders found' });
+    }
+
+    const lastOrder = orders[0];
+    const [items] = await pool.execute(
+      `SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image, p.category
+       FROM order_items oi
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ?`,
+      [lastOrder.id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      order: lastOrder,
+      items: items.map(item => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price: parseFloat(item.price),
+        name: item.name,
+        image: item.image,
+        category: item.category,
+      })),
+    });
+  } catch (err) {
+    console.error('Error fetching repeat order:', err);
+    res.status(500).json({ success: false, message: 'Error fetching repeat order' });
+  }
+});
+
 router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
