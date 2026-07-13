@@ -8,6 +8,7 @@ import cloudinary from "../config/cloudinary.js";
 import streamifier from "streamifier";
 import { processPaymentApproval } from "../utils/subscription.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { calculatePlatformFee } from "../utils/revenue.js";
 
 const adminRouter = express.Router();
 
@@ -769,12 +770,12 @@ adminRouter.post(
         }
       }
 
-      // Use database transaction for thread-safe ID generation
-      await pool.execute("START TRANSACTION");
+      const connection = await pool.getConnection();
+      await connection.beginTransaction();
 
       try {
         // Lock the table and get next ID
-        const [maxIdResult] = await pool.execute(
+        const [maxIdResult] = await connection.execute(
           "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE"
         );
         const nextId = maxIdResult[0].next_id;
@@ -782,7 +783,7 @@ adminRouter.post(
         // ✅ FIX: Ensure price is stored with exactly 2 decimal places
         const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
 
-        const [dbResult] = await pool.execute(
+        const [dbResult] = await connection.execute(
           "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             nextId,
@@ -797,7 +798,8 @@ adminRouter.post(
           ]
         );
 
-        await pool.execute("COMMIT");
+        await connection.commit();
+        connection.release();
 
         // Use nextId for response since insertId might be 0
         const actualId = dbResult.insertId || nextId;
@@ -817,7 +819,8 @@ adminRouter.post(
           },
         });
       } catch (transactionError) {
-        await pool.execute("ROLLBACK");
+        await connection.rollback();
+        connection.release();
         throw transactionError;
       }
     } catch (err) {
@@ -1399,7 +1402,7 @@ adminRouter.get("/admins", verifyAdminToken, async (req, res) => {
 // Fetch all orders (admin)
 adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
   try {
-    const { status = "all", deliveryType } = req.query;
+    const { status = "all" } = req.query;
 
     // Build WHERE clause for filtering
     let whereConditions = [];
@@ -1413,15 +1416,6 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
         whereConditions.push("o.status IN ('Completed', 'Delivered')");
       } else if (status === "cancelled") {
         whereConditions.push("o.status = 'Cancelled'");
-      }
-    }
-
-    // Add delivery type filter
-    if (deliveryType) {
-      if (deliveryType === "store_pickup") {
-        whereConditions.push("o.has_timer = 1");
-      } else if (deliveryType === "home_delivery") {
-        whereConditions.push("(o.has_timer = 0 OR o.has_timer IS NULL)");
       }
     }
 
@@ -1459,15 +1453,8 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
          o.latitude,
          o.longitude,
          o.delivery_address as deliveryAddress,
-         o.has_timer as hasTimer,
          o.pickup_code as pickupCode,
-         o.timer_started_at as timerStartedAt,
-         o.timer_expires_at as timerExpiresAt,
          o.created_at as createdAt,
-         CASE 
-           WHEN o.has_timer = 1 THEN 'store_pickup'
-           ELSE 'home_delivery'
-         END as deliveryType,
          u.name AS customerName,
          u.email AS customerEmail,
          u.phone AS customerPhone,
@@ -2149,6 +2136,17 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       ORDER BY pending_amount DESC, s.name ASC
     `);
 
+    // Fetch gross sales for all shopkeepers to calculate platform fees
+    const [salesData] = await pool.execute(`
+      SELECT 
+        shopkeeper_id,
+        COALESCE(SUM(total_amount), 0) as gross_revenue,
+        COUNT(*) as completed_orders_count
+      FROM orders
+      WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id IS NOT NULL
+      GROUP BY shopkeeper_id
+    `);
+
     // Calculate payment status for each shopkeeper and normalize subscription_status
     const enrichedEarnings = shopkeeperEarnings.map((earning) => {
       // No trial period - billing starts from day 1
@@ -2173,11 +2171,19 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         }
       }
 
+      const sales = salesData.find(s => s.shopkeeper_id === earning.shopkeeper_id) || { gross_revenue: 0, completed_orders_count: 0 };
+      const feeDetails = calculatePlatformFee(Number(sales.gross_revenue));
+
       return {
         ...earning,
         subscription_status, // Use normalized status
         payment_status,
         next_payment_date: earning.next_payment_due,
+        gross_revenue: Number(sales.gross_revenue),
+        completed_orders_count: sales.completed_orders_count,
+        platform_fee_percentage: `${feeDetails.feePercentage}%`,
+        platform_fee_amount: feeDetails.feeAmount,
+        net_payout: Number(sales.gross_revenue) - feeDetails.feeAmount,
       };
     });
 

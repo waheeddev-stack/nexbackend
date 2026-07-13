@@ -13,8 +13,11 @@ import googleAuthRouter from "./routes/googleAuthRoute.js";
 import inventoryRouter from "./routes/inventoryRoute.js";
 import passwordResetRouter from "./routes/passwordResetRoute.js";
 import deepLinkRedirectRouter from "./routes/deepLinkRedirect.js";
+import navigationRouter from "./navigation.js";
 import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
+import recommendationRouter from "./routes/recommendationRoute.js";
+import shoppingListRouter from "./routes/shoppingListRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -31,10 +34,9 @@ import { createStockRestorationLogTable } from "./utils/stockManager.js";
 
 // Import subscription status cron job
 import { startSubscriptionStatusCron } from "./cron/subscription.status.cron.js";
-import {
-  startTimerCleanupCron,
-  getTimerCleanupCronStatus,
-} from "./cron/timer.cleanup.cron.js";
+
+// Import shopping list cleanup cron job
+import { startShoppingListCleanupCron } from "./cron/shoppingList.cleanup.cron.js";
 
 // Import timer table initialization
 import { fileURLToPath } from "url";
@@ -48,6 +50,7 @@ const __dirname = dirname(__filename);
 import { getConfig, validateEnvironment } from "./config/environment.js";
 import securityMiddleware from "./middleware/security.js";
 import { createRateLimiter } from "./middleware/validation.js";
+import referralRouter from "./routes/referralRoute.js";
 
 // Validate environment on startup
 try {
@@ -491,9 +494,14 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/prefetch", orderPrefetchRouter); // Order prefetch routes for performance
 app.use("/api/notifications", notificationRouter);
 app.use("/api/inventory", inventoryRouter);
+app.use("/api/user/recommendations", recommendationRouter);
+app.use("/api/recommendations", recommendationRouter);
+app.use("/api/refer", referralRouter);
+app.use("/api/shopping-list", shoppingListRouter);
 
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
+app.use("/api/navigation", navigationRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
@@ -514,6 +522,18 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.log("✅ Stock restoration table initialized");
   } catch (error) {
     console.error("❌ Failed to initialize stock restoration table:", error);
+  }
+
+  // Initialize wallet column on users table if missing
+  try {
+    const [columns] = await db.query("SHOW COLUMNS FROM users LIKE 'wallet'");
+    if (columns.length === 0) {
+      console.log("🔧 Adding missing 'wallet' column to 'users' table...");
+      await db.query("ALTER TABLE users ADD COLUMN wallet DECIMAL(10,2) DEFAULT 0.00");
+      console.log("✅ 'wallet' column added successfully");
+    }
+  } catch (error) {
+    console.error("❌ Failed to initialize 'wallet' column:", error);
   }
 
   // Initialize inventory integration
@@ -571,39 +591,17 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.error("❌ Failed to initialize service status tables:", error);
   }
 
-  // Initialize timer tables
+  // Start shopping list cleanup cron job
   try {
-    console.log("🔧 Initializing timer tables...");
-    const schemaPath = join(__dirname, "schema", "order_timers.sql");
-
-    if (fs.existsSync(schemaPath)) {
-      const schema = fs.readFileSync(schemaPath, "utf8");
-      const statements = schema
-        .split(";")
-        .map((stmt) => stmt.trim())
-        .filter((stmt) => stmt.length > 0 && !stmt.startsWith("--"));
-
-      for (const statement of statements) {
-        try {
-          await db.query(statement);
-        } catch (error) {
-          if (
-            !error.message.includes("already exists") &&
-            !error.message.includes("Duplicate column name") &&
-            !error.message.includes("Duplicate key name")
-          ) {
-            console.warn("Timer table setup warning:", error.message);
-          }
-        }
-      }
-      console.log("✅ Timer tables initialized");
+    const [tables] = await db.execute("SHOW TABLES LIKE 'shopping_lists'");
+    if (tables.length === 0) {
+      console.warn("⚠️ shopping_lists table not found; skipping shopping list cleanup cron startup");
     } else {
-      console.warn(
-        "⚠️ Timer schema file not found, skipping timer table initialization"
-      );
+      startShoppingListCleanupCron();
+      console.log("✅ Shopping list cleanup cron job activated");
     }
   } catch (error) {
-    console.error("❌ Failed to initialize timer tables:", error);
+    console.error("❌ Failed to start shopping list cleanup cron:", error);
   }
 
   // Start subscription status cron job
@@ -612,17 +610,6 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.log("✅ Subscription status monitoring activated");
   } catch (error) {
     console.error("❌ Failed to start subscription status cron:", error);
-  }
-
-  // Start timer cleanup cron job
-  try {
-    startTimerCleanupCron(undefined, io);
-    const timerCronStatus = getTimerCleanupCronStatus();
-    console.log(
-      `✅ Timer cleanup cron started (interval ${timerCronStatus.intervalMs}ms)`
-    );
-  } catch (error) {
-    console.error("❌ Failed to start timer cleanup cron:", error);
   }
 
   console.log("📋 Available endpoints:");

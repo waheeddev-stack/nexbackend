@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import pool from "../config/db.js";
 import { createJWEToken } from "../utils/jweToken.js";
 import { OAuth2Client } from "google-auth-library";
+import { generatereferralCode } from "./referralRoute.js";
 
 const router = express.Router();
 
@@ -143,20 +144,41 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
-        const [result] = await pool.execute(
-          `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token) 
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            nextGoogleUserId,
-            googleUser.name,
-            googleUser.email,
-            await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
-            googleUser.googleId,
-            googleUser.picture || null,
-            expoPushToken || null,
-          ]
-        );
+        const MAX_ATTEMPTS = 5
+        let referralcode = ""
+        let result = []
+        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+          referralcode = generatereferralCode(googleUser.name);
+          try {
+            [result] = await pool.execute(
+              `INSERT INTO users (id, name, email, password, google_id, img, expo_push_token, referralcode) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                nextGoogleUserId,
+                googleUser.name,
+                googleUser.email,
+                await bcrypt.hash(Math.random().toString(36), 10), // Random password for Google users
+                googleUser.googleId,
+                googleUser.picture || null,
+                expoPushToken || null,
+                referralcode
+              ]
+            );
+            break;
+          } catch (error) {
+            if (error.errno === 1062) {
+              continue
+            }
+            console.log("New referral code couldn't be added: " + error)
+          }
+        }
 
+        if (!(result) || (result.length === 0)) {
+          return res.status(500).json({
+            success: false,
+            message: "Failed to generate a unique referral code. Please try again.",
+          });
+        }
         console.log("✅ INSERT result:", result);
 
         user = {
@@ -170,6 +192,8 @@ router.post("/google/users", async (req, res) => {
           store_credits: 0,
           latitude: null,
           longitude: null,
+          referralcode: referralcode,
+          wallet: 0,
         };
 
         console.log(
@@ -208,6 +232,8 @@ router.post("/google/users", async (req, res) => {
         store_credits: user.store_credits,
         latitude: user.latitude,
         longitude: user.longitude,
+        referralcode: user.referralcode,
+        wallet: user.wallet
       },
       accessToken,
       refreshToken,
@@ -402,12 +428,19 @@ router.post("/google/shopkeepers/register", async (req, res) => {
       });
     }
 
+    // Get the next available ID manually due to TiDB auto-increment limitations
+    const [maxIdResult] = await pool.execute(
+      "SELECT COALESCE(MAX(id), 0) as max_id FROM shopkeepers"
+    );
+    const nextId = maxIdResult[0].max_id + 1;
+
     // Create new shopkeeper
     const [result] = await pool.execute(
       `INSERT INTO shopkeepers 
-       (name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        nextId,
         googleUser.name,
         shopName,
         googleUser.email,
@@ -423,7 +456,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     );
 
     const shopkeeper = {
-      id: result.insertId,
+      id: nextId,
       name: googleUser.name,
       shop_name: shopName,
       email: googleUser.email,

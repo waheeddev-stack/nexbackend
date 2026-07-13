@@ -6,6 +6,7 @@ import upload from "../config/upload.js";
 import cloudinary from "../config/cloudinary.js";
 import verifyToken from "../middleware/auth.js";
 import { createJWEToken } from "../utils/jweToken.js";
+import { generatereferralCode } from "./referralRoute.js";
 
 dotenv.config();
 
@@ -110,9 +111,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
         const a =
           Math.sin(dLat / 2) * Math.sin(dLat / 2) +
           Math.cos((lat * Math.PI) / 180) *
-            Math.cos((shop.latitude * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
+          Math.cos((shop.latitude * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         const verifiedDistance = R * c * 1000; // Meters
 
@@ -260,7 +261,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Products without baselineQty are not considered "live" in the new system
     const shopIds = onlineShops.map((s) => s.id);
     let products = [];
-    
+
     if (shopIds.length > 0) {
       const placeholders = shopIds.map(() => "?").join(",");
       const [productsResult] = await pool.execute(
@@ -348,9 +349,7 @@ userrouter.get("/shop-info/:shopId", async (req, res) => {
 });
 
 import {
-  validateUserRegistration,
   createRateLimiter,
-  validate,
 } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
@@ -360,10 +359,9 @@ const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15
 userrouter.post(
   "/signup",
   authRateLimit,
-  validate(validateUserRegistration),
   async (req, res) => {
     try {
-      const validatedData = req.validatedData;
+      const validatedData = req.body;
 
       // Check if user already exists
       const [existingUser] = await pool.execute(
@@ -385,11 +383,33 @@ userrouter.post(
       );
       const nextId = (maxIdResult[0].maxId || 0) + 1;
 
-      // Insert new user into database with explicit ID
-      await pool.execute(
-        "INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)",
-        [nextId, validatedData.name, validatedData.email, hashedPassword]
-      );
+      const MAX_ATTEMPTS = 5
+      let inserted = false
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const referralcode = generatereferralCode(validatedData.name);
+        try {
+          // Insert new user into database with explicit ID
+          await pool.execute(
+            "INSERT INTO users (id, name, email, password, referralcode) VALUES (?, ?, ?, ?, ?)",
+            [nextId, validatedData.name, validatedData.email, hashedPassword, referralcode]
+          );
+          inserted = true
+          break;
+        } catch (error) {
+          if (error.errno === 1062) {
+            continue
+          }
+          console.log("New User couldn't be added: " + error)
+          break
+        }
+      }
+
+      if (!inserted) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to register user. Please try again.",
+        })
+      }
 
       // Fetch the newly created user
       const [userRows] = await pool.execute(
@@ -488,7 +508,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 userrouter.get("/profile/:id", async (req, res) => {
   try {
     const [user] = await pool.execute(
-      "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, phone, address, area, landmark, pincode, img, wallet, store_credits, referralcode, created_at FROM users WHERE id = ?",
       [req.params.id]
     );
     if (user.length === 0)
@@ -606,7 +626,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     // Fetch updated user data
     const [userRows] = await pool.execute(
-      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
+      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, created_at FROM users WHERE id = ?",
       [id]
     );
 
@@ -726,6 +746,129 @@ userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
     });
   } catch (err) {
     console.error("Get shop location error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+userrouter.get("/leaderboard", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [leaderboard] = await pool.execute(
+      `SELECT id, store_credits, 
+      DENSE_RANK() OVER (ORDER BY store_credits DESC) AS \`rank\` 
+      FROM users ORDER BY store_credits DESC LIMIT 10;`
+    );
+
+    const [rows] = await pool.execute(
+      `SELECT id, store_credits, \`rank\` FROM (
+       SELECT id, store_credits,
+        DENSE_RANK() OVER (ORDER BY store_credits DESC) AS \`rank\`
+        FROM users
+      ) ranked
+     WHERE id = ?`,
+      [userId]
+    );
+
+    const userRank = rows[0];
+
+    if (!userRank) { return res.status(404).json({ success: false, message: "User is not found" }) };
+
+    return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
+  } catch (err) {
+    console.error("Leaderboard error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Submit a suggestion for a new shop
+userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
+  try {
+    const {
+      shop_name,
+      owner_name,
+      phone,
+      address,
+      landmark,
+      pincode,
+      latitude,
+      longitude,
+      notes,
+    } = req.body;
+    const userId = req.user.id;
+
+    // Validate required inputs
+    if (!shop_name || typeof shop_name !== "string" || shop_name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop name is required.",
+      });
+    }
+
+    if (!address || typeof address !== "string" || address.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Address is required.",
+      });
+    }
+
+    if (!phone || typeof phone !== "string" || phone.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required.",
+      });
+    }
+
+    if (!pincode || typeof pincode !== "string" || pincode.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Pincode is required.",
+      });
+    }
+
+    // Insert suggestion into database
+    const query = `
+      INSERT INTO shop_suggestions 
+      (user_id, shop_name, owner_name, phone, address, landmark, pincode, latitude, longitude, notes, status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `;
+
+    const values = [
+      userId,
+      shop_name.trim(),
+      owner_name ? owner_name.trim() : null,
+      phone ? phone.trim() : null,
+      address.trim(),
+      landmark ? landmark.trim() : null,
+      pincode.trim(),
+      latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
+      longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+      notes ? notes.trim() : null,
+    ];
+
+    const [result] = await pool.execute(query, values);
+
+    res.status(201).json({
+      success: true,
+      message: "Shop suggestion submitted successfully",
+      suggestion: {
+        id: result.insertId,
+        user_id: userId,
+        shop_name: shop_name.trim(),
+        owner_name: owner_name ? owner_name.trim() : null,
+        phone: phone ? phone.trim() : null,
+        address: address.trim(),
+        landmark: landmark ? landmark.trim() : null,
+        pincode: pincode.trim(),
+        latitude: latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
+        longitude: longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+        notes: notes ? notes.trim() : null,
+        status: "pending",
+        created_at: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("Suggest shop error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

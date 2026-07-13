@@ -41,12 +41,32 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `expo_push_token` VARCHAR(255) DEFAULT NULL,
   `store_credits` INT(11) DEFAULT 0,
+  `wallet` DECIMAL(10,2) DEFAULT 0,
   `latitude` DECIMAL(10,8) DEFAULT NULL,
   `longitude` DECIMAL(11,8) DEFAULT NULL,
   `refresh_token` VARCHAR(500) DEFAULT NULL,
+  `referralcode` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `email` (`email`)
+  UNIQUE KEY `email` (`email`),
+  UNIQUE KEY `referralcode` (`referralcode`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=630001;
+
+-- ----------------------------------------------------------------------------
+-- Table: refer_transaction
+-- Description: Records the refering transaction which have been made
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `refer_transaction`(
+  `id` INT(11) NOT NULL AUTO_INCREMENT,
+  `refererid` INT(11) NOT NULL,
+  `referedid` INT(11) NOT NULL,
+  `refered_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_referedid` (`referedid`),
+  KEY `idx_refererid` (`refererid`),
+  CONSTRAINT `fk_refer_transaction_refererid` FOREIGN KEY (`refererid`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_refer_transaction_referedid` FOREIGN KEY (`referedid`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ----------------------------------------------------------------------------
 -- Table: shopkeepers
@@ -158,20 +178,13 @@ CREATE TABLE IF NOT EXISTS `orders` (
   -- Scheduling and delivery mode
   `scheduled_time` DATETIME DEFAULT NULL COMMENT 'Scheduled pickup or delivery time',
   `order_type` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Order type: pickup or delivery',
-  `delivery_mode` VARCHAR(20) DEFAULT 'pickup' COMMENT 'Delivery mode: pickup or delivery',
-  -- Timer functionality
-  `has_timer` TINYINT(1) DEFAULT 0,
   `pickup_code` VARCHAR(10) DEFAULT NULL,
-  `timer_started_at` DATETIME DEFAULT NULL,
-  `timer_expires_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `fk_user_id` (`user_id`),
   KEY `fk_shopkeeper_id` (`shopkeeper_id`),
   INDEX `idx_orders_pickup_code` (`pickup_code`),
-  INDEX `idx_orders_timer` (`has_timer`, `timer_expires_at`),
   INDEX `idx_orders_scheduled` (`scheduled_time`),
-  INDEX `idx_orders_delivery_mode` (`delivery_mode`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`shopkeeper_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2220001;
@@ -192,28 +205,6 @@ CREATE TABLE IF NOT EXISTS `order_items` (
   FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1770001;
-
--- ----------------------------------------------------------------------------
--- Table: order_timers
--- Description: Timer tracking for pickup verification
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `order_timers` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `order_id` INT NOT NULL,
-  `pickup_code` VARCHAR(6) NOT NULL,
-  `timer_duration` INT DEFAULT 420,
-  `timer_started_at` TIMESTAMP NULL,
-  `timer_expires_at` TIMESTAMP NULL,
-  `is_active` BOOLEAN DEFAULT FALSE,
-  `is_expired` BOOLEAN DEFAULT FALSE,
-  `stopped_at` TIMESTAMP NULL,
-  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY `unique_order_timer` (`order_id`),
-  INDEX `idx_pickup_code` (`pickup_code`),
-  INDEX `idx_active_timers` (`is_active`, `timer_expires_at`),
-  FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 -- ============================================================================
 -- INVENTORY MANAGEMENT TABLES
@@ -420,6 +411,22 @@ CREATE TABLE IF NOT EXISTS `service_status_history` (
   FOREIGN KEY (`changed_by`) REFERENCES `admins`(`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ----------------------------------------------------------------------------
+-- Table: shopping_lists
+-- Description: Customer written lists and uploaded image URLs (15-day retention)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `shopping_lists` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `items` TEXT DEFAULT NULL,
+  `image_url` VARCHAR(255) DEFAULT NULL,
+  `cloudinary_public_id` VARCHAR(255) DEFAULT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_user_id` (`user_id`),
+  INDEX `idx_created_at` (`created_at`),
+  FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================================
 -- FINAL SETTINGS
 -- ============================================================================
@@ -435,5 +442,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- Inventory Tables: 4 (inventory_logs, price_history, inventory_alerts, barcode_scans)
 -- Billing Tables: 2 (billing_payments, payment_info)
 -- Utility Tables: 1 (stock_restoration_log)
--- Total Tables: 15
+-- Refer Records Table: 1
+-- Shopping Lists Table: 1
+-- Total Tables: 17
 -- ============================================================================
