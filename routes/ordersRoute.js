@@ -1015,7 +1015,7 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Use aliases if main fields are missing
     const items = reqItems || products;
-    const deliveryType = reqDeliveryType || order_type || "home_delivery";
+    const deliveryType = req.body.deliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
     // shopkeeperId already declared earlier, just reassign if needed
     // const shopkeeperId = reqShopkeeperId || shopId;

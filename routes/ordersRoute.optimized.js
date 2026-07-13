@@ -69,7 +69,7 @@ router.post("/", verifyToken, async (req, res) => {
 
     // Normalize field names for compatibility
     const items = reqItems || products;
-    const deliveryType = reqDeliveryType || order_type || "home_delivery";
+    const deliveryType = req.body.deliveryType || order_type || "home_delivery";
     const totalAmount = reqTotalAmount || grandTotal || total;
     const shopkeeperId = reqShopkeeperId || shopId;
     const deliveryAddress = reqDeliveryAddress || address || null;
