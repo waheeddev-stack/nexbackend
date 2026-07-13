@@ -933,7 +933,7 @@ async function createOrderHandler(req, res) {
     // Validate stock for each item
     for (const item of items) {
       const productId = item.productId || item.product_id;
-      const product = products_check.find(p => p.id === productId);
+      const product = products_check.find(p => String(p.id) === String(productId));
 
       if (!product) {
         await connection.rollback();
