@@ -809,6 +809,14 @@ async function createOrderHandler(req, res) {
     const userId = req.user.id;
     const shopkeeperId = req.body.shopkeeperId || req.body.shopId;
 
+    if (!shopkeeperId) {
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        message: "Shopkeeper ID is required",
+      });
+    }
+
     // OPTIMIZATION #1: Use cached shopkeeper data (saves ~50-100ms)
     let shopkeeper = getCachedShopkeeper(shopkeeperId);
 
@@ -881,6 +889,7 @@ async function createOrderHandler(req, res) {
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
+    const finalScheduledTime = orderType === "pickup" ? null : scheduledTime;
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -896,14 +905,6 @@ async function createOrderHandler(req, res) {
       return res.status(400).json({
         success: false,
         message: "Valid total amount is required",
-      });
-    }
-
-    if (!shopkeeperId) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper ID is required",
       });
     }
 
@@ -1049,7 +1050,7 @@ async function createOrderHandler(req, res) {
         orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup"
           ? "pickup"
           : "delivery",
-        scheduledTime,
+        finalScheduledTime,
       ]
     );
 
