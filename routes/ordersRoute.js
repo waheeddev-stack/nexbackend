@@ -889,7 +889,8 @@ async function createOrderHandler(req, res) {
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
-    const finalScheduledTime = orderType === "pickup" ? null : scheduledTime;
+    const isPickup = orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup";
+    const finalScheduledTime = isPickup ? null : scheduledTime;
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
