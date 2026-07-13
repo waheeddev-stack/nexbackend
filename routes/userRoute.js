@@ -508,7 +508,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 userrouter.get("/profile/:id", async (req, res) => {
   try {
     const [user] = await pool.execute(
-      "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, phone, address, area, landmark, pincode, img, store_credits, referralcode, created_at FROM users WHERE id = ?",
       [req.params.id]
     );
     if (user.length === 0)
@@ -626,7 +626,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     // Fetch updated user data
     const [userRows] = await pool.execute(
-      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, created_at FROM users WHERE id = ?",
+      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, created_at FROM users WHERE id = ?",
       [id]
     );
 
@@ -750,31 +750,35 @@ userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
   }
 });
 
-userrouter.get("/leaderboard", async (req, res) => {
+userrouter.get("/leaderboard", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
 
-  const userId = req.user.id;
+    const [leaderboard] = await pool.execute(
+      `SELECT id, store_credits, 
+      DENSE_RANK() OVER (ORDER BY store_credits DESC) AS \`rank\` 
+      FROM users ORDER BY store_credits DESC LIMIT 10;`
+    );
 
-  const [leaderboard] = await pool.execute(
-    `SELECT id, store_credits, 
-    DENSE_RANK() OVER (ORDER BY store_credits DESC) AS rank 
-    FROM users ORDER BY store_credits DESC LIMIT 10;`
-  );
+    const [rows] = await pool.execute(
+      `SELECT id, store_credits, \`rank\` FROM (
+       SELECT id, store_credits,
+        DENSE_RANK() OVER (ORDER BY store_credits DESC) AS \`rank\`
+        FROM users
+      ) ranked
+     WHERE id = ?`,
+      [userId]
+    );
 
-  const [rows] = await pool.execute(
-    `SELECT id, store_credits, rank FROM (
-     SELECT id, store_credits,
-      DENSE_RANK() OVER (ORDER BY store_credits DESC) AS rank
-      FROM users
-    ) ranked
-   WHERE id = ?`,
-    [userId]
-  );
+    const userRank = rows[0];
 
-  const userRank = rows[0];
+    if (!userRank) { return res.status(404).json({ success: false, message: "User is not found" }) };
 
-  if (!userRank) { return res.status(404).json({ success: false, message: "User is not found" }) };
-
-  return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
+    return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
+  } catch (err) {
+    console.error("Leaderboard error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 export default userrouter;

@@ -455,11 +455,12 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
     }
 
     // Start transaction for cancellation and stock restoration
-    await pool.execute("START TRANSACTION");
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     try {
       // Update order status
-      await pool.execute(
+      await connection.execute(
         "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
         [cancellation_reason, orderIdNum]
       );
@@ -470,10 +471,12 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
       const stockRestoration = await restoreStockForCancelledOrder(
         orderIdNum,
         userRole,
-        cancellation_reason
+        cancellation_reason,
+        connection
       );
 
-      await pool.execute("COMMIT");
+      await connection.commit();
+      connection.release();
 
       // Notify via socket
       if (req.io) {
@@ -532,7 +535,8 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         stockRestoration,
       });
     } catch (transactionError) {
-      await pool.execute("ROLLBACK");
+      await connection.rollback();
+      connection.release();
       throw transactionError;
     }
   } catch (error) {
@@ -848,6 +852,7 @@ async function createOrderHandler(req, res) {
     const {
       items: reqItems,
       products,
+      deliveryType: reqDeliveryType,
       order_type,
       totalAmount: reqTotalAmount,
       total,
@@ -1024,7 +1029,7 @@ async function createOrderHandler(req, res) {
         order_type,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -1250,15 +1255,16 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
     const userId = req.user.id;
     const orderId = req.params.orderid;
     const [verifyOrder] = await pool.execute(
-      `SELECT EXISTS ( SELECT 1 FROM orders WHERE id = ? AND user_id = ?) AS order_exists;`,
+      `SELECT * FROM orders WHERE id = ? AND user_id = ?`,
       [orderId, userId]
     );
-    if (!verifyOrder[0].order_exists) {
+    if (verifyOrder.length === 0) {
       return res.status(404).json({
         success: false,
         message: "No order of the user found of the specified id."
       });
     }
+    const oldOrder = verifyOrder[0];
     // Fetch the items from that order
     const [items] = await pool.query(
       `SELECT product_id, quantity, price FROM order_items WHERE order_id = ?`,
@@ -1347,7 +1353,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     // Check if order exists and get details for authorization and notifications
     const [orderRows] = await pool.execute(
       `
-      SELECT id, status, user_id, shopkeeper_id, total_amount, order_type
+      SELECT id, status, user_id, shopkeeper_id, total_amount, order_type, created_at
       FROM orders 
       WHERE id = ?
     `,
@@ -1379,9 +1385,10 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     if (dbStatus === "Cancelled") {
       console.log(`📦 Order ${orderIdNum} being cancelled by ${userRole}`);
 
-      await pool.execute("START TRANSACTION");
+      const cancelConn = await pool.getConnection();
+      await cancelConn.beginTransaction();
       try {
-        await pool.execute(
+        await cancelConn.execute(
           "UPDATE orders SET status = 'Cancelled', cancellation_reason = ? WHERE id = ?",
           [cancellation_reason || `${userRole} cancellation`, orderIdNum]
         );
@@ -1390,24 +1397,27 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         await restoreStockForCancelledOrder(
           orderIdNum,
           userRole,
-          cancellation_reason
+          cancellation_reason,
+          cancelConn
         );
 
         // Refund credits if any
-        const [[creditsData]] = await pool.execute(
+        const [[creditsData]] = await cancelConn.execute(
           "SELECT credits_used FROM orders WHERE id = ?",
           [orderIdNum]
         );
         if (creditsData?.credits_used > 0) {
-          await pool.execute(
+          await cancelConn.execute(
             "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
             [creditsData.credits_used, order.user_id]
           );
         }
 
-        await pool.execute("COMMIT");
+        await cancelConn.commit();
+        cancelConn.release();
       } catch (err) {
-        await pool.execute("ROLLBACK");
+        await cancelConn.rollback();
+        cancelConn.release();
         throw err;
       }
     } else if (dbStatus === "Completed") {
@@ -1422,6 +1432,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           pool,
           order.user_id,
           new Date(),
+          order.created_at,
           order.total_amount,
           orderType
         );

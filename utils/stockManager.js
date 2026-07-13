@@ -10,8 +10,12 @@ import pool from "../config/db.js";
 export const restoreStockForCancelledOrder = async (
   orderId,
   cancelledBy = "system",
-  reason = null
+  reason = null,
+  connection = null
 ) => {
+  const conn = connection || await pool.getConnection();
+  const hasExternalTx = !!connection;
+
   try {
     console.log(
       `📦 Starting stock restoration for order ${orderId} (cancelled by: ${cancelledBy})`
@@ -19,7 +23,7 @@ export const restoreStockForCancelledOrder = async (
     console.log(`📦 Reason: ${reason || "No reason provided"}`);
 
     // Get order items to restore stock quantities
-    const [orderItems] = await pool.query(
+    const [orderItems] = await conn.query(
       `SELECT oi.product_id, oi.quantity, p.name as product_name, p.stock as current_stock
        FROM order_items oi 
        LEFT JOIN products p ON oi.product_id = p.id 
@@ -29,6 +33,7 @@ export const restoreStockForCancelledOrder = async (
 
     if (orderItems.length === 0) {
       console.log(`❌ No order items found for order ${orderId}`);
+      if (!hasExternalTx) conn.release();
       return {
         success: false,
         message: "No order items found to restore stock",
@@ -44,7 +49,7 @@ export const restoreStockForCancelledOrder = async (
     });
 
     // Check if this order has already been restored (only check actual restorations, not deductions)
-    const [existingRestoration] = await pool.query(
+    const [existingRestoration] = await conn.query(
       "SELECT id FROM stock_restoration_log WHERE order_id = ? AND total_quantity_restored > 0",
       [orderId]
     );
@@ -53,6 +58,7 @@ export const restoreStockForCancelledOrder = async (
       console.log(
         `⚠️ Stock for order ${orderId} has already been restored previously`
       );
+      if (!hasExternalTx) conn.release();
       return {
         success: false,
         message: "Stock has already been restored for this order",
@@ -62,8 +68,10 @@ export const restoreStockForCancelledOrder = async (
     }
 
     // Start transaction to ensure data consistency
-    console.log(`🔄 Starting transaction for order ${orderId}`);
-    await pool.query("START TRANSACTION");
+    if (!hasExternalTx) {
+      console.log(`🔄 Starting transaction for order ${orderId}`);
+      await conn.query("START TRANSACTION");
+    }
 
     const restoredItems = [];
     let totalRestoredQuantity = 0;
@@ -77,7 +85,7 @@ export const restoreStockForCancelledOrder = async (
             `📈 Restoring ${item.quantity} units to product ${item.product_id} (current stock: ${item.current_stock})`
           );
 
-          const [updateResult] = await pool.query(
+          const [updateResult] = await conn.query(
             "UPDATE products SET stock = stock + ? WHERE id = ?",
             [item.quantity, item.product_id]
           );
@@ -111,7 +119,7 @@ export const restoreStockForCancelledOrder = async (
 
       // Log the stock restoration event
       console.log(`📝 Logging restoration event for order ${orderId}`);
-      await pool.query(
+      await conn.query(
         `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
          VALUES (?, ?, ?, ?, ?, NOW())`,
         [
@@ -124,8 +132,11 @@ export const restoreStockForCancelledOrder = async (
       );
 
       // Commit transaction
-      console.log(`✅ Committing transaction for order ${orderId}`);
-      await pool.query("COMMIT");
+      if (!hasExternalTx) {
+        console.log(`✅ Committing transaction for order ${orderId}`);
+        await conn.query("COMMIT");
+        conn.release();
+      }
 
       console.log(
         `🎉 Stock restoration completed successfully for order ${orderId}:`
@@ -146,10 +157,13 @@ export const restoreStockForCancelledOrder = async (
       };
     } catch (transactionError) {
       // Rollback transaction on error
-      console.log(
-        `🔄 Rolling back transaction for order ${orderId} due to error`
-      );
-      await pool.query("ROLLBACK");
+      if (!hasExternalTx) {
+        console.log(
+          `🔄 Rolling back transaction for order ${orderId} due to error`
+        );
+        await conn.query("ROLLBACK");
+        conn.release();
+      }
       console.error(
         `❌ Stock restoration transaction failed for order ${orderId}:`,
         transactionError
@@ -158,8 +172,6 @@ export const restoreStockForCancelledOrder = async (
     }
   } catch (error) {
     console.error(`❌ Stock restoration error for order ${orderId}:`, error);
-    console.error(`❌ Error details:`, error.message);
-    console.error(`❌ Error stack:`, error.stack);
     return {
       success: false,
       message: "Failed to restore stock",

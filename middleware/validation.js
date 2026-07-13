@@ -31,8 +31,28 @@ export function createRateLimiter(windowMs, max) {
 export const trackingRateLimiter = createRateLimiter(60 * 1000, 30); // 30 requests per minute for tracking endpoints
 
 export const validateUserRegistration = {};
-export const validateEmail = {};
-export const validatePassword = {};
+
+export function validateEmail(email) {
+  if (typeof email !== "string") {
+    throw new Error("Email must be a string");
+  }
+  const trimmed = email.trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(trimmed)) {
+    throw new Error("Invalid email format");
+  }
+  return trimmed;
+}
+
+export function validatePassword(password) {
+  if (typeof password !== "string") {
+    throw new Error("Password must be a string");
+  }
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters long");
+  }
+  return password;
+}
 export const validate = (schema) => (req, res, next) => {
   req.validatedData = req.body;
   next();
