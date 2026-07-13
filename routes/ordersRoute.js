@@ -807,14 +807,25 @@ async function createOrderHandler(req, res) {
 
   try {
     const userId = req.user.id;
-    const shopkeeperId = req.body.shopkeeperId || req.body.shopId;
+    let shopkeeperId = req.body.shopkeeperId || req.body.shopId;
 
     if (!shopkeeperId) {
-      connection.release();
-      return res.status(400).json({
-        success: false,
-        message: "Shopkeeper ID is required",
-      });
+      const firstItem = (req.body.items || req.body.products || [])[0];
+      const pid = firstItem?.productId || firstItem?.product_id;
+      if (pid) {
+        const [[row]] = await pool.execute(
+          "SELECT shop_id FROM products WHERE id = ? LIMIT 1", [pid]
+        );
+        if (row) shopkeeperId = row.shop_id;
+      }
+
+      if (!shopkeeperId) {
+        connection.release();
+        return res.status(400).json({
+          success: false,
+          message: "Shopkeeper ID is required",
+        });
+      }
     }
 
     // OPTIMIZATION #1: Use cached shopkeeper data (saves ~50-100ms)
