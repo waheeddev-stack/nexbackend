@@ -777,4 +777,96 @@ userrouter.get("/leaderboard", async (req, res) => {
   return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
 });
 
+// Submit a suggestion for a new shop
+userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
+  try {
+    const {
+      shop_name,
+      owner_name,
+      phone,
+      address,
+      landmark,
+      pincode,
+      latitude,
+      longitude,
+      notes,
+    } = req.body;
+    const userId = req.user.id;
+
+    // Validate required inputs
+    if (!shop_name || typeof shop_name !== "string" || shop_name.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop name is required.",
+      });
+    }
+
+    if (!address || typeof address !== "string" || address.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Address is required.",
+      });
+    }
+
+    if (!phone || typeof phone !== "string" || phone.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required.",
+      });
+    }
+
+    if (!pincode || typeof pincode !== "string" || pincode.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Pincode is required.",
+      });
+    }
+
+    // Insert suggestion into database
+    const query = `
+      INSERT INTO shop_suggestions 
+      (user_id, shop_name, owner_name, phone, address, landmark, pincode, latitude, longitude, notes, status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `;
+
+    const values = [
+      userId,
+      shop_name.trim(),
+      owner_name ? owner_name.trim() : null,
+      phone ? phone.trim() : null,
+      address.trim(),
+      landmark ? landmark.trim() : null,
+      pincode.trim(),
+      latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
+      longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+      notes ? notes.trim() : null,
+    ];
+
+    const [result] = await pool.execute(query, values);
+
+    res.status(201).json({
+      success: true,
+      message: "Shop suggestion submitted successfully",
+      suggestion: {
+        id: result.insertId,
+        user_id: userId,
+        shop_name: shop_name.trim(),
+        owner_name: owner_name ? owner_name.trim() : null,
+        phone: phone ? phone.trim() : null,
+        address: address.trim(),
+        landmark: landmark ? landmark.trim() : null,
+        pincode: pincode.trim(),
+        latitude: latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
+        longitude: longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+        notes: notes ? notes.trim() : null,
+        status: "pending",
+        created_at: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("Suggest shop error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 export default userrouter;
