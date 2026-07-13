@@ -707,7 +707,10 @@ router.get("/:orderId", verifyToken, async (req, res) => {
         END as status,
         o.status as original_status,
         o.total_amount,
-        o.payment_status,
+        CASE 
+          WHEN o.status = 'Paid' OR o.status = 'Completed' THEN 'paid' 
+          ELSE 'pending' 
+        END as payment_status,
         o.payment_method,
         o.delivery_address,
         o.pickup_code,
