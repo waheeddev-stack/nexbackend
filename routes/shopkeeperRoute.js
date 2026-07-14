@@ -1524,6 +1524,35 @@ shopkeeperRouter.put(
 );
 
 /**
+ * BULK RESTOCK low-stock products to their baseline quantities
+ */
+shopkeeperRouter.post(
+  "/products/bulk/restock",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+
+      const [result] = await pool.execute(
+        "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
+        [shop_id]
+      );
+
+      res.json({
+        success: true,
+        message: `Successfully restocked ${result.affectedRows} product(s) to baseline quantity`,
+        updatedCount: result.affectedRows
+      });
+    } catch (err) {
+      console.error("Bulk restock error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+/**
  * UPDATE product
  */
 shopkeeperRouter.put(
