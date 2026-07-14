@@ -57,7 +57,8 @@ inventoryRouter.get("/barcode/:code", verifyToken, async (req, res) => {
 // POST /api/inventory/restock - Restock a product
 inventoryRouter.post("/restock", verifyToken, async (req, res) => {
   try {
-    const { barcode, quantity, shop_id } = req.body;
+    const { barcode, quantity } = req.body;
+    const shop_id = req.body.shop_id || req.user?.id;
 
     if (!barcode || !quantity) {
       return res.status(400).json({
@@ -66,10 +67,10 @@ inventoryRouter.post("/restock", verifyToken, async (req, res) => {
       });
     }
 
-    // Find product by barcode
+    // Find product by barcode or name
     const [products] = await db.query(
-      "SELECT * FROM products WHERE barcode = ? AND shop_id = ?",
-      [barcode, shop_id]
+      "SELECT * FROM products WHERE (barcode = ? OR name = ?) AND shop_id = ?",
+      [barcode, barcode, shop_id]
     );
 
     if (products.length === 0) {

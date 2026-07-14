@@ -317,35 +317,35 @@ shopkeeperRouter.get(
       let groupBy = '';
       
       if (timeframe === 'daily') {
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        groupBy = 'DATE(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(o.created_at)';
       } else if (timeframe === 'monthly') {
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        groupBy = 'WEEK(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND o.created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        groupBy = 'WEEK(o.created_at)';
       } else { // weekly
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        groupBy = 'DATE(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(o.created_at)';
       }
 
       // Total Sales & Pending Orders
       const [[currentStats]] = await pool.execute(
         `SELECT 
-          SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales,
-          COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pendingOrders,
-          COUNT(CASE WHEN status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
+          SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales,
+          COUNT(CASE WHEN o.status = 'Pending' THEN 1 END) as pendingOrders,
+          COUNT(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
           COUNT(*) as totalOrdersCount
-         FROM orders 
-         WHERE shopkeeper_id = ? ${dateFilter}`,
+         FROM orders o
+         WHERE o.shopkeeper_id = ? ${dateFilter}`,
         [shopkeeper_id]
       );
 
       const [[previousStats]] = await pool.execute(
-        `SELECT SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales
-         FROM orders 
-         WHERE shopkeeper_id = ? ${previousDateFilter}`,
+        `SELECT SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales
+         FROM orders o
+         WHERE o.shopkeeper_id = ? ${previousDateFilter}`,
         [shopkeeper_id]
       );
 
@@ -356,8 +356,8 @@ shopkeeperRouter.get(
         growth = ((totalSales - prevSales) / prevSales) * 100;
       }
 
-      const receivedPct = currentStats.totalOrdersCount > 0 
-        ? (currentStats.completedCount / currentStats.totalOrdersCount) * 100 
+      const receivedPct = currentStats.totalOrdersCount > 0
+        ? (currentStats.completedCount / currentStats.totalOrdersCount) * 100
         : 0;
 
       // Low Stock Count
@@ -368,9 +368,9 @@ shopkeeperRouter.get(
 
       // Chart Data
       const [chartRows] = await pool.execute(
-        `SELECT ${groupBy} as day, SUM(total_amount) as revenue 
-         FROM orders 
-         WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered') ${dateFilter}
+        `SELECT ${groupBy} as day, SUM(o.total_amount) as revenue 
+         FROM orders o
+         WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY ${groupBy}`,
         [shopkeeper_id]
       );
