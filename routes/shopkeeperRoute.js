@@ -2351,6 +2351,162 @@ shopkeeperRouter.get("/payment-history", verifyToken, async (req, res) => {
   }
 });
 
+// Verify pickup code and mark order as Completed
+shopkeeperRouter.post(
+  "/orders/:orderId/verify-pickup",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+      const { orderId } = req.params;
+      const { pickup_code } = req.body;
+
+      const orderIdNum = parseInt(orderId);
+      if (isNaN(orderIdNum)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid order ID" });
+      }
+
+      if (!pickup_code) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Pickup code is required" });
+      }
+
+      // Check if order exists and is assigned to this shopkeeper
+      const [orderRows] = await pool.execute(
+        `SELECT id, status, pickup_code, user_id, created_at, total_amount, order_type
+         FROM orders
+         WHERE id = ? AND shopkeeper_id = ?`,
+        [orderIdNum, shopkeeper_id]
+      );
+
+      if (orderRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found or not assigned to you",
+        });
+      }
+
+      const order = orderRows[0];
+
+      // Check if order is already completed
+      if (order.status === "Completed") {
+        return res.status(400).json({
+          success: false,
+          message: "Order is already completed",
+        });
+      }
+
+      // Check if order is cancelled
+      if (order.status === "Cancelled") {
+        return res.status(400).json({
+          success: false,
+          message: "Order has been cancelled",
+        });
+      }
+
+      // Verify the pickup code (case insensitive/trimmed comparison)
+      const expectedCode = String(order.pickup_code || "").trim();
+      const providedCode = String(pickup_code || "").trim();
+
+      if (expectedCode !== providedCode) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid pickup code. Please check and try again.",
+        });
+      }
+
+      // Update status to Completed
+      await pool.execute(
+        "UPDATE orders SET status = 'Completed' WHERE id = ?",
+        [orderIdNum]
+      );
+
+      // Award wellness points
+      let pointsAwarded = 0;
+      try {
+        const orderType = order.order_type || "pickup";
+        const pointsResult = await awardWellnessPoints(
+          pool,
+          order.user_id,
+          new Date(),
+          order.created_at,
+          order.total_amount,
+          orderType
+        );
+        pointsAwarded = pointsResult.points || 0;
+      } catch (pointsErr) {
+        console.error("Error awarding points in verify-pickup:", pointsErr);
+      }
+
+      // Emit Socket.IO events if req.io is available
+      if (req.io) {
+        const payload = {
+          orderId: orderIdNum,
+          order_id: orderIdNum,
+          status: "Completed",
+          originalStatus: "Completed",
+          userId: order.user_id,
+          user_id: order.user_id,
+          shopkeeperId: shopkeeper_id,
+          shopkeeper_id: shopkeeper_id,
+          totalAmount: parseFloat(order.total_amount),
+          total_amount: parseFloat(order.total_amount),
+          updatedAt: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          pointsAwarded,
+          points_awarded: pointsAwarded,
+        };
+
+        const shopRoom = `shop_${Number(shopkeeper_id)}`;
+        const customerRoom = `customer_${Number(order.user_id)}`;
+
+        req.io.to(shopRoom).emit("orderStatusUpdate", payload);
+        req.io.to(customerRoom).emit("orderStatusUpdate", payload);
+        req.io.to("admin").emit("orderStatusUpdate", payload);
+      }
+
+      // Send push notification to customer
+      try {
+        const [[customer]] = await pool.execute(
+          "SELECT expo_push_token FROM users WHERE id = ?",
+          [order.user_id]
+        );
+
+        if (customer?.expo_push_token) {
+          const message = `🎉 Your order #${orderIdNum} has been verified and completed! You earned ${pointsAwarded} wellness points.`;
+          const token = customer.expo_push_token;
+          if (isFCMToken(token)) {
+            await sendFCMPush(token, "Order Completed", message, {
+              orderId: String(orderIdNum),
+              status: "Completed",
+            });
+          } else {
+            await sendExpoPush(token, "Order Completed", message, {
+              orderId: orderIdNum,
+              status: "Completed",
+            });
+          }
+        }
+      } catch (pushError) {
+        console.error("Push notification error in verify-pickup:", pushError);
+      }
+
+      return res.json({
+        success: true,
+        message: `Pickup verified successfully. Order completed!`,
+        order_status: "Completed",
+      });
+    } catch (err) {
+      console.error("Verify pickup error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
 // Legacy endpoint - redirects to verify-pickup
 shopkeeperRouter.post(
   "/orders/:orderId/stop-timer",
