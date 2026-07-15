@@ -318,35 +318,35 @@ shopkeeperRouter.get(
       let groupBy = '';
       
       if (timeframe === 'daily') {
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        groupBy = 'DATE(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(o.created_at)';
       } else if (timeframe === 'monthly') {
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        groupBy = 'WEEK(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND o.created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
+        groupBy = 'WEEK(o.created_at)';
       } else { // weekly
-        dateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        groupBy = 'DATE(created_at)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        groupBy = 'DATE(o.created_at)';
       }
 
       // Total Sales & Pending Orders
       const [[currentStats]] = await pool.query(
         `SELECT 
-          SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales,
-          COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pendingOrders,
-          COUNT(CASE WHEN status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
+          SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales,
+          COUNT(CASE WHEN o.status = 'Pending' THEN 1 END) as pendingOrders,
+          COUNT(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
           COUNT(*) as totalOrdersCount
-         FROM orders 
-         WHERE shopkeeper_id = ? ${dateFilter}`,
+         FROM orders o
+         WHERE o.shopkeeper_id = ? ${dateFilter}`,
          [shopkeeper_id]
       );
 
       const [[previousStats]] = await pool.query(
-        `SELECT SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales
-         FROM orders 
-         WHERE shopkeeper_id = ? ${previousDateFilter}`,
+        `SELECT SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales
+         FROM orders o
+         WHERE o.shopkeeper_id = ? ${previousDateFilter}`,
          [shopkeeper_id]
       );
 
@@ -369,9 +369,9 @@ shopkeeperRouter.get(
 
       // Chart Data
       const [chartRows] = await pool.query(
-        `SELECT ${groupBy} as day, SUM(total_amount) as revenue 
-         FROM orders 
-         WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered') ${dateFilter}
+        `SELECT ${groupBy} as day, SUM(o.total_amount) as revenue 
+         FROM orders o
+         WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY ${groupBy}`,
          [shopkeeper_id]
       );
@@ -1211,6 +1211,13 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "Invalid order ID" });
       }
 
+      if (status && typeof status === "string") {
+        const lowerStatus = status.trim().toLowerCase();
+        if (lowerStatus === "pending") status = "Pending";
+        else if (lowerStatus === "completed") status = "Completed";
+        else if (lowerStatus === "cancelled") status = "Cancelled";
+      }
+
       const validStatuses = ["Pending", "Completed", "Cancelled"];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({
@@ -1518,6 +1525,35 @@ shopkeeperRouter.put(
       });
     } catch (err) {
       console.error("Bulk update baseline error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+/**
+ * BULK RESTOCK low-stock products to their baseline quantities
+ */
+shopkeeperRouter.post(
+  "/products/bulk/restock",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+
+      const [result] = await pool.execute(
+        "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
+        [shop_id]
+      );
+
+      res.json({
+        success: true,
+        message: `Successfully restocked ${result.affectedRows} product(s) to baseline quantity`,
+        updatedCount: result.affectedRows
+      });
+    } catch (err) {
+      console.error("Bulk restock error:", err);
       res.status(500).json({ success: false, message: "Server error" });
     }
   }
