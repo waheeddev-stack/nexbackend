@@ -21,6 +21,16 @@ const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
   return R * c;
 };
 
+// Health check endpoint for navigation services
+router.get("/health", (req, res) => {
+  res.status(200).json({
+    success: true,
+    service: "navigation-backend",
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // 1. GET /api/navigation/nearby - Find nearby shops within specified radius (default 5km)
 router.get("/nearby", async (req, res) => {
   const { lat, lng, radiusKm = 5 } = req.query;
