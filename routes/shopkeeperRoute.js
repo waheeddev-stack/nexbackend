@@ -332,7 +332,7 @@ shopkeeperRouter.get(
       }
 
       // Total Sales & Pending Orders
-      const [[currentStats]] = await pool.execute(
+      const [[currentStats]] = await pool.query(
         `SELECT 
           SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales,
           COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pendingOrders,
@@ -340,14 +340,14 @@ shopkeeperRouter.get(
           COUNT(*) as totalOrdersCount
          FROM orders 
          WHERE shopkeeper_id = ? ${dateFilter}`,
-        [shopkeeper_id]
+         [shopkeeper_id]
       );
 
-      const [[previousStats]] = await pool.execute(
+      const [[previousStats]] = await pool.query(
         `SELECT SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN total_amount ELSE 0 END) as totalSales
          FROM orders 
          WHERE shopkeeper_id = ? ${previousDateFilter}`,
-        [shopkeeper_id]
+         [shopkeeper_id]
       );
 
       const totalSales = parseFloat(currentStats.totalSales || 0);
@@ -368,16 +368,16 @@ shopkeeperRouter.get(
       );
 
       // Chart Data
-      const [chartRows] = await pool.execute(
+      const [chartRows] = await pool.query(
         `SELECT ${groupBy} as day, SUM(total_amount) as revenue 
          FROM orders 
          WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY ${groupBy}`,
-        [shopkeeper_id]
+         [shopkeeper_id]
       );
 
       // Top Products
-      const [topProducts] = await pool.execute(
+      const [topProducts] = await pool.query(
         `SELECT p.id, p.name, SUM(oi.quantity) as sold
          FROM order_items oi
          JOIN orders o ON oi.order_id = o.id
@@ -385,18 +385,18 @@ shopkeeperRouter.get(
          WHERE o.shopkeeper_id = ? AND p.shop_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY p.id, p.name
          ORDER BY sold DESC LIMIT 5`,
-        [shopkeeper_id, shopkeeper_id]
+         [shopkeeper_id, shopkeeper_id]
       );
 
       // Top Customers
-      const [topCustomers] = await pool.execute(
+      const [topCustomers] = await pool.query(
         `SELECT u.id, u.name, SUM(o.total_amount) as spent
          FROM orders o
          JOIN users u ON o.user_id = u.id
          WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY u.id, u.name
          ORDER BY spent DESC LIMIT 5`,
-        [shopkeeper_id]
+         [shopkeeper_id]
       );
 
       res.json({
@@ -413,8 +413,8 @@ shopkeeperRouter.get(
       });
 
     } catch (err) {
-      console.error("Analytics error:", err);
-      res.status(500).json({ success: false, message: "Server error" });
+      console.error("Analytics error:", err.message, err.stack);
+      res.status(500).json({ success: false, message: "Server error", detail: err.message });
     }
   }
 );
