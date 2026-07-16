@@ -390,12 +390,12 @@ shopkeeperRouter.get(
 
       // Top Customers
       const [topCustomers] = await pool.query(
-        `SELECT u.id, u.name, SUM(o.total_amount) as spent
+        `SELECT u.id, u.name, COUNT(o.id) as orderCount, SUM(o.total_amount) as totalSpent
          FROM orders o
          JOIN users u ON o.user_id = u.id
          WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY u.id, u.name
-         ORDER BY spent DESC LIMIT 5`,
+         ORDER BY totalSpent DESC LIMIT 5`,
          [shopkeeper_id]
       );
 
