@@ -1238,7 +1238,7 @@ shopkeeperRouter.patch(
       }
 
       const [orderCheck] = await pool.execute(
-        "SELECT id FROM orders WHERE id = ? AND shopkeeper_id = ?",
+        "SELECT id, user_id, credits_earned, credits_granted FROM orders WHERE id = ? AND shopkeeper_id = ?",
         [orderIdNum, shopkeeper_id]
       );
 
@@ -1248,6 +1248,8 @@ shopkeeperRouter.patch(
           message: "Order not found or not assigned to you",
         });
       }
+
+      const order = orderCheck[0];
 
       if (status === "Cancelled") {
         const cancelConn = await pool.getConnection();
@@ -1276,6 +1278,20 @@ shopkeeperRouter.patch(
             );
           }
 
+          // Rollback wallet credit if already settled
+          if (order.credits_earned > 0) {
+            if (order.credits_granted) {
+              await cancelConn.execute(
+                "UPDATE users SET store_credits = GREATEST(COALESCE(store_credits, 0) - ?, 0) WHERE id = ?",
+                [order.credits_earned, order.user_id]
+              );
+            }
+            await cancelConn.execute(
+              "UPDATE orders SET credits_earned = 0, credits_granted = 0 WHERE id = ?",
+              [orderIdNum]
+            );
+          }
+
           await cancelConn.commit();
           cancelConn.release();
         } catch (err) {
@@ -1289,26 +1305,21 @@ shopkeeperRouter.patch(
           [orderIdNum]
         );
 
+        // Settle pending wallet credit
         try {
-          const [[orderDetails]] = await pool.execute(
-            "SELECT user_id, created_at, total_amount, order_type FROM orders WHERE id = ?",
-            [orderIdNum]
-          );
-
-          if (orderDetails) {
-            const orderType =
-              orderDetails.order_type || "pickup";
-            await awardWellnessPoints(
-              pool,
-              orderDetails.user_id,
-              new Date(),
-              orderDetails.created_at,
-              orderDetails.total_amount,
-              orderType
+          if (order.credits_earned > 0 && !order.credits_granted) {
+            await pool.execute(
+              "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+              [order.credits_earned, order.user_id]
             );
+            await pool.execute(
+              "UPDATE orders SET credits_granted = 1 WHERE id = ?",
+              [orderIdNum]
+            );
+            console.log(`✅ Settled ${order.credits_earned} wallet credits for order ${orderIdNum}`);
           }
-        } catch (pointsErr) {
-          console.error("Error awarding points:", pointsErr);
+        } catch (settleErr) {
+          console.error("Error settling wallet credits:", settleErr);
         }
       } else {
         await pool.execute("UPDATE orders SET status = ? WHERE id = ?", [
@@ -2413,7 +2424,7 @@ shopkeeperRouter.post(
 
       // Check if order exists and is assigned to this shopkeeper
       const [orderRows] = await pool.execute(
-        `SELECT id, status, pickup_code, user_id, created_at, total_amount, order_type
+        `SELECT id, status, pickup_code, user_id, created_at, total_amount, order_type, credits_earned, credits_granted
          FROM orders
          WHERE id = ? AND shopkeeper_id = ?`,
         [orderIdNum, shopkeeper_id]
@@ -2461,21 +2472,23 @@ shopkeeperRouter.post(
         [orderIdNum]
       );
 
-      // Award wellness points
-      let pointsAwarded = 0;
+      // Settle pending wallet credit
+      let walletCreditSettled = 0;
       try {
-        const orderType = order.order_type || "pickup";
-        const pointsResult = await awardWellnessPoints(
-          pool,
-          order.user_id,
-          new Date(),
-          order.created_at,
-          order.total_amount,
-          orderType
-        );
-        pointsAwarded = pointsResult.points || 0;
-      } catch (pointsErr) {
-        console.error("Error awarding points in verify-pickup:", pointsErr);
+        if (order.credits_earned > 0 && !order.credits_granted) {
+          await pool.execute(
+            "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+            [order.credits_earned, order.user_id]
+          );
+          await pool.execute(
+            "UPDATE orders SET credits_granted = 1 WHERE id = ?",
+            [orderIdNum]
+          );
+          walletCreditSettled = order.credits_earned;
+          console.log(`✅ Settled ${walletCreditSettled} wallet credits for order ${orderIdNum}`);
+        }
+      } catch (settleErr) {
+        console.error("Error settling wallet credits in verify-pickup:", settleErr);
       }
 
       // Emit Socket.IO events if req.io is available
@@ -2493,8 +2506,7 @@ shopkeeperRouter.post(
           total_amount: parseFloat(order.total_amount),
           updatedAt: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          pointsAwarded,
-          points_awarded: pointsAwarded,
+          walletCreditSettled,
         };
 
         const shopRoom = `shop_${Number(shopkeeper_id)}`;
@@ -2513,7 +2525,9 @@ shopkeeperRouter.post(
         );
 
         if (customer?.expo_push_token) {
-          const message = `🎉 Your order #${orderIdNum} has been verified and completed! You earned ${pointsAwarded} wellness points.`;
+          const message = walletCreditSettled > 0
+            ? `🎉 Your order #${orderIdNum} has been verified and completed! You earned ₹${(walletCreditSettled * 0.1).toFixed(0)} in wallet credit.`
+            : `🎉 Your order #${orderIdNum} has been verified and completed!`;
           const token = customer.expo_push_token;
           if (isFCMToken(token)) {
             await sendFCMPush(token, "Order Completed", message, {

@@ -536,6 +536,18 @@ server.listen(PORT, "0.0.0.0", async () => {
     console.error("❌ Failed to initialize 'wallet' column:", error);
   }
 
+  // Initialize instant_discount column on orders table if missing
+  try {
+    const [orderColumns] = await db.query("SHOW COLUMNS FROM orders LIKE 'instant_discount'");
+    if (orderColumns.length === 0) {
+      console.log("🔧 Adding missing 'instant_discount' column to 'orders' table...");
+      await db.query("ALTER TABLE orders ADD COLUMN instant_discount DECIMAL(10,2) DEFAULT 0.00");
+      console.log("✅ 'instant_discount' column added successfully");
+    }
+  } catch (error) {
+    console.error("❌ Failed to initialize 'instant_discount' column:", error);
+  }
+
   // Initialize inventory integration
   try {
     console.log("🔧 Initializing inventory management integration...");

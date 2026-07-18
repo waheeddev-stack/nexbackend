@@ -25,6 +25,7 @@ import {
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
+import { calculateTieredDiscount } from "../utils/discountTiers.js";
 import {
   getCachedShopkeeper,
   getCachedProduct,
@@ -58,14 +59,7 @@ async function executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalT
           return { success: false, task: 'notifications', error: err.message };
         }),
 
-      // Task 2: Award wellness points (non-blocking)
-      awardWellnessPointsAsync(userId, finalTotal, orderId)
-        .catch(err => {
-          console.error(`❌ Failed to award wellness points for order ${orderId}:`, err.message);
-          return { success: false, task: 'wellness_points', error: err.message };
-        }),
-
-      // Task 3: Log order analytics (non-blocking)
+      // Task 2: Log order analytics (non-blocking)
       logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal)
         .catch(err => {
           console.error(`❌ Failed to log order analytics for order ${orderId}:`, err.message);
@@ -427,7 +421,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
 
     // Check if order exists and belongs to the user or shopkeeper
     const [orderRows] = await pool.execute(
-      "SELECT id, user_id, shopkeeper_id, status FROM orders WHERE id = ?",
+      "SELECT id, user_id, shopkeeper_id, status, credits_earned, credits_granted FROM orders WHERE id = ?",
       [orderIdNum]
     );
 
@@ -465,8 +459,6 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         [cancellation_reason, orderIdNum]
       );
 
-      
-
       // Restore stock using manager utility
       const stockRestoration = await restoreStockForCancelledOrder(
         orderIdNum,
@@ -474,6 +466,20 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         cancellation_reason,
         connection
       );
+
+      // Rollback wallet credit if already settled
+      if (order.credits_earned > 0) {
+        if (order.credits_granted) {
+          await connection.execute(
+            "UPDATE users SET store_credits = GREATEST(COALESCE(store_credits, 0) - ?, 0) WHERE id = ?",
+            [order.credits_earned, order.user_id]
+          );
+        }
+        await connection.execute(
+          "UPDATE orders SET credits_earned = 0, credits_granted = 0 WHERE id = ?",
+          [orderIdNum]
+        );
+      }
 
       await connection.commit();
       connection.release();
@@ -629,6 +635,9 @@ router.get("/status/:status", verifyToken, async (req, res) => {
         END as status,
         o.status as original_status,
         o.total_amount,
+        o.instant_discount,
+        o.credits_earned,
+        o.credits_granted,
         o.created_at,
         s.shop_name,
         s.name as shopkeeper_name
@@ -707,6 +716,9 @@ router.get("/:orderId", verifyToken, async (req, res) => {
         END as status,
         o.status as original_status,
         o.total_amount,
+        o.instant_discount,
+        o.credits_earned,
+        o.credits_granted,
         CASE 
           WHEN o.status = 'Paid' OR o.status = 'Completed' THEN 'paid' 
           ELSE 'pending' 
@@ -777,7 +789,7 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
     const [orderInfo] = await pool.execute(
       `
       SELECT id, id as orderId, status, pickup_code,
-      total_amount as totalAmount, created_at as createdAt, credits_earned as creditsEarned
+      total_amount as totalAmount, instant_discount as instantDiscount, credits_earned as creditsEarned, credits_granted as creditsGranted, created_at as createdAt
       FROM orders 
       WHERE id = ? AND user_id = ?
     `,
@@ -894,14 +906,14 @@ async function createOrderHandler(req, res) {
     // Use aliases if main fields are missing
     const items = reqItems || products;
     const orderType = reqDeliveryType || order_type || "home_delivery";
-    const totalAmount = reqTotalAmount || grandTotal || total;
-    // shopkeeperId already declared earlier, just reassign if needed
-    // const shopkeeperId = reqShopkeeperId || shopId;
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
     const isPickup = orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup";
     const finalScheduledTime = isPickup ? null : scheduledTime;
+
+    // Calculate raw subtotal (pre-discount) for tiered discount and points validation
+    const rawSubtotal = req.body.subtotal || reqTotalAmount || grandTotal || total;
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -912,7 +924,7 @@ async function createOrderHandler(req, res) {
       });
     }
 
-    if (!totalAmount || totalAmount <= 0) {
+    if (!rawSubtotal || rawSubtotal <= 0) {
       await connection.rollback();
       return res.status(400).json({
         success: false,
@@ -987,7 +999,7 @@ async function createOrderHandler(req, res) {
         const validation = validatePointsUsage(
           creditsUsed,
           user.store_credits || 0,
-          totalAmount
+          rawSubtotal
         );
         if (!validation.valid) {
           await connection.rollback();
@@ -1013,7 +1025,9 @@ async function createOrderHandler(req, res) {
       }
     }
 
-    const finalTotal = totalAmount - pointsDiscount;
+    const { instantDiscount, walletCredit } = calculateTieredDiscount(rawSubtotal);
+
+    const finalTotal = rawSubtotal - instantDiscount - pointsDiscount;
 
     // Get next order ID (TiDB doesn't support auto-increment reliably)
     const [maxOrderId] = await connection.execute(
@@ -1021,8 +1035,8 @@ async function createOrderHandler(req, res) {
     );
     const orderId = maxOrderId[0].nextId;
 
-    // Calculate credits earned (1% of total amount)
-    const creditsEarned = Math.floor(finalTotal * 0.01);
+    // walletCredit stored as credits_earned in point units (10 points = ₹1)
+    const creditsEarned = Math.round(walletCredit * 10);
 
     // Precompute timer timestamps for click & collect
     const now = new Date();
@@ -1035,9 +1049,11 @@ async function createOrderHandler(req, res) {
         shopkeeper_id, 
         status, 
         payment_method,
-        total_amount, 
+        total_amount,
+        instant_discount,
         credits_earned,
         credits_used,
+        credits_granted,
         delivery_address,
         latitude,
         longitude,
@@ -1045,7 +1061,7 @@ async function createOrderHandler(req, res) {
         order_type,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -1053,6 +1069,7 @@ async function createOrderHandler(req, res) {
         shopkeeperId,
         paymentMethod,
         finalTotal,
+        instantDiscount,
         creditsEarned,
         creditsUsed,
         deliveryAddress,
@@ -1133,8 +1150,10 @@ async function createOrderHandler(req, res) {
         orderId,
         totalAmount: finalTotal,
         pickupCode,
-        pickup_code: pickupCode, // Add snake_case for compatibility
+        pickup_code: pickupCode,
         creditsEarned,
+        instantDiscount,
+        walletCredit,
         processingTime: responseTime,
       },
     });
@@ -1411,7 +1430,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
     // Check if order exists and get details for authorization and notifications
     const [orderRows] = await pool.execute(
       `
-      SELECT id, status, user_id, shopkeeper_id, total_amount, order_type, created_at
+      SELECT id, status, user_id, shopkeeper_id, total_amount, order_type, created_at, credits_earned, credits_granted
       FROM orders 
       WHERE id = ?
     `,
@@ -1471,6 +1490,20 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           );
         }
 
+        // Rollback wallet credit if already settled
+        if (order.credits_earned > 0) {
+          if (order.credits_granted) {
+            await cancelConn.execute(
+              "UPDATE users SET store_credits = GREATEST(COALESCE(store_credits, 0) - ?, 0) WHERE id = ?",
+              [order.credits_earned, order.user_id]
+            );
+          }
+          await cancelConn.execute(
+            "UPDATE orders SET credits_earned = 0, credits_granted = 0 WHERE id = ?",
+            [orderIdNum]
+          );
+        }
+
         await cancelConn.commit();
         cancelConn.release();
       } catch (err) {
@@ -1483,19 +1516,25 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         orderIdNum,
       ]);
 
-      // Award wellness points
+      // Settle pending wallet credit
       try {
-        const orderType = order.order_type || "pickup";
-        await awardWellnessPoints(
-          pool,
-          order.user_id,
-          new Date(),
-          order.created_at,
-          order.total_amount,
-          orderType
+        const [[walletData]] = await pool.execute(
+          "SELECT credits_earned, credits_granted FROM orders WHERE id = ?",
+          [orderIdNum]
         );
-      } catch (pointsErr) {
-        console.error("Error awarding points:", pointsErr);
+        if (walletData && !walletData.credits_granted && walletData.credits_earned > 0) {
+          await pool.execute(
+            "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+            [walletData.credits_earned, order.user_id]
+          );
+          await pool.execute(
+            "UPDATE orders SET credits_granted = 1 WHERE id = ?",
+            [orderIdNum]
+          );
+          console.log(`✅ Settled ${walletData.credits_earned} wallet credits for order ${orderIdNum}`);
+        }
+      } catch (settleErr) {
+        console.error("Error settling wallet credits:", settleErr);
       }
     } else {
       await pool.execute("UPDATE orders SET status = ? WHERE id = ?", [
