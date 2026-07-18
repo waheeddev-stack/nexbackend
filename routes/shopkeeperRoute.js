@@ -253,13 +253,22 @@ shopkeeperRouter.get(
   async (req, res) => {
     try {
       const shopkeeper_id = req.user.id;
-      const [customers] = await pool.execute(
-        `SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
-         FROM users u 
-         JOIN orders o ON u.id = o.user_id 
-         WHERE o.shopkeeper_id = ?`,
-        [shopkeeper_id]
-      );
+      const search = req.query.search ? `%${req.query.search}%` : null;
+
+      let sql = `
+        SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+        FROM users u 
+        JOIN orders o ON u.id = o.user_id 
+        WHERE o.shopkeeper_id = ?
+      `;
+      const params = [shopkeeper_id];
+
+      if (search) {
+        sql += ` AND (u.name LIKE ? OR u.email LIKE ?)`;
+        params.push(search, search);
+      }
+
+      const [customers] = await pool.execute(sql, params);
       res.json({ success: true, data: customers });
     } catch (err) {
       console.error("Fetch customers error:", err);
@@ -290,7 +299,7 @@ shopkeeperRouter.patch(
       }
 
       await pool.execute(
-        "UPDATE users SET store_credits = ? WHERE id = ?",
+        "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
         [credits, customerId]
       );
       res.json({ success: true, message: "Credits updated successfully" });
@@ -2786,45 +2795,62 @@ shopkeeperRouter.patch(
   verifyShopkeeperStatus,
   checkSubscriptionStatus,
   async (req, res) => {
+    const connection = await pool.getConnection();
     try {
       const shopkeeperid = req.user?.id
       const customerid = req.body.customerid
       const credits_awarded = Number(req.body.credits_awarded)
 
       if (!shopkeeperid) {
+        connection.release();
         return res.status(401).json({ success: false, message: "Shopkeeper Id is empty" })
       }
       if (!customerid) {
+        connection.release();
         return res.status(401).json({ success: false, message: "Customer Id is empty" })
       }
       if (!Number.isFinite(credits_awarded) || credits_awarded <= 0) {
+        connection.release();
         return res.status(400).json({ success: false, message: "New credits were not sent." })
       }
       if (credits_awarded > 750) {
+        connection.release();
         return res.status(400).json({ success: false, message: "The amount of credits is too much" })
       }
 
-      const [rows] = await pool.execute(
+      const [rows] = await connection.execute(
         "SELECT 1 FROM orders WHERE shopkeeper_id = ? AND user_id = ?",
         [shopkeeperid, customerid]
       )
 
       if (rows.length <= 0) {
+        connection.release();
         return res.status(400).json({ success: false, message: "Customer should have made at least one order from the shop" })
       }
 
-      const [result] = await pool.execute(
+      await connection.beginTransaction();
+
+      const [result] = await connection.execute(
         "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
         [credits_awarded, customerid]
       )
 
       if (result.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
         return res.status(404).json({ success: false, message: "Customer Not found." })
       }
+
+      await connection.commit();
+      connection.release();
 
       return res.status(200).json({ success: true, message: "Credits awarded successfully" })
 
     } catch (error) {
+      if (connection) {
+        await connection.rollback().catch(() => {});
+        connection.release();
+      }
       console.log("Error occurred while updating credits: " + error)
       return res.status(500).json({ success: false, message: "Internal Server error" })
     }
