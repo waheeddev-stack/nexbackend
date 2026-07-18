@@ -32,30 +32,39 @@ export function calculateTotalRevenue(orders) {
  * - 0 to 29,999: 0%
  * - 30,000 to 99,999: 2.0%
  * - 100,000 to 199,999: 2.5%
- * - 200,000+: 3.0%
+ * - 200,000 to 299,999: 3.0%
+ * - 300,000+: 3.5%
  * 
  * @param {number} totalRevenue - Gross revenue of the shopkeeper
- * @returns {object} Object containing feePercentage and feeAmount
+ * @returns {object} Object containing feePercentage, feeAmount, and slabLabel
  */
 export function calculatePlatformFee(totalRevenue) {
   let feePercentage = 0;
+  let slabLabel = '';
 
   if (totalRevenue < 30000) {
-    feePercentage = 0; // 0 - 29,999
+    feePercentage = 0;
+    slabLabel = '₹0 - ₹29,999 → 0%';
   } else if (totalRevenue >= 30000 && totalRevenue < 100000) {
-    feePercentage = 2.0; // 30k - 99,999
+    feePercentage = 2.0;
+    slabLabel = '₹30k - ₹99,999 → 2%';
   } else if (totalRevenue >= 100000 && totalRevenue < 200000) {
-    feePercentage = 2.5; // 1L - 1,99,999
-  } else if (totalRevenue >= 200000) {
-    feePercentage = 3.0; // 2L and above
+    feePercentage = 2.5;
+    slabLabel = '₹1L - ₹1,99,999 → 2.5%';
+  } else if (totalRevenue >= 200000 && totalRevenue < 300000) {
+    feePercentage = 3.0;
+    slabLabel = '₹2L - ₹2,99,999 → 3%';
+  } else if (totalRevenue >= 300000) {
+    feePercentage = 3.5;
+    slabLabel = '₹3L+ → 3.5%';
   }
 
-  // Calculate the actual fee amount
   const feeAmount = Math.round((totalRevenue * feePercentage) / 100);
   
   return {
     feePercentage: feePercentage,
-    feeAmount: feeAmount
+    feeAmount: feeAmount,
+    slabLabel: slabLabel
   };
 }
 

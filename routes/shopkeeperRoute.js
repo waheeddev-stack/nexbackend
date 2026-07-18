@@ -2295,7 +2295,7 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
 shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
   try {
     const [shopkeeper] = await pool.execute(
-      "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due, grace_period_end FROM shopkeepers WHERE id = ?",
+      "SELECT shop_scale, subscription_status, last_payment_date, next_payment_due, grace_period_end, is_verified FROM shopkeepers WHERE id = ?",
       [req.user.id]
     );
 
@@ -2333,7 +2333,8 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
         graceDaysRemaining,
         daysUntilDue,
         is_trial_active: false,
-        can_access: data.subscription_status !== "suspended",
+        is_verified: data.is_verified === 1 || data.is_verified === true,
+        can_access: data.subscription_status !== "suspended" && (data.is_verified === 1 || data.is_verified === true),
       },
     });
   } catch (err) {
