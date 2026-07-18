@@ -846,7 +846,7 @@ async function createOrderHandler(req, res) {
     if (!shopkeeper) {
       // Fallback to DB if not cached
       const [shopkeeperCheck] = await connection.execute(
-        `SELECT id, subscription_status, is_deleted, expo_push_token FROM shopkeepers WHERE id = ? LIMIT 1`,
+        `SELECT id, subscription_status, is_deleted, expo_push_token, home_delivery_active FROM shopkeepers WHERE id = ? LIMIT 1`,
         [shopkeeperId]
       );
 
@@ -911,6 +911,16 @@ async function createOrderHandler(req, res) {
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
     const isPickup = orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup";
     const finalScheduledTime = isPickup ? null : scheduledTime;
+
+    // Check if delivery is requested but shop has disabled it
+    if (!isPickup && shopkeeper.home_delivery_active === 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "This shop does not currently offer home delivery",
+        code: "HOME_DELIVERY_DISABLED",
+      });
+    }
 
     // Calculate raw subtotal (pre-discount) for tiered discount and points validation
     const rawSubtotal = req.body.subtotal || reqTotalAmount || grandTotal || total;

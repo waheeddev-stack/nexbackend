@@ -72,7 +72,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOnlineShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified, home_delivery_active,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -175,7 +175,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOfflineShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, home_delivery_active,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *

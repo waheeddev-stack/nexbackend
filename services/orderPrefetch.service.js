@@ -70,7 +70,8 @@ export async function prefetchShopkeepersData() {
         latitude,
         longitude,
         expo_push_token,
-        upi_id
+        upi_id,
+        home_delivery_active
       FROM shopkeepers 
       WHERE is_deleted = 0
     `);
@@ -259,7 +260,7 @@ export async function prefetchOrderData(userId, shopkeeperId) {
       getCachedShopkeeper(shopkeeperId) 
         ? Promise.resolve({ success: true, cached: true })
         : pool.execute(`
-            SELECT id, subscription_status, is_deleted, shop_name, name, phone, address, expo_push_token
+            SELECT id, subscription_status, is_deleted, shop_name, name, phone, address, expo_push_token, home_delivery_active
             FROM shopkeepers WHERE id = ?
           `, [shopkeeperId]).then(([shops]) => {
             if (shops.length > 0) {
