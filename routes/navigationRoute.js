@@ -49,7 +49,7 @@ router.get("/nearby", async (req, res) => {
 
     // Query online shopkeepers with coordinates
     const [shops] = await pool.execute(
-      "SELECT id, shop_name, address, latitude, longitude, is_online, phone FROM shopkeepers WHERE is_online = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL"
+      "SELECT id, shop_name, address, latitude, longitude, is_online, phone, home_delivery_active FROM shopkeepers WHERE is_online = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL"
     );
 
     const nearbyShops = [];
