@@ -139,7 +139,7 @@ function getContentRecommendations({ userProducts = [], catalog = [], topN = 5 }
 
 async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
   const [productRows] = await pool.query(
-    "SELECT id, name, category, description FROM products"
+    "SELECT id, name, category, description FROM products WHERE (available_stock IS NULL OR available_stock != 'INVISIBLE') AND stock > 0"
   );
   const [orderRows] = await pool.query(
     `SELECT o.id, o.created_at, oi.product_id

@@ -72,7 +72,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOnlineShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified, home_delivery_active,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -132,7 +132,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         // A nearby shop with no stock is not useful to the user.
         // Products without baselineQty are not considered "live" in the new system.
         const [[productCount]] = await pool.execute(
-          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND COALESCE(baselineQty, 0) > 0",
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND COALESCE(baselineQty, 0) > 0 AND available_stock != 'INVISIBLE'",
           [shop.id]
         );
 
@@ -175,7 +175,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialOfflineShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, home_delivery_active,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -265,11 +265,12 @@ userrouter.get("/nearby-shops", async (req, res) => {
     if (shopIds.length > 0) {
       const placeholders = shopIds.map(() => "?").join(",");
       const [productsResult] = await pool.execute(
-        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, available_stock, created_at
          FROM products
          WHERE shop_id IN (${placeholders})
            AND stock > 0 
            AND COALESCE(baselineQty, 0) > 0
+           AND available_stock != 'INVISIBLE'
          ORDER BY created_at DESC`,
         shopIds
       );
@@ -675,11 +676,12 @@ userrouter.get("/products", async (req, res) => {
 
     let query = `
       SELECT p.id AS product_id, p.shop_id, p.name, p.description, p.image, p.category, 
-             p.price, p.stock, s.shop_name AS shopName, s.address AS shopAddress
+             p.price, p.stock, p.available_stock, s.shop_name AS shopName, s.address AS shopAddress
       FROM products p
       JOIN shopkeepers s ON p.shop_id = s.id
       WHERE s.is_verified = 1 AND (s.is_online = 1 OR s.is_online IS NULL)
         AND p.stock > 0
+        AND (p.available_stock IS NULL OR p.available_stock != 'INVISIBLE')
       ORDER BY p.created_at DESC
       LIMIT 50
     `;

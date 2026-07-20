@@ -938,7 +938,7 @@ async function createOrderHandler(req, res) {
     const placeholders = productIds.map(() => '?').join(',');
 
     const [products_check] = await connection.execute(
-      `SELECT id, stock FROM products WHERE id IN (${placeholders}) AND shop_id = ? FOR UPDATE`,
+      `SELECT id, stock, available_stock FROM products WHERE id IN (${placeholders}) AND shop_id = ? AND available_stock NOT IN ('INVISIBLE', 'OUT OF STOCK') FOR UPDATE`,
       [...productIds, shopkeeperId]
     );
 

@@ -2619,6 +2619,113 @@ adminRouter.get("/payment-info/test", verifyAdminToken, async (req, res) => {
   }
 });
 
+// ============================================================================
+// SUPPORT TICKETS
+// ============================================================================
+
+// Get all support tickets (admin)
+// GET /api/admin/support-tickets
+adminRouter.get("/support-tickets", verifyAdminToken, async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = `
+      SELECT t.*, s.shop_name, s.phone as shopkeeper_phone
+      FROM support_tickets t
+      LEFT JOIN shopkeepers s ON t.shopkeeper_id = s.id
+    `;
+    const params = [];
+
+    if (status && status !== "all") {
+      query += " WHERE t.status = ?";
+      params.push(status);
+    }
+
+    query += " ORDER BY t.created_at DESC";
+
+    const [tickets] = await pool.execute(query, params);
+
+    const ticketCounts = {
+      total: tickets.length,
+      open: tickets.filter((t) => t.status === "open").length,
+      in_progress: tickets.filter((t) => t.status === "in_progress").length,
+      resolved: tickets.filter((t) => t.status === "resolved").length,
+      closed: tickets.filter((t) => t.status === "closed").length,
+    };
+
+    res.json({ success: true, data: tickets, stats: ticketCounts });
+  } catch (err) {
+    console.error("Get support tickets error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Get single support ticket (admin)
+// GET /api/admin/support-tickets/:id
+adminRouter.get("/support-tickets/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const [tickets] = await pool.execute(
+      `SELECT t.*, s.shop_name, s.phone as shopkeeper_phone
+       FROM support_tickets t
+       LEFT JOIN shopkeepers s ON t.shopkeeper_id = s.id
+       WHERE t.id = ?`,
+      [req.params.id]
+    );
+
+    if (tickets.length === 0) {
+      return res.status(404).json({ success: false, message: "Ticket not found" });
+    }
+
+    res.json({ success: true, data: tickets[0] });
+  } catch (err) {
+    console.error("Get ticket error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Update support ticket (admin: respond & change status)
+// PUT /api/admin/support-tickets/:id
+adminRouter.put("/support-tickets/:id", verifyAdminToken, async (req, res) => {
+  try {
+    const { status, admin_response } = req.body;
+
+    const [tickets] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [req.params.id]);
+
+    if (tickets.length === 0) {
+      return res.status(404).json({ success: false, message: "Ticket not found" });
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (status) {
+      updates.push("status = ?");
+      params.push(status);
+    }
+    if (admin_response !== undefined) {
+      updates.push("admin_response = ?");
+      params.push(admin_response);
+      updates.push("responded_by = ?");
+      params.push(req.admin.id);
+      updates.push("responded_at = NOW()");
+    }
+
+    if (updates.length > 0) {
+      params.push(req.params.id);
+      await pool.execute(
+        `UPDATE support_tickets SET ${updates.join(", ")} WHERE id = ?`,
+        params
+      );
+    }
+
+    const [updated] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [req.params.id]);
+
+    res.json({ success: true, message: "Ticket updated", data: updated[0] });
+  } catch (err) {
+    console.error("Update ticket error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ⚠️ CATCH-ALL ROUTES - MUST BE LAST! ⚠️
 // These routes use /:id which matches any path, so they must be defined after all specific routes
 
@@ -2677,8 +2784,6 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
       .status(500)
       .json({ success: false, message: "Server error", error: err.message });
   }
-});
-
 export default adminRouter;
 
 // ============================================================================

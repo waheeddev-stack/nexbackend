@@ -18,6 +18,7 @@ import serviceStatusRouter from "./routes/serviceStatusRoute.js";
 import orderPrefetchRouter from "./routes/orderPrefetchRoute.js";
 import recommendationRouter from "./routes/recommendationRoute.js";
 import shoppingListRouter from "./routes/shoppingListRoute.js";
+import supportTicketRouter from "./routes/supportTicketRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -502,6 +503,7 @@ app.use("/api/shopping-list", shoppingListRouter);
 // Register inventory management routes
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
 app.use("/api/navigation", navigationRouter);
+app.use("/api/shopkeeper", supportTicketRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);

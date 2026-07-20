@@ -1592,7 +1592,7 @@ shopkeeperRouter.put(
     try {
       const shop_id = req.user.id;
       const productId = req.params.id;
-      const { name, description, category, price, stock, baselineQty } =
+      const { name, description, category, price, stock, baselineQty, available_stock } =
         req.body;
 
       const [existing] = await pool.execute(
@@ -1676,6 +1676,16 @@ shopkeeperRouter.put(
         fields.push("stock = ?");
         values.push(b);
       }
+      if (available_stock != null) {
+        const validStatuses = ['IN STOCK', 'OUT OF STOCK', 'INVISIBLE'];
+        if (!validStatuses.includes(available_stock))
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid available_stock value. Must be: IN STOCK, OUT OF STOCK, or INVISIBLE" });
+        fields.push("available_stock = ?");
+        values.push(available_stock);
+      }
+
       if (imageUrl !== existing[0].image) {
         fields.push("image = ?");
         values.push(imageUrl);
