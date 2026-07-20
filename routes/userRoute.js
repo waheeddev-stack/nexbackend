@@ -23,7 +23,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Support both radiusKm (older frontend) and radius (new frontend)
     // Handle the case where radius might be passed in meters
     let radiusValue =
-      parseFloat(req.query.radiusKm) || parseFloat(req.query.radius) || 1.0;
+      parseFloat(req.query.radiusKm) || parseFloat(req.query.radius) || 1.25;
 
     // HEURISTIC: If radiusValue is > 10, it's likely meters, convert to KM
     // This handles the "fallback" meters behavior mentioned by user
@@ -46,9 +46,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
 
-    // Ensure we are searching within at least 1km as requested
-    // If the frontend sent something that resulted in 100m, we force it to 1km
-    const finalRadiusKm = Math.max(radiusKm, 1.0);
+    // Ensure we are searching within at least 1.25km as requested
+    // If the frontend sent something that resulted in 100m, we force it to 1.25km
+    const finalRadiusKm = Math.max(radiusKm, 1.25);
     const radiusMeters = finalRadiusKm * 1000;
 
     console.log(
@@ -123,16 +123,16 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
         if (verifiedDistance > radiusMeters) {
           console.log(
-            `     ❌ Rejected: Distance ${verifiedDistance.toFixed(2)}m exceeds 1km limit.`
+            `     ❌ Rejected: Distance ${verifiedDistance.toFixed(2)}m exceeds ${radiusMeters}m limit.`
           );
           continue;
         }
 
-        // 🛡️ STICK CHECK: Verify if this nearest shop has any products available (stock > 0 and baselineQty > 0)
+        // 🛡️ STICK CHECK: Verify if this shop has any products available (stock > 0)
         // A nearby shop with no stock is not useful to the user.
-        // Products without baselineQty are not considered "live" in the new system.
+        // NOTE: baselineQty is no longer required, and NULL available_stock is treated as visible.
         const [[productCount]] = await pool.execute(
-          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND COALESCE(baselineQty, 0) > 0 AND available_stock != 'INVISIBLE'",
+          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND (available_stock IS NULL OR available_stock != 'INVISIBLE')",
           [shop.id]
         );
 
@@ -159,12 +159,11 @@ userrouter.get("/nearby-shops", async (req, res) => {
           continue;
         }
 
-        // All checks passed! This is our best candidate.
+        // All checks passed! Add this shop to the list of nearby shops.
         console.log(
-          `🎯 3rd Check (FINAL ALLOTMENT): ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m with ${productCount.count} products.`
+          `🎯 FINAL ALLOTMENT: ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m with ${productCount.count} products.`
         );
-        onlineShops = [shop];
-        break; // Stop at the absolute best match that is fully verified.
+        onlineShops.push(shop);
       }
     } else {
       console.log(
@@ -257,8 +256,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each online shop directly from products table (products.shop_id)
-    // Only include products with stock > 0 and a set baselineQty > 0
-    // Products without baselineQty are not considered "live" in the new system
+    // Only include products with stock > 0 that are not INVISIBLE (NULL treated as visible)
     const shopIds = onlineShops.map((s) => s.id);
     let products = [];
 
@@ -269,8 +267,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
          FROM products
          WHERE shop_id IN (${placeholders})
            AND stock > 0 
-           AND COALESCE(baselineQty, 0) > 0
-           AND available_stock != 'INVISIBLE'
+           AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
          ORDER BY created_at DESC`,
         shopIds
       );
