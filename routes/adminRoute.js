@@ -2784,7 +2784,7 @@ adminRouter.delete("/:id", verifyAdminToken, async (req, res) => {
       .status(500)
       .json({ success: false, message: "Server error", error: err.message });
   }
-export default adminRouter;
+});
 
 // ============================================================================
 // PUSH NOTIFICATIONS TO ALL USERS
@@ -2952,3 +2952,5 @@ adminRouter.get("/notifications/stats", verifyAdminToken, async (req, res) => {
     });
   }
 });
+
+export default adminRouter;
