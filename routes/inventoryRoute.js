@@ -200,4 +200,4 @@ inventoryRouter.post("/restock", verifyToken, async (req, res) => {
   }
 });
 
-module.exports = inventoryRouter;
+export default inventoryRouter;
