@@ -70,7 +70,8 @@ export async function prefetchShopkeepersData() {
         latitude,
         longitude,
         expo_push_token,
-        upi_id
+        upi_id,
+        home_delivery_active
       FROM shopkeepers 
       WHERE is_deleted = 0
     `);

@@ -846,7 +846,7 @@ async function createOrderHandler(req, res) {
     if (!shopkeeper) {
       // Fallback to DB if not cached
       const [shopkeeperCheck] = await connection.execute(
-        `SELECT id, subscription_status, is_deleted, expo_push_token FROM shopkeepers WHERE id = ? LIMIT 1`,
+        `SELECT id, subscription_status, is_deleted, expo_push_token, home_delivery_active FROM shopkeepers WHERE id = ? LIMIT 1`,
         [shopkeeperId]
       );
 
@@ -878,6 +878,18 @@ async function createOrderHandler(req, res) {
         message: `Shop is currently ${shopkeeper.subscription_status}. Cannot place orders.`,
         code: 'SHOP_INACTIVE',
         shopStatus: shopkeeper.subscription_status
+      });
+    }
+
+    // Validate delivery type against shop's home_delivery_active setting
+    const _deliveryType = req.body.deliveryType || req.body.order_type || req.body.delivery_type;
+    const _isDeliveryOrder = _deliveryType && _deliveryType !== 'store_pickup' && _deliveryType !== 'pickup' && _deliveryType !== 'click_and_collect';
+    if (_isDeliveryOrder && shopkeeper.home_delivery_active !== 1) {
+      connection.release();
+      return res.status(400).json({
+        success: false,
+        message: 'Home delivery is currently disabled for this shop. Please select pickup.',
+        code: 'DELIVERY_DISABLED'
       });
     }
 

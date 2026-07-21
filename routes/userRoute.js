@@ -92,11 +92,12 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND longitude IS NOT NULL
          AND latitude BETWEEN ? AND ?
          AND longitude BETWEEN ? AND ?
-         AND latitude != 0 
-         AND longitude != 0
-         AND is_verified = 1
-       HAVING distance <= ?
-       ORDER BY distance ASC`,
+          AND latitude != 0 
+          AND longitude != 0
+          AND is_verified = 1
+          AND subscription_status NOT IN ('suspended')
+        HAVING distance <= ?
+        ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
 
@@ -266,7 +267,7 @@ userrouter.get("/shop-info/:shopId", async (req, res) => {
       `SELECT id, name, shop_name, address, phone, latitude, longitude, 
               is_online, is_verified, home_delivery_active
        FROM shopkeepers 
-       WHERE id = ? AND is_verified = 1`,
+       WHERE id = ? AND is_verified = 1 AND subscription_status NOT IN ('suspended')`,
       [shopId]
     );
 
@@ -616,7 +617,8 @@ userrouter.get("/products", async (req, res) => {
              p.price, p.stock, p.available_stock, s.shop_name AS shopName, s.address AS shopAddress
       FROM products p
       JOIN shopkeepers s ON p.shop_id = s.id
-      WHERE s.is_verified = 1 AND (s.is_online = 1 OR s.is_online IS NULL)
+      WHERE s.is_verified = 1 AND s.subscription_status NOT IN ('suspended')
+        AND (s.is_online = 1 OR s.is_online IS NULL)
         AND p.stock > 0
         AND (p.available_stock IS NULL OR p.available_stock != 'INVISIBLE')
       ORDER BY p.created_at DESC
@@ -654,7 +656,7 @@ userrouter.get("/shops/:shopId/location", verifyToken, async (req, res) => {
       SELECT id, shop_name, name as shopkeeper_name, address, 
              latitude, longitude, phone, created_at
       FROM shopkeepers 
-      WHERE id = ? AND is_verified = 1
+      WHERE id = ? AND is_verified = 1 AND subscription_status NOT IN ('suspended')
     `,
       [shopId]
     );
