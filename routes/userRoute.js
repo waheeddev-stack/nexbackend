@@ -19,6 +19,11 @@ userrouter.get("/nearby-shops", async (req, res) => {
     console.log("🔍 Nearby shops incoming query:", req.query);
 
     const { latitude, longitude } = req.query;
+
+    // include_offline is no longer used: ALL verified shops within range
+    // are returned regardless of online/offline status.
+    // The frontend uses `is_online` per-shop to show online/offline banners.
+
     // Default search radius to 1.0 Km, accept dynamic adjustments via radiusKm parameter
     // Support both radiusKm (older frontend) and radius (new frontend)
     // Handle the case where radius might be passed in meters
@@ -68,10 +73,12 @@ userrouter.get("/nearby-shops", async (req, res) => {
     const minLng = lng - lngDelta;
     const maxLng = lng + lngDelta;
 
-    // 🔍 1st CHECK: Scan for all potential ONLINE shops in the expanded bounding box
+    // 🔍 Scan for all potential shops in the expanded bounding box
+    // Both online and offline verified shops are included.
+    // The `is_online` field is returned per-shop for the frontend to show banners.
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
-    const [allPotentialOnlineShops] = await pool.execute(
+    const [allPotentialShops] = await pool.execute(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified, home_delivery_active,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
@@ -88,22 +95,21 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 1
-         AND (is_online = 1 OR is_online IS NULL)
        HAVING distance <= ?
        ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
 
     console.log(
-      `🔍 1st Check: Found ${allPotentialOnlineShops.length} potential online shops within ${radiusMeters}m`
+      `🔍 Initial scan: Found ${allPotentialShops.length} potential shops within ${radiusMeters}m`
     );
 
-    // 🎯 2nd CHECK: Strict re-verification phase
-    let onlineShops = [];
-    if (allPotentialOnlineShops.length > 0) {
+    // 🎯 STRICT VERIFICATION: Re-verify distance for each potential shop
+    let verifiedShops = [];
+    if (allPotentialShops.length > 0) {
       console.log("🕵️ Starting strict re-verification for potential shops...");
 
-      for (const shop of allPotentialOnlineShops) {
+      for (const shop of allPotentialShops) {
         // Re-verify distance in Node.js for absolute precision (Double verification)
         const R = 6371; // Earth's radius in km
         const dLat = ((shop.latitude - lat) * Math.PI) / 180;
@@ -118,7 +124,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         const verifiedDistance = R * c * 1000; // Meters
 
         console.log(
-          `   - Verifying ${shop.shop_name}: SQL dist=${shop.distance.toFixed(2)}m, Node dist=${verifiedDistance.toFixed(2)}m`
+          `   - Verifying ${shop.shop_name}: SQL dist=${shop.distance.toFixed(2)}m, Node dist=${verifiedDistance.toFixed(2)}m, is_online=${shop.is_online}`
         );
 
         if (verifiedDistance > radiusMeters) {
@@ -128,90 +134,34 @@ userrouter.get("/nearby-shops", async (req, res) => {
           continue;
         }
 
-        // 🛡️ STICK CHECK: Verify if this shop has any products available (stock > 0)
-        // A nearby shop with no stock is not useful to the user.
-        // NOTE: baselineQty is no longer required, and NULL available_stock is treated as visible.
-        const [[productCount]] = await pool.execute(
-          "SELECT COUNT(*) as count FROM products WHERE shop_id = ? AND stock > 0 AND (available_stock IS NULL OR available_stock != 'INVISIBLE')",
-          [shop.id]
-        );
-
-        if (productCount.count === 0) {
-          console.log(
-            `     ⚠️ Skipped ${shop.shop_name}: No products currently in stock. Searching for next nearest...`
-          );
-          continue;
-        }
-
-        // Fresh status check: Re-verify online and verified status one last time
+        // Fresh status check: Re-verify verified status one last time
         const [[freshStatus]] = await pool.execute(
-          "SELECT is_online, is_verified FROM shopkeepers WHERE id = ?",
+          "SELECT is_verified FROM shopkeepers WHERE id = ?",
           [shop.id]
         );
 
-        if (
-          freshStatus.is_verified !== 1 ||
-          (freshStatus.is_online !== 1 && freshStatus.is_online !== null)
-        ) {
+        if (freshStatus.is_verified !== 1) {
           console.log(
-            `     ❌ Rejected ${shop.shop_name}: Status changed during processing.`
+            `     ❌ Rejected ${shop.shop_name}: Verification status changed during processing.`
           );
           continue;
         }
 
-        // All checks passed! Add this shop to the list of nearby shops.
+        // All checks passed! Add this shop to the list.
+        // Shops are included regardless of online/offline status or product availability.
+        // The frontend uses `is_online` to show banners and `products[]` to show items.
         console.log(
-          `🎯 FINAL ALLOTMENT: ${shop.shop_name} strictly verified at ${verifiedDistance.toFixed(2)}m with ${productCount.count} products.`
+          `🎯 INCLUDED: ${shop.shop_name} at ${verifiedDistance.toFixed(2)}m (${shop.is_online ? "online" : "offline"})`
         );
-        onlineShops.push(shop);
+        verifiedShops.push(shop);
       }
     } else {
       console.log(
-        `❌ 2nd Check: No online verified shops found within ${finalRadiusKm}km`
+        `❌ No verified shops found within ${finalRadiusKm}km`
       );
-    }
-
-    // 🔍 1st CHECK (OFFLINE): Scan for potential offline shops as fallback
-    // Returns distance in km (not meters) to be compatible with formatDistance
-    const [allPotentialOfflineShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, home_delivery_active,
-              (6371 * acos(
-                 LEAST(1, GREATEST(-1,
-                   cos(radians(?)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(?)) +
-                   sin(radians(?)) * sin(radians(latitude))
-                 ))
-              )) AS distance
-       FROM shopkeepers
-       WHERE latitude IS NOT NULL 
-         AND longitude IS NOT NULL
-         AND latitude BETWEEN ? AND ?
-         AND longitude BETWEEN ? AND ?
-         AND latitude != 0 
-         AND longitude != 0
-         AND is_verified = 1
-         AND is_online = 0
-       HAVING distance <= ?
-       ORDER BY distance ASC`,
-      [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
-    );
-
-    console.log(
-      `📴 Offline Check: Found ${allPotentialOfflineShops.length} potential offline shops in radius`
-    );
-
-    // Only allot nearest offline shop if no online shop was allotted
-    let offlineShops = [];
-    if (onlineShops.length === 0 && allPotentialOfflineShops.length > 0) {
-      const nearestOffline = allPotentialOfflineShops[0];
-      console.log(
-        `📴 Final Allotment (Offline Fallback): ${nearestOffline.shop_name} at ${nearestOffline.distance.toFixed(2)}m`
-      );
-      offlineShops = [nearestOffline];
     }
 
     // Check for unverified shops nearby (for debugging)
-    // Returns distance in km (not meters) to be compatible with formatDistance
     const [unverifiedShops] = await pool.execute(
       `SELECT id, name, shop_name, is_verified, is_online,
               (6371 * acos(
@@ -240,24 +190,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
       );
     }
 
-    // If no online shops but there are offline shops nearby, return special response
-    if (onlineShops.length === 0 && offlineShops.length > 0) {
-      return res.json({
-        success: true,
-        shops: [],
-        hasOfflineShops: true,
-        offlineShopsCount: offlineShops.length,
-        message: "Nearby shops are currently offline",
-      });
-    }
-
-    if (onlineShops.length === 0) {
+    if (verifiedShops.length === 0) {
       return res.json({ success: true, shops: [], hasOfflineShops: false });
     }
 
-    // Fetch products for each online shop directly from products table (products.shop_id)
+    // Fetch products for each shop directly from products table (products.shop_id)
     // Only include products with stock > 0 that are not INVISIBLE (NULL treated as visible)
-    const shopIds = onlineShops.map((s) => s.id);
+    const shopIds = verifiedShops.map((s) => s.id);
     let products = [];
 
     if (shopIds.length > 0) {
@@ -280,7 +219,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     // Group products under their shop, ensure address is never null/undefined
     // Hide exact stock count from customer (only visible to shopkeeper)
-    const shopsWithProducts = onlineShops.map((shop) => ({
+    const hasOfflineShops = verifiedShops.some((s) => s.is_online === 0 || s.is_online === false);
+    const shopsWithProducts = verifiedShops.map((shop) => ({
       ...shop,
       // Provide fallback address if not set
       address:
@@ -303,7 +243,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     res.json({
       success: true,
       shops: shopsWithProducts,
-      hasOfflineShops: offlineShops.length > 0,
+      hasOfflineShops,
     });
   } catch (err) {
     console.error("Nearby shops error:", err);
