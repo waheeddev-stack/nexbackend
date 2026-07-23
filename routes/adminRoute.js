@@ -2121,6 +2121,7 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         s.subscription_status,
         s.last_payment_date,
         s.next_payment_due,
+        s.grace_period_end,
         COUNT(CASE WHEN bp.status = 'pending' THEN 1 END) as pending_payments_count,
         COUNT(CASE WHEN bp.status = 'approved' THEN 1 END) as approved_payments_count,
         COUNT(CASE WHEN bp.status = 'rejected' THEN 1 END) as rejected_payments_count,
@@ -2132,7 +2133,7 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       FROM shopkeepers s
       LEFT JOIN billing_payments bp ON s.id = bp.shopkeeper_id
       WHERE s.is_deleted = 0 AND s.id IS NOT NULL
-      GROUP BY s.id, s.name, s.shop_name, s.email, s.phone, s.subscription_status, s.last_payment_date, s.next_payment_due
+      GROUP BY s.id, s.name, s.shop_name, s.email, s.phone, s.subscription_status, s.last_payment_date, s.next_payment_due, s.grace_period_end
       ORDER BY pending_amount DESC, s.name ASC
     `);
 
@@ -2159,8 +2160,8 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
 
       if (subscription_status === "suspended") {
         payment_status = "blocked";
-      } else if (subscription_status === "overdue") {
-        payment_status = "overdue";
+      } else if (subscription_status === "grace_period") {
+        payment_status = "grace_period";
       } else if (earning.next_payment_due) {
         const daysUntilDue = Math.ceil(
           (new Date(earning.next_payment_due) - new Date()) /
@@ -2174,11 +2175,33 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       const sales = salesData.find(s => s.shopkeeper_id === earning.shopkeeper_id) || { gross_revenue: 0, completed_orders_count: 0 };
       const feeDetails = calculatePlatformFee(Number(sales.gross_revenue));
 
+      let daysUntilDue = 0;
+      let daysOverdue = 0;
+      let graceDaysRemaining = 0;
+      const now = new Date();
+      if (earning.next_payment_due) {
+        daysUntilDue = Math.ceil((new Date(earning.next_payment_due) - now) / (1000 * 60 * 60 * 24));
+        if (daysUntilDue < 0) {
+          daysOverdue = Math.abs(daysUntilDue);
+          daysUntilDue = 0;
+        }
+      }
+      if (earning.grace_period_end) {
+        const graceEnd = new Date(earning.grace_period_end);
+        if (graceEnd > now) {
+          graceDaysRemaining = Math.ceil((graceEnd - now) / (1000 * 60 * 60 * 24));
+        }
+      }
+
       return {
         ...earning,
-        subscription_status, // Use normalized status
+        subscription_status,
         payment_status,
         next_payment_date: earning.next_payment_due,
+        grace_period_end: earning.grace_period_end,
+        days_until_due: daysUntilDue,
+        days_overdue: daysOverdue,
+        grace_days_remaining: graceDaysRemaining,
         gross_revenue: Number(sales.gross_revenue),
         completed_orders_count: sales.completed_orders_count,
         platform_fee_percentage: `${feeDetails.feePercentage}%`,
@@ -2208,7 +2231,7 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         (e) => e.subscription_status === "active"
       ).length,
       grace_count: enrichedEarnings.filter(
-        (e) => e.subscription_status === "overdue"
+        (e) => e.subscription_status === "grace_period"
       ).length,
       suspended_count: enrichedEarnings.filter(
         (e) => e.subscription_status === "suspended"
