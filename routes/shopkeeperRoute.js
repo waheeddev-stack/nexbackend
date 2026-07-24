@@ -1992,6 +1992,39 @@ shopkeeperRouter.patch(
   }
 );
 
+// PATCH /api/shopkeeper/products/set-all-visible - Bulk set all invisible products to visible
+shopkeeperRouter.patch(
+  "/products/set-all-visible",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+
+      const [result] = await pool.execute(
+        `UPDATE products SET available_stock = 'IN STOCK'
+         WHERE shop_id = ? AND available_stock = 'INVISIBLE'`,
+        [shop_id]
+      );
+
+      const count = result.affectedRows || 0;
+
+      console.log(
+        `👁️ Set ${count} products visible for shop ${shop_id}`
+      );
+
+      res.json({
+        success: true,
+        message: `${count} product${count !== 1 ? "s" : ""} made visible`,
+        count,
+      });
+    } catch (err) {
+      console.error("Set all visible error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
 // Save expo push token for authenticated shopkeeper
 shopkeeperRouter.post(
   "/push-token",
