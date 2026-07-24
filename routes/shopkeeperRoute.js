@@ -1532,12 +1532,17 @@ shopkeeperRouter.put(
         return res.status(400).json({ success: false, message: "Invalid baseline quantity" });
       }
 
-      const [result] = await pool.execute(
-        "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
-        [b, b, shop_id]
-      );
+const [result] = await pool.execute(
+    "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
+    [b, b, shop_id]
+  );
 
-      res.json({
+  await pool.execute(
+    `UPDATE products SET available_stock = CASE WHEN stock = 0 THEN 'OUT OF STOCK' ELSE 'IN STOCK' END WHERE shop_id = ? AND available_stock <> 'INVISIBLE'`,
+    [shop_id]
+  );
+
+  res.json({
         success: true,
         message: `Successfully updated baseline quantity for ${result.affectedRows} products`,
         updatedCount: result.affectedRows,
@@ -1562,12 +1567,17 @@ shopkeeperRouter.post(
     try {
       const shop_id = req.user.id;
 
-      const [result] = await pool.execute(
-        "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
-        [shop_id]
-      );
+const [result] = await pool.execute(
+    "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
+    [shop_id]
+  );
 
-      res.json({
+  await pool.execute(
+    `UPDATE products SET available_stock = 'IN STOCK' WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty AND available_stock <> 'INVISIBLE'`,
+    [shop_id]
+  );
+
+  res.json({
         success: true,
         message: `Successfully restocked ${result.affectedRows} product(s) to baseline quantity`,
         updatedCount: result.affectedRows
@@ -1696,13 +1706,30 @@ shopkeeperRouter.put(
           .status(400)
           .json({ success: false, message: "No fields to update" });
 
-      values.push(productId, shop_id);
-      await pool.execute(
-        `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
-        values
-      );
+values.push(productId, shop_id);
+                await pool.execute(
+                    `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
+                    values
+                  );
 
-      const [updated] = await pool.execute(
+                if (available_stock == null) {
+                  let resolvedStock = null;
+                  if (baselineQty != null) {
+                    resolvedStock = Number(baselineQty);
+                  } else if (stock != null) {
+                    resolvedStock = Number(stock);
+                  }
+
+                  if (resolvedStock != null) {
+                    const syncStatus = resolvedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+                    await pool.execute(
+                      `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+                      [syncStatus, productId]
+                    );
+                  }
+                }
+
+                const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1971,11 +1998,18 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "Product not found" });
       }
 
-      await pool.execute(
-        "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
-        [parsedStock, productId, shop_id]
-      );
-      const [updated] = await pool.execute(
+await pool.execute(
+    "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
+    [parsedStock, productId, shop_id]
+  );
+
+const syncStatus = parsedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+await pool.execute(
+  `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+  [syncStatus, productId]
+);
+
+const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );

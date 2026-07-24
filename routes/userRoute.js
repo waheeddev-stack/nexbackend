@@ -24,11 +24,11 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // are returned regardless of online/offline status.
     // The frontend uses `is_online` per-shop to show online/offline banners.
 
-    // Default search radius to 1.0 Km, accept dynamic adjustments via radiusKm parameter
+    // Default search radius to 0.7 Km, accept dynamic adjustments via radiusKm parameter
     // Support both radiusKm (older frontend) and radius (new frontend)
     // Handle the case where radius might be passed in meters
     let radiusValue =
-      parseFloat(req.query.radiusKm) || parseFloat(req.query.radius) || 1.25;
+      parseFloat(req.query.radiusKm) || parseFloat(req.query.radius) || 0.7;
 
     // HEURISTIC: If radiusValue is > 10, it's likely meters, convert to KM
     // This handles the "fallback" meters behavior mentioned by user

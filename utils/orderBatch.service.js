@@ -170,6 +170,12 @@ export async function batchReduceStock(connection, items) {
                  WHERE id IN (${placeholders})`;
 
   await connection.execute(query, [...values, ...productIds]);
+
+  const syncPlaceholders = productIds.map(() => "?").join(",");
+  await connection.execute(
+    `UPDATE products SET available_stock = CASE WHEN stock = 0 THEN 'OUT OF STOCK' ELSE available_stock END WHERE id IN (${syncPlaceholders}) AND available_stock <> 'INVISIBLE'`,
+    productIds
+  );
 }
 
 /**

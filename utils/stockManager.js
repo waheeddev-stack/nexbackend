@@ -90,24 +90,29 @@ export const restoreStockForCancelledOrder = async (
             [item.quantity, item.product_id]
           );
 
-          if (updateResult.affectedRows > 0) {
+if (updateResult.affectedRows > 0) {
+            const newStock = item.current_stock + item.quantity;
+
             restoredItems.push({
               product_id: item.product_id,
               product_name: item.product_name,
               quantity_restored: item.quantity,
               previous_stock: item.current_stock,
-              new_stock: item.current_stock + item.quantity,
+              new_stock: newStock,
             });
             totalRestoredQuantity += item.quantity;
+
+            const syncStatus = newStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+            await conn.query(
+              `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+              [syncStatus, item.product_id]
+            );
+
             console.log(
               `✅ Successfully restored ${item.quantity} units to product ${item.product_id} (${item.product_name})`
             );
             console.log(
-              `   Stock: ${item.current_stock} → ${item.current_stock + item.quantity}`
-            );
-          } else {
-            console.log(
-              `❌ Failed to restore stock for product ${item.product_id} - no rows affected`
+              ` Stock: ${item.current_stock} → ${newStock} | available_stock: ${syncStatus}`
             );
           }
         } else {

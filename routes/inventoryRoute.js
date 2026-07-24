@@ -161,12 +161,18 @@ inventoryRouter.post("/restock", verifyToken, async (req, res) => {
     const product = products[0];
     const newStock = product.stock + parseInt(quantity);
 
-    await db.query("UPDATE products SET stock = ? WHERE id = ?", [
-      newStock,
-      product.id,
-    ]);
+await db.query("UPDATE products SET stock = ? WHERE id = ?", [
+    newStock,
+    product.id,
+  ]);
 
-    await db.query(
+  const restockStatus = newStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+  await db.query(
+    `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+    [restockStatus, product.id]
+  );
+
+  await db.query(
       `INSERT INTO inventory_logs (product_id, shop_id, action, quantity, previous_stock, new_stock, performed_by)
        VALUES (?, ?, 'restock', ?, ?, ?, ?)`,
       [

@@ -9,11 +9,15 @@
 
 import pool from "../config/db.js";
 
-/**
- * Handle auto-restock logic
- * Schedules restock when product stock reaches 0
- */
 const DAY_MS = 24 * 60 * 60 * 1000; // 24 hours (86,400,000 ms)
+
+export async function syncAvailableStockStatus(conn, productId, newStock) {
+  const status = newStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+  await conn.execute(
+    "UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> ?",
+    [status, productId, "INVISIBLE"]
+  );
+}
 
 export async function handleAutoRestock(productId, currentStock) {
   if (currentStock === 0) {
@@ -40,16 +44,11 @@ export async function handleAutoRestock(productId, currentStock) {
   return false;
 }
 
-/**
- * Deduct stock when order is confirmed
- * This hooks into the order lifecycle
- */
 export async function deductStockForOrder(orderId, connection = null) {
   const useTransaction = connection !== null;
   const conn = connection || (await pool.getConnection());
 
   try {
-    // Get order items
     const [orderItems] = await conn.execute(
       "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
       [orderId]
@@ -60,7 +59,6 @@ export async function deductStockForOrder(orderId, connection = null) {
       return { success: true, message: "No items to deduct" };
     }
 
-    // Deduct stock for each product
     const deductions = [];
     for (const item of orderItems) {
       const [products] = await conn.execute(
@@ -76,11 +74,12 @@ export async function deductStockForOrder(orderId, connection = null) {
       const product = products[0];
       const newStock = Math.max(0, product.stock - item.quantity);
 
-      // Update stock
       await conn.execute("UPDATE products SET stock = ? WHERE id = ?", [
         newStock,
         item.product_id,
       ]);
+
+      await syncAvailableStockStatus(conn, item.product_id, newStock);
 
       deductions.push({
         productId: item.product_id,
@@ -90,16 +89,12 @@ export async function deductStockForOrder(orderId, connection = null) {
         newStock: newStock,
       });
 
-      // Schedule auto-restock if stock is 0
       await handleAutoRestock(item.product_id, newStock);
 
       console.log(
         `✅ Stock deducted: ${product.name} (${product.stock} → ${newStock})`
       );
     }
-
-    // Note: Stock deduction logging removed - stock_restoration_log should only track restorations
-    // This prevents false positives when checking if stock was already restored
 
     if (!useTransaction) {
       conn.release();
@@ -119,9 +114,6 @@ export async function deductStockForOrder(orderId, connection = null) {
   }
 }
 
-/**
- * Restore stock when order is cancelled or fails
- */
 export async function restoreStockForOrder(
   orderId,
   reason = "ORDER_CANCELLED",
@@ -131,11 +123,8 @@ export async function restoreStockForOrder(
   const conn = connection || (await pool.getConnection());
 
   try {
-    // Check if stock was already restored
     const [existingRestore] = await conn.execute(
-      `SELECT id FROM stock_restoration_log 
-       WHERE order_id = ? AND cancelled_by = 'SYSTEM_RESTORE' 
-       LIMIT 1`,
+      `SELECT id FROM stock_restoration_log WHERE order_id = ? AND cancelled_by = 'SYSTEM_RESTORE' LIMIT 1`,
       [orderId]
     );
 
@@ -145,7 +134,6 @@ export async function restoreStockForOrder(
       return { success: true, message: "Stock already restored" };
     }
 
-    // Get order items
     const [orderItems] = await conn.execute(
       "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
       [orderId]
@@ -157,7 +145,6 @@ export async function restoreStockForOrder(
       return { success: true, message: "No items to restore" };
     }
 
-    // Restore stock for each product
     const restorations = [];
     for (const item of orderItems) {
       const [products] = await conn.execute(
@@ -173,11 +160,12 @@ export async function restoreStockForOrder(
       const product = products[0];
       const newStock = product.stock + item.quantity;
 
-      // Update stock and clear restockAt timestamp (cancel scheduled restock)
-      await conn.execute("UPDATE products SET stock = ?, restockAt = NULL WHERE id = ?", [
-        newStock,
-        item.product_id,
-      ]);
+      await conn.execute(
+        "UPDATE products SET stock = ?, restockAt = NULL WHERE id = ?",
+        [newStock, item.product_id]
+      );
+
+      await syncAvailableStockStatus(conn, item.product_id, newStock);
 
       restorations.push({
         productId: item.product_id,
@@ -192,14 +180,12 @@ export async function restoreStockForOrder(
       );
     }
 
-    // Log stock restoration
     const totalQty = restorations.reduce(
       (sum, r) => sum + r.quantityRestored,
       0
     );
     await conn.execute(
-      `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) 
-       VALUES (?, 'SYSTEM_RESTORE', ?, ?, ?, NOW())`,
+      `INSERT INTO stock_restoration_log (order_id, cancelled_by, cancellation_reason, items_restored, total_quantity_restored, created_at) VALUES (?, 'SYSTEM_RESTORE', ?, ?, ?, NOW())`,
       [orderId, reason, restorations.length, totalQty]
     );
 
@@ -221,9 +207,6 @@ export async function restoreStockForOrder(
   }
 }
 
-/**
- * Get inventory product details
- */
 export async function getInventoryProduct(productId) {
   try {
     const connection = await pool.getConnection();
@@ -242,9 +225,6 @@ export async function getInventoryProduct(productId) {
   }
 }
 
-/**
- * Create inventory product entry
- */
 export async function createInventoryProduct(productData) {
   try {
     const connection = await pool.getConnection();
@@ -256,6 +236,14 @@ export async function createInventoryProduct(productData) {
           productData.stock || 0,
           productData.baselineQty || productData.stock || 0,
         ]
+      );
+
+      const insertedId = result.insertId;
+      const initialStock = productData.stock || 0;
+      const initialStatus = initialStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+      await connection.execute(
+        "UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'",
+        [initialStatus, insertedId]
       );
 
       console.log(
@@ -271,9 +259,6 @@ export async function createInventoryProduct(productData) {
   }
 }
 
-/**
- * Update inventory product stock
- */
 export async function updateInventoryStock(
   productId,
   quantity,
@@ -282,7 +267,6 @@ export async function updateInventoryStock(
   try {
     const connection = await pool.getConnection();
     try {
-      // Get current product
       const [products] = await connection.execute(
         "SELECT id, name, stock FROM products WHERE id = ?",
         [productId]
@@ -304,13 +288,13 @@ export async function updateInventoryStock(
         newStock = quantity;
       }
 
-      // Update stock
       await connection.execute("UPDATE products SET stock = ? WHERE id = ?", [
         newStock,
         productId,
       ]);
 
-      // Handle auto-restock if needed
+      await syncAvailableStockStatus(connection, productId, newStock);
+
       await handleAutoRestock(productId, newStock);
 
       console.log(
