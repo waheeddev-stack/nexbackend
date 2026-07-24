@@ -1073,7 +1073,7 @@ async function createOrderHandler(req, res) {
         order_type,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
@@ -1084,6 +1084,7 @@ async function createOrderHandler(req, res) {
         instantDiscount,
         creditsEarned,
         creditsUsed,
+        0,
         deliveryAddress,
         latitude,
         longitude,
