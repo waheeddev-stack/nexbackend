@@ -80,25 +80,23 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialShops] = await pool.execute(
       `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified, home_delivery_active,
-              (6371 * acos(
-                 LEAST(1, GREATEST(-1,
-                   cos(radians(?)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(?)) +
-                   sin(radians(?)) * sin(radians(latitude))
-                 ))
-              )) AS distance
+              CASE
+                WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0
+                THEN (6371 * acos(
+                   LEAST(1, GREATEST(-1,
+                     cos(radians(?)) * cos(radians(latitude)) *
+                     cos(radians(longitude) - radians(?)) +
+                     sin(radians(?)) * sin(radians(latitude))
+                   ))
+                ))
+                ELSE 999999
+              END AS distance
        FROM shopkeepers
-       WHERE latitude IS NOT NULL 
-         AND longitude IS NOT NULL
-         AND latitude BETWEEN ? AND ?
-         AND longitude BETWEEN ? AND ?
-          AND latitude != 0 
-          AND longitude != 0
-          AND is_verified = 1
-          AND subscription_status NOT IN ('suspended')
-        HAVING distance <= ?
-        ORDER BY distance ASC`,
-      [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
+       WHERE is_verified = 1
+         AND subscription_status NOT IN ('suspended')
+       HAVING distance <= ? OR distance = 999999
+       ORDER BY distance ASC`,
+      [lat, lng, lat, finalRadiusKm]
     );
 
     console.log(
@@ -196,7 +194,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each shop directly from products table (products.shop_id)
-    // Only include products with stock > 0 that are not INVISIBLE (NULL treated as visible)
+    // Include all products except INVISIBLE ones (out-of-stock products are still shown)
     const shopIds = verifiedShops.map((s) => s.id);
     let products = [];
 
@@ -206,7 +204,6 @@ userrouter.get("/nearby-shops", async (req, res) => {
         `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, available_stock, created_at
          FROM products
          WHERE shop_id IN (${placeholders})
-           AND stock > 0 
            AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
          ORDER BY created_at DESC`,
         shopIds
@@ -619,7 +616,6 @@ userrouter.get("/products", async (req, res) => {
       JOIN shopkeepers s ON p.shop_id = s.id
       WHERE s.is_verified = 1 AND s.subscription_status NOT IN ('suspended')
         AND (s.is_online = 1 OR s.is_online IS NULL)
-        AND p.stock > 0
         AND (p.available_stock IS NULL OR p.available_stock != 'INVISIBLE')
       ORDER BY p.created_at DESC
       LIMIT 50
