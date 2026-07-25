@@ -1073,7 +1073,7 @@ async function createOrderHandler(req, res) {
         order_type,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
         orderId,
