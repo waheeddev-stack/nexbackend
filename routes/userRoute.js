@@ -213,7 +213,6 @@ userrouter.get("/nearby-shops", async (req, res) => {
     console.log(
       `📦 Found ${products.length} products across ${shopIds.length} shops`
     );
-
     const hasOfflineShops = verifiedShops.some((s) => s.is_online === 0 || s.is_online === false);
     const shopsWithProducts = verifiedShops.map((shop) => ({
       ...shop,
@@ -233,7 +232,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                 : p.stock === 1
                   ? "1 left"
                   : `${p.stock} left`,
-        })),
+        }))
     }));
 
     res.json({
