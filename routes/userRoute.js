@@ -194,14 +194,13 @@ userrouter.get("/nearby-shops", async (req, res) => {
     }
 
     // Fetch products for each shop directly from products table (products.shop_id)
-    // Include all products except INVISIBLE ones (out-of-stock products are still shown)
     const shopIds = verifiedShops.map((s) => s.id);
     let products = [];
 
     if (shopIds.length > 0) {
       const placeholders = shopIds.map(() => "?").join(",");
       const [productsResult] = await pool.execute(
-        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, available_stock, created_at
+        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
          FROM products
          WHERE shop_id IN (${placeholders})
            AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
@@ -215,12 +214,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
       `📦 Found ${products.length} products across ${shopIds.length} shops`
     );
 
-    // Group products under their shop, ensure address is never null/undefined
-    // Hide exact stock count from customer (only visible to shopkeeper)
     const hasOfflineShops = verifiedShops.some((s) => s.is_online === 0 || s.is_online === false);
     const shopsWithProducts = verifiedShops.map((shop) => ({
       ...shop,
-      // Provide fallback address if not set
       address:
         shop.address ||
         `Near coordinates (${parseFloat(shop.latitude).toFixed(4)}, ${parseFloat(shop.longitude).toFixed(4)})`,
@@ -228,13 +224,15 @@ userrouter.get("/nearby-shops", async (req, res) => {
         .filter((p) => p.shop_id === shop.id)
         .map((p) => ({
           ...p,
-          // Show actual stock number or "Low stock" if < 5, or "In stock" for >= 5
+          available_stock: p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
           unit:
-            p.stock < 5
-              ? p.stock === 1
-                ? "1 left"
-                : `${p.stock} left`
-              : "In stock",
+            p.stock == null || p.stock >= 5
+              ? "In stock"
+              : p.stock === 0
+                ? "Out of stock"
+                : p.stock === 1
+                  ? "1 left"
+                  : `${p.stock} left`,
         })),
     }));
 
@@ -245,6 +243,60 @@ userrouter.get("/nearby-shops", async (req, res) => {
     });
   } catch (err) {
     console.error("Nearby shops error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PUBLIC: Get paginated products for a shop (used by "See All" page)
+userrouter.post("/get-products", async (req, res) => {
+  try {
+    const { shopid, last_product_send_id, limit } = req.body;
+    const shopId = parseInt(shopid);
+    const pageLimit = Math.min(parseInt(limit) || 50, 200);
+    const lastId = parseInt(last_product_send_id) || 0;
+
+    if (!shopId || isNaN(shopId)) {
+      return res.status(400).json({ success: false, message: "Invalid shop ID" });
+    }
+
+    let query;
+    let params;
+    if (lastId > 0) {
+      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+               FROM products
+               WHERE shop_id = ? AND id > ?
+                 AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
+               ORDER BY id ASC
+               LIMIT ?`;
+      params = [shopId, lastId, pageLimit + 1];
+    } else {
+      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+               FROM products
+               WHERE shop_id = ?
+                 AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
+               ORDER BY id ASC
+               LIMIT ?`;
+      params = [shopId, pageLimit + 1];
+    }
+
+    const [rows] = await pool.execute(query, params);
+    const hasMore = rows.length > pageLimit;
+    const products = rows.slice(0, pageLimit).map((p) => ({
+      ...p,
+      available_stock: p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
+      unit:
+        p.stock == null || p.stock >= 5
+          ? "In stock"
+          : p.stock === 0
+            ? "Out of stock"
+            : p.stock === 1
+              ? "1 left"
+              : `${p.stock} left`,
+    }));
+
+    res.json({ success: true, products, hasMore });
+  } catch (err) {
+    console.error("Get products error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
