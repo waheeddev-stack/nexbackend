@@ -251,7 +251,8 @@ userrouter.post("/get-products", async (req, res) => {
   try {
     const { shopid, last_product_send_id, limit } = req.body;
     const shopId = parseInt(shopid);
-    const pageLimit = Math.min(parseInt(limit) || 50, 200);
+    const pageLimit = Math.max(1, Math.min(parseInt(limit) || 50, 200));
+    const fetchLimit = pageLimit + 1;
     const lastId = parseInt(last_product_send_id) || 0;
 
     if (!shopId || isNaN(shopId)) {
@@ -267,7 +268,7 @@ userrouter.post("/get-products", async (req, res) => {
                  AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
                ORDER BY id ASC
                LIMIT ?`;
-      params = [shopId, lastId, pageLimit + 1];
+      params = [shopId, lastId, fetchLimit];
     } else {
       query = `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
                FROM products
@@ -275,10 +276,10 @@ userrouter.post("/get-products", async (req, res) => {
                  AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
                ORDER BY id ASC
                LIMIT ?`;
-      params = [shopId, pageLimit + 1];
+      params = [shopId, fetchLimit];
     }
 
-    const [rows] = await pool.execute(query, params);
+    const [rows] = await pool.query(query, params);
     const hasMore = rows.length > pageLimit;
     const products = rows.slice(0, pageLimit).map((p) => ({
       ...p,
