@@ -184,6 +184,53 @@ shopkeeperRouter.get(
         [shopkeeper_id]
       );
 
+      // Get pending orders count
+      const [[pendingData]] = await pool.execute(
+        "SELECT COUNT(*) AS pendingOrders FROM orders WHERE status = 'Pending' AND shopkeeper_id = ?",
+        [shopkeeper_id]
+      );
+
+      // Get total products and low stock products for this shop
+      const [[productStats]] = await pool.execute(
+        "SELECT COUNT(*) AS totalProducts, SUM(CASE WHEN stock < 3 THEN 1 ELSE 0 END) AS lowStockProducts FROM products WHERE shop_id = ?",
+        [shopkeeper_id]
+      );
+
+      // Get today's and yesterday's revenue from completed/delivered orders
+      const [[todayRevenueData]] = await pool.execute(
+        "SELECT COALESCE(SUM(total_amount), 0) AS todayRevenue FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ? AND DATE(created_at) = CURDATE()",
+        [shopkeeper_id]
+      );
+      const [[yesterdayRevenueData]] = await pool.execute(
+        "SELECT COALESCE(SUM(total_amount), 0) AS yesterdayRevenue FROM orders WHERE status IN ('Completed', 'Delivered') AND shopkeeper_id = ? AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)",
+        [shopkeeper_id]
+      );
+
+      // Get top products by quantity sold today for this shop
+      const [topProductsData] = await pool.execute(
+        `SELECT p.id, p.name, p.price, p.image, SUM(oi.quantity) AS unitsSold
+         FROM order_items oi
+         JOIN products p ON oi.product_id = p.id
+         JOIN orders o ON oi.order_id = o.id
+         WHERE o.shopkeeper_id = ? AND p.shop_id = ? AND o.status IN ('Completed', 'Delivered')
+         GROUP BY p.id, p.name, p.price, p.image
+         ORDER BY unitsSold DESC
+         LIMIT 5`,
+        [shopkeeper_id, shopkeeper_id]
+      );
+
+      // Get top customer today
+      const [[topCustomerData]] = await pool.execute(
+        `SELECT u.id, u.name, COUNT(*) AS orderCount, SUM(o.total_amount) AS totalSpent
+         FROM orders o
+         JOIN users u ON o.user_id = u.id
+         WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') AND DATE(o.created_at) = CURDATE()
+         GROUP BY u.id, u.name
+         ORDER BY totalSpent DESC
+         LIMIT 1`,
+        [shopkeeper_id]
+      );
+
       // Get top selling product
       const [[topProduct]] = await pool.execute(
         `
@@ -223,9 +270,29 @@ shopkeeperRouter.get(
         data: {
           isOnline: Boolean(shopkeeper.is_online),
           homeDeliveryActive: homeDeliveryActive,
+          todayRevenue: parseFloat(todayRevenueData?.todayRevenue || 0),
+          yesterdayRevenue: parseFloat(yesterdayRevenueData?.yesterdayRevenue || 0),
           totalSales: parseFloat(salesData?.totalSales || 0),
           ordersDelivered: parseInt(deliveredData?.ordersDelivered || 0),
           cancelledOrders: parseInt(cancelledData?.cancelledOrders || 0),
+          pendingOrders: parseInt(pendingData?.pendingOrders || 0),
+          totalProducts: parseInt(productStats?.totalProducts || 0),
+          lowStockProducts: parseInt(productStats?.lowStockProducts || 0),
+          topProducts: topProductsData.map(p => ({
+            id: p.id,
+            name: p.name,
+            price: p.price,
+            image: p.image,
+            unitsSold: parseInt(p.unitsSold),
+          })),
+          topCustomer: topCustomerData
+            ? {
+                id: topCustomerData.id,
+                name: topCustomerData.name,
+                orderCount: parseInt(topCustomerData.orderCount),
+                totalSpent: parseFloat(topCustomerData.totalSpent || 0),
+              }
+            : null,
           topSelling: topProduct
             ? {
               productId: topProduct.productId,
@@ -2971,6 +3038,101 @@ shopkeeperRouter.get(
     } catch (error) {
       console.log("Error occurred at get customers: " + error)
       return res.status(500).json({ success: false, message: "Internal Server error" })
+    }
+  }
+);
+
+/**
+ * POST /shopkeeper/orders/create
+ * Manually create an order for a customer (used by shopkeeper POS flow)
+ */
+shopkeeperRouter.post(
+  "/orders/create",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+      const { customer_id, total_amount, source, items } = req.body;
+
+      if (!customer_id) {
+        return res.status(400).json({ success: false, message: "Customer ID is required" });
+      }
+      if (!total_amount || total_amount <= 0) {
+        return res.status(400).json({ success: false, message: "Valid total amount is required" });
+      }
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        // Verify customer exists and belongs to this shopkeeper
+        const [[customer]] = await conn.execute(
+          "SELECT id FROM users WHERE id = ? AND referred_by = ?",
+          [customer_id, shopkeeper_id]
+        );
+        if (!customer) {
+          await conn.rollback();
+          conn.release();
+          return res.status(404).json({ success: false, message: "Customer not found" });
+        }
+
+        // Generate next order ID
+        const [[maxOrderId]] = await conn.execute(
+          "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
+        );
+        const orderId = maxOrderId.nextId;
+
+        // Insert the order
+        await conn.execute(
+          `INSERT INTO orders (id, user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, order_type, created_at)
+           VALUES (?, ?, ?, 'Pending', 'manual', ?, 0, 0, 0, 'manual', NOW())`,
+          [orderId, customer_id, shopkeeper_id, total_amount]
+        );
+
+        // Insert order items if provided
+        if (items && Array.isArray(items) && items.length > 0) {
+          const [[maxItemId]] = await conn.execute(
+            "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items"
+          );
+          let itemId = maxItemId.nextId;
+
+          const itemValues = [];
+          const itemParams = [];
+          for (const item of items) {
+            const productId = item.productId || item.product_id;
+            const quantity = item.quantity || item.qty || 1;
+            const price = item.price || 0;
+            if (!productId) continue;
+            itemValues.push("(?, ?, ?, ?, ?)");
+            itemParams.push(itemId++, orderId, productId, quantity, price);
+          }
+
+          if (itemValues.length > 0) {
+            await conn.execute(
+              `INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES ${itemValues.join(", ")}`,
+              itemParams
+            );
+          }
+        }
+
+        await conn.commit();
+        conn.release();
+
+        return res.status(201).json({
+          success: true,
+          message: "Order created successfully",
+          order: { id: orderId },
+        });
+      } catch (err) {
+        await conn.rollback();
+        conn.release();
+        throw err;
+      }
+    } catch (error) {
+      console.error("Error creating order:", error);
+      return res.status(500).json({ success: false, message: "Internal Server error" });
     }
   }
 );
