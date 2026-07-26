@@ -344,6 +344,67 @@ shopkeeperRouter.get(
   }
 );
 
+// GET /api/shopkeeper/customers/orders - Get completed orders grouped by customer
+shopkeeperRouter.get(
+  "/customers/orders",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+
+      const [orders] = await pool.execute(
+        `SELECT 
+          o.user_id,
+          u.name as username,
+          u.email,
+          u.phone,
+          u.store_credits as credits,
+          o.id as order_id,
+          o.total_amount,
+          o.status,
+          o.created_at,
+          o.order_type,
+          o.delivery_mode
+        FROM orders o
+        JOIN users u ON o.user_id = u.id
+        WHERE o.shopkeeper_id = ? 
+          AND o.status IN ('Completed', 'Delivered', 'completed', 'delivered')
+        ORDER BY o.created_at DESC`,
+        [shopkeeper_id]
+      );
+
+      // Group orders by customer
+      const customerOrders = {};
+      orders.forEach(order => {
+        if (!customerOrders[order.user_id]) {
+          customerOrders[order.user_id] = {
+            id: String(order.user_id),
+            username: order.username,
+            email: order.email,
+            phone: order.phone,
+            credits: order.credits,
+            orders: []
+          };
+        }
+        customerOrders[order.user_id].orders.push({
+          id: order.order_id,
+          total_amount: order.total_amount,
+          status: order.status,
+          created_at: order.created_at,
+          order_type: order.order_type,
+          delivery_mode: order.delivery_mode
+        });
+      });
+
+      res.json({ success: true, data: Object.values(customerOrders) });
+    } catch (err) {
+      console.error("Fetch customer orders error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
 // PATCH /api/shopkeeper/customers/:id/credits - Update customer's store credits
 shopkeeperRouter.patch(
   "/customers/:id/credits",
@@ -3054,14 +3115,39 @@ shopkeeperRouter.post(
   async (req, res) => {
     try {
       const shopkeeper_id = req.user.id;
-      const { customer_id, total_amount, source, items } = req.body;
+      const { customer_id, total_amount, amount_paid, order_value, source, items } = req.body;
 
       if (!customer_id) {
         return res.status(400).json({ success: false, message: "Customer ID is required" });
       }
-      if (!total_amount || total_amount <= 0) {
-        return res.status(400).json({ success: false, message: "Valid total amount is required" });
+      // Use amount_paid (what customer actually pays after discount) as total_amount
+      // Fallback to total_amount for backward compatibility
+      const finalAmount = amount_paid || total_amount;
+      if (!finalAmount || finalAmount <= 0) {
+        return res.status(400).json({ success: false, message: "Valid amount is required" });
       }
+
+      // Calculate credits based on amount paid (what customer actually pays)
+      // Must match frontend calcValues: creditPoints = walletRupees * 10
+      // walletRupees = totalDiscount / 2 (approximately), totalDiscount = amount * rate
+      // rate: >=1000: 0.05, >=500: 0.03, >=50: 0.02
+      // So credits = amount * rate * 5 (capped at 1500 for >=1000)
+      const calculateCredits = (amount) => {
+        let rate = 0;
+        if (amount >= 1000) rate = 0.05;
+        else if (amount >= 500) rate = 0.03;
+        else if (amount >= 50) rate = 0.02;
+        
+        const totalDiscount = amount * rate;
+        const cappedDiscount = rate === 0.05 ? Math.min(totalDiscount, 150) : totalDiscount;
+        const credits = Math.round(cappedDiscount * 5); // walletRupees * 10 = (totalDiscount/2) * 10 = totalDiscount * 5
+        
+        // Cap credits at 1500 for >=1000 (150 * 10 = 1500)
+        if (rate === 0.05) return Math.min(credits, 1500);
+        return credits;
+      };
+
+      const creditsEarned = calculateCredits(finalAmount);
 
       const conn = await pool.getConnection();
       try {
@@ -3084,12 +3170,20 @@ shopkeeperRouter.post(
         );
         const orderId = maxOrderId.nextId;
 
-        // Insert the order
+        // Insert the order - directly completed with credits granted
         await conn.execute(
           `INSERT INTO orders (id, user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, order_type, created_at)
-           VALUES (?, ?, ?, 'Pending', 'manual', ?, 0, 0, 0, 'manual', NOW())`,
-          [orderId, customer_id, shopkeeper_id, total_amount]
+           VALUES (?, ?, ?, 'Completed', 'manual', ?, ?, 0, 1, 'manual', NOW())`,
+          [orderId, customer_id, shopkeeper_id, finalAmount, creditsEarned]
         );
+
+        // Grant credits to customer immediately
+        if (creditsEarned > 0) {
+          await conn.execute(
+            "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+            [creditsEarned, customer_id]
+          );
+        }
 
         // Insert order items if provided
         if (items && Array.isArray(items) && items.length > 0) {
@@ -3122,8 +3216,8 @@ shopkeeperRouter.post(
 
         return res.status(201).json({
           success: true,
-          message: "Order created successfully",
-          order: { id: orderId },
+          message: "Order created and completed successfully",
+          order: { id: orderId, credits_earned: creditsEarned },
         });
       } catch (err) {
         await conn.rollback();
