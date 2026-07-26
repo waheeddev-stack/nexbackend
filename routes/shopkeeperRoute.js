@@ -3067,10 +3067,10 @@ shopkeeperRouter.post(
       try {
         await conn.beginTransaction();
 
-        // Verify customer exists and belongs to this shopkeeper
+        // Verify customer exists
         const [[customer]] = await conn.execute(
-          "SELECT id FROM users WHERE id = ? AND referred_by = ?",
-          [customer_id, shopkeeper_id]
+          "SELECT id FROM users WHERE id = ?",
+          [customer_id]
         );
         if (!customer) {
           await conn.rollback();
