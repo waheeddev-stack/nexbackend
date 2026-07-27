@@ -421,7 +421,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
 
     // Check if order exists and belongs to the user or shopkeeper
     const [orderRows] = await pool.execute(
-      "SELECT id, user_id, shopkeeper_id, status, credits_earned, credits_granted FROM orders WHERE id = ?",
+      "SELECT id, user_id, shopkeeper_id, status, credits_earned, credits_granted, credits_used FROM orders WHERE id = ?",
       [orderIdNum]
     );
 
@@ -440,8 +440,10 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    // Only allow cancellation of certain statuses
-    if (!["Pending", "Paid", "Processing"].includes(order.status)) {
+    // Only allow cancellation of certain statuses (case-insensitive)
+    const cancellableStatuses = ["Pending", "Paid", "Processing"];
+    const orderStatus = order.status.charAt(0).toUpperCase() + order.status.slice(1).toLowerCase();
+    if (!cancellableStatuses.includes(orderStatus)) {
       return res.status(400).json({
         success: false,
         message: `Cannot cancel order with status: ${order.status}`,
@@ -477,6 +479,18 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         }
         await connection.execute(
           "UPDATE orders SET credits_earned = 0, credits_granted = 0 WHERE id = ?",
+          [orderIdNum]
+        );
+      }
+
+      // Refund credits_used (store credits spent by customer)
+      if (order.credits_used > 0) {
+        await connection.execute(
+          "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
+          [order.credits_used, order.user_id]
+        );
+        await connection.execute(
+          "UPDATE orders SET credits_used = 0 WHERE id = ?",
           [orderIdNum]
         );
       }
