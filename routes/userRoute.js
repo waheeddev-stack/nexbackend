@@ -200,7 +200,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     if (shopIds.length > 0) {
       const placeholders = shopIds.map(() => "?").join(",");
       const [productsResult] = await pool.execute(
-        `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+        `SELECT id AS product_id, shop_id, name, description, image, category, price, mrp, stock, created_at
          FROM products
          WHERE shop_id IN (${placeholders})
            AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
@@ -262,7 +262,7 @@ userrouter.post("/get-products", async (req, res) => {
     let query;
     let params;
     if (lastId > 0) {
-      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, mrp, stock, created_at
                FROM products
                WHERE shop_id = ? AND id > ?
                  AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
@@ -270,7 +270,7 @@ userrouter.post("/get-products", async (req, res) => {
                LIMIT ?`;
       params = [shopId, lastId, fetchLimit];
     } else {
-      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, stock, created_at
+      query = `SELECT id AS product_id, shop_id, name, description, image, category, price, mrp, stock, created_at
                FROM products
                WHERE shop_id = ?
                  AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
@@ -663,7 +663,7 @@ userrouter.get("/products", async (req, res) => {
 
     let query = `
       SELECT p.id AS product_id, p.shop_id, p.name, p.description, p.image, p.category, 
-             p.price, p.stock, p.available_stock, s.shop_name AS shopName, s.address AS shopAddress
+             p.price, p.mrp, p.stock, p.available_stock, s.shop_name AS shopName, s.address AS shopAddress
       FROM products p
       JOIN shopkeepers s ON p.shop_id = s.id
       WHERE s.is_verified = 1 AND s.subscription_status NOT IN ('suspended')

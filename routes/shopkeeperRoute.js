@@ -1525,7 +1525,12 @@ shopkeeperRouter.get(
         "SELECT * FROM products WHERE shop_id = ? ORDER BY created_at DESC",
         [shop_id]
       );
-      res.json({ success: true, products });
+      // Ensure mrp is included in response
+      const productsWithMrp = products.map(p => ({
+        ...p,
+        mrp: p.mrp || null,
+      }));
+      res.json({ success: true, products: productsWithMrp });
     } catch (err) {
       console.error("Get products error:", err);
       res.status(500).json({ success: false, message: "Server error" });
@@ -1730,7 +1735,7 @@ shopkeeperRouter.put(
     try {
       const shop_id = req.user.id;
       const productId = req.params.id;
-      const { name, description, category, price, stock, baselineQty, available_stock } =
+      const { name, description, category, price, mrp, stock, baselineQty, available_stock } =
         req.body;
 
       const [existing] = await pool.execute(
@@ -1790,6 +1795,16 @@ shopkeeperRouter.put(
         const formattedPrice = parseFloat(p.toFixed(2));
         fields.push("price = ?");
         values.push(formattedPrice);
+      }
+      if (mrp != null) {
+        const m = Number(mrp);
+        if (Number.isNaN(m) || m < 0)
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid MRP" });
+        const formattedMrp = parseFloat(m.toFixed(2));
+        fields.push("mrp = ?");
+        values.push(formattedMrp);
       }
       if (stock != null && baselineQty == null) {
         const s = Number(stock);
@@ -2001,7 +2016,7 @@ shopkeeperRouter.post(
   async (req, res) => {
     try {
       const shop_id = req.user.id;
-      const { global_product_id, price, baselineQty, stock } = req.body;
+      const { global_product_id, price, baselineQty, stock, mrp } = req.body;
 
       if (!global_product_id) {
         return res
@@ -2059,10 +2074,13 @@ shopkeeperRouter.post(
           .json({ success: false, message: "Invalid price" });
       }
 
+      // Use provided mrp or fall back to global product's price as MRP
+      const mrpToUse = mrp != null ? Number(mrp) : gp.price;
+
       // Set both stock and baselineQty to the same value
       const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, baselineQty, image)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO products (shop_id, global_product_id, name, description, category, price, mrp, stock, baselineQty, image)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
           global_product_id,
@@ -2070,6 +2088,7 @@ shopkeeperRouter.post(
           gp.description || null,
           gp.category || null,
           priceToUse,
+          mrpToUse,
           finalStock,
           finalBaselineQty,
           gp.image || null,

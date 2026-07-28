@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS `products` (
   `description` TEXT DEFAULT NULL,
   `category` VARCHAR(100) DEFAULT NULL,
   `price` DECIMAL(10,2) DEFAULT NULL,
+  `mrp` DECIMAL(10,2) DEFAULT NULL COMMENT 'Maximum Retail Price from global catalog',
   `stock` INT(11) DEFAULT NULL,
   `image` VARCHAR(255) DEFAULT NULL,
   `barcode` VARCHAR(255) UNIQUE DEFAULT NULL,
