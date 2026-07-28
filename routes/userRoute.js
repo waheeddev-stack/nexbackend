@@ -79,7 +79,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, is_online, is_verified, home_delivery_active,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, img, is_online, is_verified, home_delivery_active,
               CASE
                 WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0
                 THEN (6371 * acos(
@@ -351,6 +351,14 @@ userrouter.post(
     try {
       const validatedData = req.body;
 
+      // Validate required fields
+      if (!validatedData.name || !validatedData.name.trim()) {
+        return res.status(400).json({ success: false, message: "Name is required" });
+      }
+      if (!validatedData.phone || !validatedData.phone.trim()) {
+        return res.status(400).json({ success: false, message: "Phone number is required" });
+      }
+
       // Check if user already exists
       const [existingUser] = await pool.execute(
         "SELECT * FROM users WHERE email = ?",
@@ -378,8 +386,8 @@ userrouter.post(
         try {
           // Insert new user into database with explicit ID
           await pool.execute(
-            "INSERT INTO users (id, name, email, password, referralcode) VALUES (?, ?, ?, ?, ?)",
-            [nextId, validatedData.name, validatedData.email, hashedPassword, referralcode]
+            "INSERT INTO users (id, name, email, password, phone, referralcode) VALUES (?, ?, ?, ?, ?, ?)",
+            [nextId, validatedData.name, validatedData.email, hashedPassword, validatedData.phone, referralcode]
           );
           inserted = true
           break;
@@ -401,7 +409,7 @@ userrouter.post(
 
       // Fetch the newly created user
       const [userRows] = await pool.execute(
-        "SELECT id, name, email, store_credits, created_at FROM users WHERE id = ?",
+        "SELECT id, name, email, phone, store_credits, created_at FROM users WHERE id = ?",
         [nextId]
       );
       const user = userRows[0];

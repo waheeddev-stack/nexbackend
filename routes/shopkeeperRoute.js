@@ -322,17 +322,27 @@ shopkeeperRouter.get(
       const shopkeeper_id = req.user.id;
       const search = req.query.search ? `%${req.query.search}%` : null;
 
-      let sql = `
-        SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
-        FROM users u 
-        JOIN orders o ON u.id = o.user_id 
-        WHERE o.shopkeeper_id = ?
-      `;
-      const params = [shopkeeper_id];
+      let sql;
+      const params = [];
 
       if (search) {
-        sql += ` AND (u.name LIKE ? OR u.email LIKE ?)`;
-        params.push(search, search);
+        // Search across entire users table by name, email, or phone
+        sql = `
+          SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+          FROM users u 
+          WHERE u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?
+          LIMIT 50
+        `;
+        params.push(search, search, search);
+      } else {
+        // No search: return only users who have ordered from this shopkeeper
+        sql = `
+          SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+          FROM users u 
+          JOIN orders o ON u.id = o.user_id 
+          WHERE o.shopkeeper_id = ?
+        `;
+        params.push(shopkeeper_id);
       }
 
       const [customers] = await pool.execute(sql, params);
@@ -459,12 +469,12 @@ shopkeeperRouter.get(
         previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
         groupBy = 'DATE(o.created_at)';
       } else if (timeframe === 'monthly') {
-        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH) AND o.created_at < DATE_SUB(NOW(), INTERVAL 1 MONTH)';
-        groupBy = 'WEEK(o.created_at)';
+        dateFilter = "AND o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND o.created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)";
+        previousDateFilter = "AND o.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH) AND o.created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')";
+        groupBy = 'DATE(o.created_at)';
       } else { // weekly
-        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
+        dateFilter = 'AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AND o.created_at < DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY)';
+        previousDateFilter = 'AND o.created_at >= DATE_SUB(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY) AND o.created_at < DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)';
         groupBy = 'DATE(o.created_at)';
       }
 
@@ -474,7 +484,7 @@ shopkeeperRouter.get(
           SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales,
           COUNT(CASE WHEN o.status = 'Pending' THEN 1 END) as pendingOrders,
           COUNT(CASE WHEN o.status IN ('Completed', 'Delivered') THEN 1 END) as completedCount,
-          COUNT(*) as totalOrdersCount
+          COUNT(CASE WHEN o.status != 'Cancelled' THEN 1 END) as totalOrdersCount
          FROM orders o
          WHERE o.shopkeeper_id = ? ${dateFilter}`,
          [shopkeeper_id]
