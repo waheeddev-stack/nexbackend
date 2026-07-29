@@ -206,7 +206,7 @@ export async function getCachedProductDetails(productIds, connection) {
   if (uncached.length > 0) {
     const placeholders = uncached.map(() => "?").join(",");
     const [products] = await connection.execute(
-      `SELECT id, name, image, category, price FROM products WHERE id IN (${placeholders})`,
+      `SELECT id, name, image, category, price, mrp FROM products WHERE id IN (${placeholders})`,
       uncached
     );
 

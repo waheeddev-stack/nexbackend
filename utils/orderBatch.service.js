@@ -222,7 +222,7 @@ export async function batchFetchProductDetails(productIds) {
   try {
     const placeholders = productIds.map(() => "?").join(",");
     const [products] = await conn.execute(
-      `SELECT id, name, image, category, price FROM products WHERE id IN (${placeholders})`,
+      `SELECT id, name, image, category, price, mrp FROM products WHERE id IN (${placeholders})`,
       productIds
     );
     return products;
