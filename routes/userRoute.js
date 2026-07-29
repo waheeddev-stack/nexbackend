@@ -504,7 +504,7 @@ userrouter.post("/signin", authRateLimit, async (req, res) => {
 userrouter.get("/profile/:id", async (req, res) => {
   try {
     const [user] = await pool.execute(
-      "SELECT id, email, name, phone, address, area, landmark, pincode, img, wallet, store_credits, referralcode, created_at FROM users WHERE id = ?",
+      "SELECT id, email, name, phone, address, area, landmark, pincode, img, wallet, store_credits, referralcode, latitude, longitude, created_at FROM users WHERE id = ?",
       [req.params.id]
     );
     if (user.length === 0)
@@ -529,7 +529,7 @@ userrouter.get("/profile/:id", async (req, res) => {
 // UPDATE PROFILE (with image upload)
 userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   try {
-    const { name, phone, address, area, landmark, pincode } = req.body;
+    const { name, phone, address, area, landmark, pincode, latitude, longitude } = req.body;
     const { id } = req.params;
 
     // First, check if user exists
@@ -605,6 +605,14 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
       fields.push("pincode = ?");
       values.push(pincode);
     }
+    if (latitude !== undefined && latitude !== null && latitude !== "") {
+      fields.push("latitude = ?");
+      values.push(parseFloat(latitude));
+    }
+    if (longitude !== undefined && longitude !== null && longitude !== "") {
+      fields.push("longitude = ?");
+      values.push(parseFloat(longitude));
+    }
     if (imgUrl) {
       fields.push("img = ?");
       values.push(imgUrl);
@@ -622,7 +630,7 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     // Fetch updated user data
     const [userRows] = await pool.execute(
-      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, created_at FROM users WHERE id = ?",
+      "SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, latitude, longitude, created_at FROM users WHERE id = ?",
       [id]
     );
 
