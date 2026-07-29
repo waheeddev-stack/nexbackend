@@ -1560,7 +1560,7 @@ shopkeeperRouter.post(
   async (req, res) => {
     try {
       const shop_id = req.user.id;
-      const { name, description, category, price, stock, baselineQty } =
+      const { name, description, category, price, mrp, stock, baselineQty } =
         req.body;
 
       if (!name || price == null) {
@@ -1597,6 +1597,16 @@ shopkeeperRouter.post(
       // ✅ FIX: Ensure price is stored with exactly 2 decimal places
       const formattedPrice = parseFloat(parsedPrice.toFixed(2));
 
+      // MRP defaults to price if not provided
+      const parsedMrp = mrp != null ? Number(mrp) : parsedPrice;
+      if (!Number.isNaN(parsedMrp) && parsedMrp >= 0) {
+        if (parsedMrp < parsedPrice) {
+          return res
+            .status(400)
+            .json({ success: false, message: "MRP cannot be less than selling price" });
+        }
+      }
+
       // Handle optional image upload
       let imageUrl = null;
       if (req.file) {
@@ -1622,13 +1632,14 @@ shopkeeperRouter.post(
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, name, description, category, price, stock, baselineQty, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
           name.trim(),
           description || null,
           category || null,
           formattedPrice,
+          Number.isNaN(parsedMrp) || parsedMrp < 0 ? formattedPrice : parseFloat(parsedMrp.toFixed(2)),
           finalStock,
           finalBaselineQty,
           imageUrl,
@@ -1813,8 +1824,24 @@ shopkeeperRouter.put(
             .status(400)
             .json({ success: false, message: "Invalid MRP" });
         const formattedMrp = parseFloat(m.toFixed(2));
+        // Validate that selling price does not exceed MRP
+        const effectivePrice = price != null ? Number(price) : existing[0].price;
+        if (effectivePrice != null && formattedMrp < effectivePrice) {
+          return res
+            .status(400)
+            .json({ success: false, message: "MRP cannot be less than selling price" });
+        }
         fields.push("mrp = ?");
         values.push(formattedMrp);
+      }
+      // Also validate if only price is being updated (mrp stays the same)
+      if (price != null && mrp == null && existing[0].mrp != null) {
+        const p = Number(price);
+        if (p > Number(existing[0].mrp)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Selling price cannot exceed MRP" });
+        }
       }
       if (stock != null && baselineQty == null) {
         const s = Number(stock);
@@ -2487,14 +2514,15 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
       for (const gp of globalProducts) {
         if (!existingGlobalIds.has(gp.id)) {
           await pool.execute(
-            `INSERT INTO products (shop_id, global_product_id, name, description, category, price, stock, image)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO products (shop_id, global_product_id, name, description, category, price, mrp, stock, image)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               shopkeeperId,
               gp.id,
               gp.name,
               gp.description || null,
               gp.category || null,
+              gp.price || 0,
               gp.price || 0,
               0,
               gp.image || null,

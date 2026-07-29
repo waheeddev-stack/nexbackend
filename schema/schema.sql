@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT,
   category VARCHAR(100),
   price DECIMAL(10,2),
+  mrp DECIMAL(10,2) DEFAULT NULL,
   stock INT DEFAULT 0,
   image VARCHAR(255),
   barcode VARCHAR(255) UNIQUE,
