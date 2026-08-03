@@ -958,6 +958,16 @@ async function createOrderHandler(req, res) {
       });
     }
 
+    // Enforce minimum order amount for home delivery orders
+    if (!isPickup && Number(rawSubtotal) < 200) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Home delivery requires a minimum order of ₹200. Your order is ₹${Number(rawSubtotal).toFixed(0)}.`,
+        code: 'MIN_ORDER_NOT_MET',
+      });
+    }
+
     // CRITICAL FIX #3: Validate stock availability with row-level locking
     // Lock rows for update to prevent concurrent modifications
     const productIds = items.map(item => item.productId || item.product_id);
