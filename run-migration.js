@@ -3,16 +3,26 @@ import path from "path";
 import pool from "./config/db.js";
 
 async function runMigration() {
+  // Allow a specific migration file to be passed as CLI arg, e.g.:
+  //   node run-migration.js 004_ensure_savings_columns.sql
+  // Defaults to the savings-columns migration (the one backing wallet savings).
+  const argFile = process.argv[2];
   const migrationFile = path.resolve(
     process.cwd(),
-    "schema/migrations/add_restock_columns.sql"
+    "schema/migrations",
+    argFile || "004_ensure_savings_columns.sql"
   );
 
   try {
+    if (!fs.existsSync(migrationFile)) {
+      console.error("❌ Migration file not found:", migrationFile);
+      process.exit(1);
+    }
+
     const sql = fs.readFileSync(migrationFile, "utf8");
     const connection = await pool.getConnection();
 
-    console.log("🚀 Running migration: add_restock_columns.sql");
+    console.log("🚀 Running migration:", path.basename(migrationFile));
     console.log("-------------------------------------------");
 
     // Split by semicolon and execute each statement

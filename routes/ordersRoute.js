@@ -318,6 +318,7 @@ router.get("/", verifyToken, async (req, res) => {
         END as status,
         o.status as originalStatus,
         o.total_amount,
+        o.instant_discount,
         o.credits_earned,
         o.credits_used,
         o.payment_method,
@@ -353,6 +354,7 @@ router.get("/", verifyToken, async (req, res) => {
           oi.product_id as productId,
           oi.quantity,
           oi.price,
+          p.mrp,
           p.name as productName,
           p.image as productImage,
           p.category as productCategory
@@ -378,6 +380,7 @@ router.get("/", verifyToken, async (req, res) => {
           product_category: item.productCategory,
           quantity: item.quantity,
           price: parseFloat(item.price),
+          mrp: item.mrp != null ? parseFloat(item.mrp) : null,
         })),
     }));
 
