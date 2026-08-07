@@ -326,18 +326,18 @@ shopkeeperRouter.get(
       const params = [];
 
       if (search) {
-        // Search across entire users table by name, email, or phone
+        // Search across entire users table by name, email, phone, or zeu_id
         sql = `
-          SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+          SELECT DISTINCT u.id, u.zeu_id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
           FROM users u 
-          WHERE u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?
+          WHERE u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ? OR u.zeu_id LIKE ?
           LIMIT 50
         `;
-        params.push(search, search, search);
+        params.push(search, search, search, search);
       } else {
         // No search: return only users who have ordered from this shopkeeper
         sql = `
-          SELECT DISTINCT u.id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
+          SELECT DISTINCT u.id, u.zeu_id, u.name as username, u.email, u.phone, u.store_credits as credits, u.wallet, u.img 
           FROM users u 
           JOIN orders o ON u.id = o.user_id 
           WHERE o.shopkeeper_id = ?
