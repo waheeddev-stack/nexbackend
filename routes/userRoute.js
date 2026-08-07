@@ -93,7 +93,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
               END AS distance
        FROM shopkeepers
        WHERE is_verified = 1
-         AND subscription_status NOT IN ('suspended')
+         AND subscription_status NOT IN ('suspended', 'grace_period')
        HAVING distance <= ? OR distance = 999999
        ORDER BY distance ASC`,
       [lat, lng, lat, finalRadiusKm]
