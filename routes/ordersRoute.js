@@ -104,7 +104,7 @@ async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal,
         if (isFCMToken(token)) {
           await sendFCMPush(token, title, body, payload);
         } else {
-          await sendExpoPush(token, title, body, payload);
+          await sendExpoPush(token, title, body, payload, { action: 'new_order', resourceId: String(orderId) });
         }
         console.log(`✅ Push notification sent to shopkeeper ${shopkeeperId}`);
       } catch (pushErr) {
@@ -130,7 +130,7 @@ async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal,
         if (isFCMToken(token)) {
           await sendFCMPush(token, title, body, payload);
         } else {
-          await sendExpoPush(token, title, body, payload);
+          await sendExpoPush(token, title, body, payload, { action: 'order_placed', resourceId: String(orderId) });
         }
         console.log(`✅ Push notification sent to customer ${userId}`);
       } catch (pushErr) {
@@ -541,7 +541,7 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
             if (isFCMToken(target.expo_push_token)) {
               await sendFCMPush(target.expo_push_token, title, body, pushPayload);
             } else {
-              await sendExpoPush(target.expo_push_token, title, body, pushPayload);
+              await sendExpoPush(target.expo_push_token, title, body, pushPayload, { action: 'order_cancelled', resourceId: String(orderIdNum) });
             }
           } catch (pushErr) {
             console.error(`Failed to send cancellation push to ${targetTable}:`, pushErr);
@@ -1255,7 +1255,7 @@ async function createOrderHandler(req, res) {
           notificationPromises.push(
             (isFCMToken(token)
               ? sendFCMPush(token, title, body, payload)
-              : sendExpoPush(token, title, body, payload)
+              : sendExpoPush(token, title, body, payload, { action: 'new_order', resourceId: String(orderId) })
             ).catch(err => console.error(`Failed to send push to shopkeeper:`, err))
           );
         }
@@ -1270,7 +1270,7 @@ async function createOrderHandler(req, res) {
           notificationPromises.push(
             (isFCMToken(token)
               ? sendFCMPush(token, title, body, payload)
-              : sendExpoPush(token, title, body, payload)
+              : sendExpoPush(token, title, body, payload, { action: 'order_placed', resourceId: String(orderId) })
             ).catch(err => console.error(`Failed to send push to customer:`, err))
           );
         }
@@ -1617,7 +1617,7 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           if (isFCMToken(target.expo_push_token)) {
             await sendFCMPush(target.expo_push_token, title, body, payload);
           } else {
-            await sendExpoPush(target.expo_push_token, title, body, payload);
+            await sendExpoPush(target.expo_push_token, title, body, payload, { action: 'order_status_update', resourceId: String(orderIdNum) });
           }
         } catch (pushErr) {
           console.error(

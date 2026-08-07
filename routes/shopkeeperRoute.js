@@ -1504,7 +1504,8 @@ shopkeeperRouter.patch(
           target.expo_push_token,
           `Order #${orderIdNum} Update`,
           `Your order status has been updated to ${status}.`,
-          { orderId: orderIdNum, status }
+          { orderId: orderIdNum, status },
+          { action: 'order_status_update', resourceId: String(orderIdNum) }
         );
       }
 
@@ -2418,8 +2419,8 @@ shopkeeperRouter.get(
 
       // Get shopkeeper subscription details
       const [shopkeeper] = await pool.execute(
-        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due, last_payment_date
-       FROM shopkeepers WHERE id = ?`,
+        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due, last_payment_date, grace_period_end
+        FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
       );
 
@@ -2430,16 +2431,47 @@ shopkeeperRouter.get(
       }
 
       const data = shopkeeper[0];
+      const now = new Date();
+
+      // Calculate payment status using subscription logic
+      const nextPaymentDue = data.next_payment_due ? new Date(data.next_payment_due) : null;
+      const gracePeriodEnd = data.grace_period_end ? new Date(data.grace_period_end) : null;
+
+      const isPaymentOverdue = nextPaymentDue && now > nextPaymentDue;
+      const isInGracePeriod = isPaymentOverdue && gracePeriodEnd && now <= gracePeriodEnd;
+      const isAccountSuspended = gracePeriodEnd && now > gracePeriodEnd;
+
+      let isBlocked = false;
+      let pendingAmount = 0;
+      let nextPaymentDate = data.next_payment_due;
+
+      // Get shop scale to determine fee amount
+      const scale = data.shop_scale || "small";
+      const scaleFees = { small: 299, medium: 799, large: 1999 };
+      const feeAmount = scaleFees[scale] || 299;
+
+      if (isAccountSuspended) {
+        isBlocked = true;
+        pendingAmount = feeAmount;
+      } else if (isInGracePeriod) {
+        // Not blocked yet, but payment needed
+        pendingAmount = feeAmount;
+        isBlocked = false;
+      } else if (isPaymentOverdue) {
+        // Overdue but before grace period (shouldn't happen with current logic)
+        pendingAmount = feeAmount;
+        isBlocked = false;
+      }
 
       // Get this month's payment total
       const [monthPayments] = await pool
         .query(
           `SELECT COALESCE(SUM(amount), 0) as paid_this_month
-       FROM billing_payments
-       WHERE shopkeeper_id = ?
-       AND status = 'approved'
-       AND MONTH(payment_date) = MONTH(CURRENT_DATE())
-       AND YEAR(payment_date) = YEAR(CURRENT_DATE())`,
+        FROM billing_payments
+        WHERE shopkeeper_id = ?
+        AND status = 'approved'
+        AND MONTH(payment_date) = MONTH(CURRENT_DATE())
+        AND YEAR(payment_date) = YEAR(CURRENT_DATE())`,
           [shopkeeper_id]
         )
         .catch(() => [[{ paid_this_month: 0 }]]);
@@ -2448,10 +2480,17 @@ shopkeeperRouter.get(
         success: true,
         data: {
           subscription_status: data.subscription_status || "active",
-          shop_scale: data.shop_scale || "small",
+          shop_scale: scale,
           next_payment_due: data.next_payment_due,
           last_payment_date: data.last_payment_date,
           paid_this_month: monthPayments[0]?.paid_this_month || 0,
+          // PaymentBlocker expected fields:
+          isBlocked,
+          pendingAmount,
+          nextPaymentDate,
+          status: isAccountSuspended ? "blocked" : isInGracePeriod ? "grace_period" : "active",
+          feeAmount,
+          graceDaysRemaining: gracePeriodEnd ? Math.max(0, Math.ceil((gracePeriodEnd - now) / (1000 * 60 * 60 * 24))) : 0
         },
       });
     } catch (err) {
@@ -2800,7 +2839,7 @@ shopkeeperRouter.post(
           const message = walletCreditSettled > 0
             ? `🎉 Your order #${orderIdNum} has been verified and completed! You earned ₹${(walletCreditSettled * 0.1).toFixed(0)} in wallet credit.`
             : `🎉 Your order #${orderIdNum} has been verified and completed!`;
-          const token = customer.expo_push_token;
+const token = customer.expo_push_token;
           if (isFCMToken(token)) {
             await sendFCMPush(token, "Order Completed", message, {
               orderId: String(orderIdNum),
@@ -2808,9 +2847,9 @@ shopkeeperRouter.post(
             });
           } else {
             await sendExpoPush(token, "Order Completed", message, {
-              orderId: orderIdNum,
+              orderId: String(orderIdNum),
               status: "Completed",
-            });
+            }, { action: 'order_completed', resourceId: String(orderIdNum) });
           }
         }
       } catch (pushError) {
@@ -3045,6 +3084,306 @@ shopkeeperRouter.post(
         message: "Failed to check access",
         error: err.message,
       });
+    }
+  }
+);
+
+// GET /api/shopkeeper/store-health - Calculate store health score
+shopkeeperRouter.get(
+  "/store-health",
+  verifyToken,
+  verifyShopkeeperStatus,
+  checkSubscriptionStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+
+      // Get various metrics for health calculation
+      const [
+        [ordersStats],
+        [productsStats],
+        [customersStats],
+        [revenueStats],
+        [activityStats],
+        [stockStats]
+      ] = await Promise.all([
+        // Orders metrics
+        pool.execute(`
+          SELECT 
+            COUNT(*) as total_orders,
+            SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN 1 ELSE 0 END) as completed_orders,
+            SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_orders,
+            SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending_orders
+          FROM orders 
+          WHERE shopkeeper_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        `, [shopkeeper_id]),
+
+        // Products metrics
+        pool.execute(`
+          SELECT 
+            COUNT(*) as total_products,
+            SUM(CASE WHEN stock <= baselineQty OR stock <= 5 THEN 1 ELSE 0 END) as low_stock_products,
+            SUM(CASE WHEN stock = 0 THEN 1 ELSE 0 END) as out_of_stock_products
+          FROM products 
+          WHERE shop_id = ?
+        `, [shopkeeper_id]),
+
+        // Customers metrics
+        pool.execute(`
+          SELECT 
+            COUNT(DISTINCT user_id) as total_customers,
+            SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as new_customers_week
+          FROM orders 
+          WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered')
+        `, [shopkeeper_id]),
+
+        // Revenue metrics
+        pool.execute(`
+          SELECT 
+            COALESCE(SUM(total_amount), 0) as revenue_30d,
+            COALESCE(SUM(total_amount), 0) as revenue_7d
+          FROM orders 
+          WHERE shopkeeper_id = ? 
+            AND status IN ('Completed', 'Delivered')
+            AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        `, [shopkeeper_id]),
+
+        // Activity metrics (last login, order response time)
+        pool.execute(`
+          SELECT 
+            MAX(created_at) as last_order_date,
+            AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)) as avg_response_minutes
+          FROM orders 
+          WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered')
+            AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        `, [shopkeeper_id]),
+
+        // Stock turnover
+        pool.execute(`
+          SELECT 
+            COALESCE(SUM(stock), 0) as total_stock,
+            COALESCE(AVG(stock), 0) as avg_stock
+          FROM products 
+          WHERE shop_id = ?
+        `, [shopkeeper_id])
+      ]);
+
+      const o = ordersStats[0];
+      const p = productsStats[0];
+      const c = customersStats[0];
+      const r = revenueStats[0];
+      const a = activityStats[0];
+      const s = stockStats[0];
+
+      // Calculate health score (0-100)
+      // Factors:
+      // 1. Order completion rate (25%)
+      // 2. Low stock management (20%)
+      // 3. Customer retention/growth (15%)
+      // 4. Revenue trend (15%)
+      // 5. Response time (15%)
+      // 6. Stock availability (10%)
+
+      const totalOrders = o.total_orders || 0;
+      const completedOrders = o.completed_orders || 0;
+      const cancelledOrders = o.cancelled_orders || 0;
+      const completionRate = totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 100;
+      const cancellationRate = totalOrders > 0 ? (cancelledOrders / totalOrders) * 100 : 0;
+
+      const totalProducts = p.total_products || 0;
+      const lowStockProducts = p.low_stock_products || 0;
+      const outOfStockProducts = p.out_of_stock_products || 0;
+      const stockHealthRate = totalProducts > 0 ? (1 - (outOfStockProducts / totalProducts)) * 100 : 100;
+
+      const totalCustomers = c.total_customers || 0;
+      const newCustomersWeek = c.new_customers_week || 0;
+      const customerGrowthRate = totalCustomers > 0 ? (newCustomersWeek / totalCustomers) * 100 : 0;
+
+      const revenue30d = parseFloat(r.revenue_30d) || 0;
+      const revenue7d = parseFloat(r.revenue_7d) || 0;
+      const revenueTrend = revenue30d > 0 ? (revenue7d / (revenue30d / 4.3)) * 100 : 100; // weekly vs monthly avg
+
+      const avgResponseMinutes = a.avg_response_minutes || 0;
+      const responseScore = avgResponseMinutes <= 10 ? 100 : avgResponseMinutes <= 30 ? 80 : avgResponseMinutes <= 60 ? 60 : 40;
+
+      // Weighted score
+      let healthScore = 0;
+      healthScore += completionRate * 0.25;
+      healthScore += stockHealthRate * 0.20;
+      healthScore += Math.min(customerGrowthRate * 5, 100) * 0.15; // Cap at 100
+      healthScore += Math.min(revenueTrend, 100) * 0.15;
+      healthScore += responseScore * 0.15;
+      healthScore += (100 - (lowStockProducts / Math.max(totalProducts, 1)) * 100) * 0.10;
+
+      healthScore = Math.round(Math.max(0, Math.min(100, healthScore)));
+
+      // Determine health status
+      let healthStatus = "excellent";
+      if (healthScore >= 80) healthStatus = "excellent";
+      else if (healthScore >= 60) healthStatus = "good";
+      else if (healthScore >= 40) healthStatus = "fair";
+      else healthStatus = "needs_attention";
+
+      // Generate recommendations
+      const recommendations = [];
+      if (completionRate < 90) recommendations.push("Improve order completion rate");
+      if (outOfStockProducts > 0) recommendations.push(`Restock ${outOfStockProducts} out-of-stock products`);
+      if (lowStockProducts > totalProducts * 0.3) recommendations.push("Too many low-stock items");
+      if (customerGrowthRate < 5) recommendations.push("Focus on customer acquisition");
+      if (avgResponseMinutes > 30) recommendations.push("Improve order response time");
+      if (revenueTrend < 80) recommendations.push("Revenue declining - consider promotions");
+
+      res.json({
+        success: true,
+        data: {
+          score: healthScore,
+          status: healthStatus,
+          metrics: {
+            orders: {
+              total: totalOrders,
+              completed: completedOrders,
+              cancelled: cancelledOrders,
+              completionRate: Math.round(completionRate * 10) / 10,
+              cancellationRate: Math.round(cancellationRate * 10) / 10
+            },
+            products: {
+              total: totalProducts,
+              lowStock: lowStockProducts,
+              outOfStock: outOfStockProducts,
+              stockHealthRate: Math.round(stockHealthRate * 10) / 10
+            },
+            customers: {
+              total: totalCustomers,
+              newThisWeek: newCustomersWeek,
+              growthRate: Math.round(customerGrowthRate * 10) / 10
+            },
+            revenue: {
+              last30Days: revenue30d,
+              last7Days: revenue7d,
+              trend: Math.round(revenueTrend)
+            },
+            operations: {
+              avgResponseMinutes: Math.round(avgResponseMinutes),
+              responseScore
+            }
+          },
+          recommendations: recommendations.length > 0 ? recommendations : ["All systems healthy"]
+        }
+      });
+    } catch (err) {
+      console.error("Store health calculation error:", err);
+      res.status(500).json({ success: false, message: "Failed to calculate store health", error: err.message });
+    }
+  }
+);
+
+// GET /api/shopkeeper/payment-modal-data - Get payment modal data for grace period/suspension
+shopkeeperRouter.get(
+  "/payment-modal-data",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shopkeeper_id = req.user.id;
+
+      // Get subscription status
+      const statusInfo = await calculateSubscriptionStatus(shopkeeper_id);
+
+      // Get payment info for payment instructions
+      const [paymentRows] = await pool
+        .query(
+          "SELECT upi_id, bank_account, bank_name, ifsc_code, account_holder, qr_code FROM payment_info WHERE type = 'admin' LIMIT 1"
+        )
+        .catch(() => [[]]);
+
+      const paymentInfo = paymentRows.length > 0 ? paymentRows[0] : {
+        upi_id: "",
+        bank_account: "",
+        bank_name: "",
+        ifsc_code: "",
+        account_holder: "NexKirana Admin",
+        qr_code: null
+      };
+
+      // Calculate amount due (based on shop scale)
+      let amountDue = 0;
+      const [shopkeeper] = await pool.execute(
+        "SELECT shop_scale FROM shopkeepers WHERE id = ?",
+        [shopkeeper_id]
+      );
+      const scale = shopkeeper[0]?.shop_scale || "small";
+      const scaleFees = { small: 299, medium: 799, large: 1999 };
+      amountDue = scaleFees[scale] || 299;
+
+      let modalType = null;
+      let title = "";
+      let message = "";
+      let showPayButton = false;
+      let payButtonText = "";
+      let urgency = "low";
+
+      if (statusInfo.isAccountSuspended) {
+        modalType = "suspended";
+        title = "Account Suspended";
+        message = `Your account has been suspended due to payment overdue by ${statusInfo.daysOverdue} day(s). Please make the payment to reactivate your account.`;
+        showPayButton = true;
+        payButtonText = `Pay ₹${amountDue} to Reactivate`;
+        urgency = "high";
+      } else if (statusInfo.isInGracePeriod) {
+        modalType = "grace_period";
+        title = "Payment Overdue - Grace Period";
+        message = `Your payment of ₹${amountDue} is overdue. You have ${statusInfo.graceDaysRemaining} grace day(s) remaining to make payment before your account is suspended.`;
+        showPayButton = true;
+        payButtonText = `Pay ₹${amountDue} Now`;
+        urgency = "medium";
+      } else if (statusInfo.needsPayment && statusInfo.daysOverdue > 0) {
+        modalType = "overdue";
+        title = "Payment Overdue";
+        message = `Your payment of ₹${amountDue} is overdue by ${statusInfo.daysOverdue} day(s). Please pay to avoid suspension.`;
+        showPayButton = true;
+        payButtonText = `Pay ₹${amountDue} Now`;
+        urgency = "medium";
+      }
+
+      // Only return modal data if there's an issue
+      if (!modalType) {
+        return res.json({
+          success: true,
+          data: { showModal: false }
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          showModal: true,
+          modalType,
+          title,
+          message,
+          urgency,
+          amountDue,
+          showPayButton,
+          payButtonText,
+          paymentInfo: {
+            upi_id: paymentInfo.upi_id,
+            bank_account: paymentInfo.bank_account,
+            bank_name: paymentInfo.bank_name,
+            ifsc_code: paymentInfo.ifsc_code,
+            account_holder: paymentInfo.account_holder,
+            qr_code: paymentInfo.qr_code
+          },
+          subscription: {
+            status: statusInfo.status,
+            daysOverdue: statusInfo.daysOverdue,
+            graceDaysRemaining: statusInfo.graceDaysRemaining,
+            nextPaymentDue: statusInfo.nextPaymentDue,
+            gracePeriodEnd: statusInfo.gracePeriodEnd
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Payment modal data error:", err);
+      res.status(500).json({ success: false, message: "Failed to get payment modal data", error: err.message });
     }
   }
 );
