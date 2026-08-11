@@ -79,7 +79,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, img, is_online, is_verified, home_delivery_active,
+      `SELECT id, name, shop_name, address, phone, latitude, longitude, img, COALESCE(is_online, 1) AS is_online, is_verified, home_delivery_active,
               CASE
                 WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0
                 THEN (6371 * acos(
