@@ -56,7 +56,9 @@ export const sendPasswordResetEmailResend = async (
       "https://nexbackend.onrender.com";
     const resetLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
 
-    const { data, error } = await resend.emails.send({
+    const templateId = process.env.RESEND_TEMPLATE_PASSWORD_RESET;
+
+    const message = {
       from: getFrom(),
       to: [to],
       subject: "Password Reset Request - NexKirana Account",
@@ -203,7 +205,29 @@ This email was sent to: ${to}
         </body>
         </html>
       `,
-    });
+    };
+
+    let sendPayload;
+    if (templateId) {
+      console.log(`[RESEND] Using template: ${templateId}`);
+      sendPayload = {
+        from: message.from,
+        to: message.to,
+        subject: message.subject,
+        template: {
+          id: templateId,
+          variables: {
+            RESET_LINK: resetLink,
+            USER_NAME: userName || "Customer",
+            EXPIRY_MINUTES: "60",
+          },
+        },
+      };
+    } else {
+      sendPayload = message;
+    }
+
+    const { data, error } = await resend.emails.send(sendPayload);
 
     if (error) {
       throw new Error(`Resend API error: ${error.message}`);
