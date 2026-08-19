@@ -1,40 +1,51 @@
-import sgMail from "@sendgrid/mail";
+import { Resend } from "resend";
 
 /**
- * SendGrid Email Service
+ * Resend Email Service
  * Free tier: 100 emails/day
  * Works on Render (uses HTTPS API, not SMTP)
  */
 
-// Initialize SendGrid
-const initSendGrid = () => {
-  const apiKey = process.env.SENDGRID_API_KEY;
+// Initialize Resend
+const getResend = () => {
+  const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
-    console.warn("[SENDGRID] API key not configured. Email sending will fail.");
-    return false;
+    console.warn("[RESEND] API key not configured. Email sending will fail.");
+    return null;
   }
 
-  sgMail.setApiKey(apiKey);
-  console.log("[SENDGRID] ✅ Initialized successfully");
-  return true;
+  console.log("[RESEND] Initialized successfully");
+  return new Resend(apiKey);
 };
 
 /**
- * Send password reset email via SendGrid
+ * Get the sender (Resend requires a verified domain)
  */
-export const sendPasswordResetEmailSendGrid = async (
+const getFrom = () => {
+  const fromName = process.env.RESEND_FROM_NAME || "NexKirana";
+  const fromEmail =
+    process.env.RESEND_FROM_EMAIL ||
+    process.env.EMAIL_USER ||
+    "resetnexkirana@gmail.com";
+  return `${fromName} <${fromEmail}>`;
+};
+
+/**
+ * Send password reset email via Resend
+ */
+export const sendPasswordResetEmailResend = async (
   to,
   resetToken,
   userName
 ) => {
   try {
-    console.log(`[SENDGRID] Sending password reset email to: ${to}`);
+    console.log(`[RESEND] Sending password reset email to: ${to}`);
 
-    // Initialize SendGrid
-    if (!initSendGrid()) {
+    const resend = getResend();
+    if (!resend) {
       throw new Error(
-        "SendGrid not configured. Please set SENDGRID_API_KEY in environment variables."
+        "Resend not configured. Please set RESEND_API_KEY in environment variables."
       );
     }
 
@@ -45,55 +56,9 @@ export const sendPasswordResetEmailSendGrid = async (
       "https://nexbackend.onrender.com";
     const resetLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
 
-    const fromEmail =
-      process.env.SENDGRID_FROM_EMAIL ||
-      process.env.EMAIL_USER ||
-      "resetnexkirana@gmail.com";
-    const fromName = process.env.SENDGRID_FROM_NAME || "NexKirana";
-    const templateId = process.env.SENDGRID_TEMPLATE_ID;
-
-    // If template ID is provided, use dynamic template
-    if (templateId) {
-      console.log(`[SENDGRID] Using template: ${templateId}`);
-
-      const msg = {
-        to,
-        from: {
-          email: fromEmail,
-          name: fromName,
-        },
-        templateId: templateId,
-        dynamicTemplateData: {
-          RESET_LINK: resetLink,
-          USER_NAME: userName || "Customer",
-          EXPIRY_MINUTES: "60",
-        },
-      };
-
-      const startTime = Date.now();
-      await sgMail.send(msg);
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-
-      console.log(
-        `[SENDGRID] ✅ Password reset email sent successfully in ${duration}s (using template)`
-      );
-
-      return {
-        success: true,
-        provider: "sendgrid",
-        method: "template",
-      };
-    }
-
-    // Otherwise, use inline HTML (fallback)
-    console.log(`[SENDGRID] Using inline HTML (no template ID configured)`);
-
-    const msg = {
-      to,
-      from: {
-        email: fromEmail,
-        name: fromName,
-      },
+    const { data, error } = await resend.emails.send({
+      from: getFrom(),
+      to: [to],
       subject: "Password Reset Request - NexKirana Account",
       text: `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -238,57 +203,41 @@ This email was sent to: ${to}
         </body>
         </html>
       `,
-    };
+    });
 
-    const startTime = Date.now();
-    await sgMail.send(msg);
-    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    if (error) {
+      throw new Error(`Resend API error: ${error.message}`);
+    }
 
-    console.log(
-      `[SENDGRID] ✅ Password reset email sent successfully in ${duration}s`
-    );
+    console.log(`[RESEND] ✅ Password reset email sent: ${data?.id}`);
 
     return {
       success: true,
-      provider: "sendgrid",
+      provider: "resend",
+      id: data?.id,
     };
   } catch (error) {
-    console.error("[SENDGRID] ❌ Error sending email:", error.message);
+    console.error("[RESEND] ❌ Error sending email:", error.message);
 
-    if (error.response) {
-      console.error("[SENDGRID] Error details:", {
-        statusCode: error.response.statusCode,
-        body: error.response.body,
-      });
-    }
-
-    throw new Error(`SendGrid email failed: ${error.message}`, {
+    throw new Error(`Resend email failed: ${error.message}`, {
       cause: error,
     });
   }
 };
 
 /**
- * Send password reset confirmation via SendGrid
+ * Send password reset confirmation via Resend
  */
-export const sendPasswordResetConfirmationSendGrid = async (to, userName) => {
+export const sendPasswordResetConfirmationResend = async (to, userName) => {
   try {
-    if (!initSendGrid()) {
-      throw new Error("SendGrid not configured");
+    const resend = getResend();
+    if (!resend) {
+      throw new Error("Resend not configured");
     }
 
-    const fromEmail =
-      process.env.SENDGRID_FROM_EMAIL ||
-      process.env.EMAIL_USER ||
-      "resetnexkirana@gmail.com";
-    const fromName = process.env.SENDGRID_FROM_NAME || "NexKirana";
-
-    const msg = {
-      to,
-      from: {
-        email: fromEmail,
-        name: fromName,
-      },
+    const { data, error } = await resend.emails.send({
+      from: getFrom(),
+      to: [to],
       subject: "Security Alert: Password Successfully Changed - NexKirana",
       text: `
 Dear ${userName || "Customer"},
@@ -316,19 +265,22 @@ If you did not make this change, please contact our support team immediately at 
         </body>
         </html>
       `,
-    };
+    });
 
-    await sgMail.send(msg);
-    console.log("[SENDGRID] ✅ Confirmation email sent");
+    if (error) {
+      throw new Error(`Resend API error: ${error.message}`);
+    }
+
+    console.log(`[RESEND] ✅ Confirmation email sent: ${data?.id}`);
 
     return { success: true };
   } catch (error) {
-    console.error("[SENDGRID] ❌ Confirmation email failed:", error.message);
+    console.error("[RESEND] ❌ Confirmation email failed:", error.message);
     throw error;
   }
 };
 
 export default {
-  sendPasswordResetEmailSendGrid,
-  sendPasswordResetConfirmationSendGrid,
+  sendPasswordResetEmailResend,
+  sendPasswordResetConfirmationResend,
 };

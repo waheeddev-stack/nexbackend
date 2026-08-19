@@ -11,7 +11,7 @@ A Node.js/Express backend server for NexKirana — a kirana (grocery) store mana
 - **Push Notifications:** Expo Push SDK & Firebase Cloud Messaging
 - **File Uploads:** Multer + Cloudinary
 - **Real-time:** Socket.IO
-- **Email:** Nodemailer / SendGrid
+- **Email:** Nodemailer / Resend
 - **Cron:** node-cron
 - **Testing:** Jest
 
@@ -68,7 +68,7 @@ npm run lint
 | `GOOGLE_CLIENT_ID` | No | — | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth client secret |
 | `GOOGLE_CALLBACK_URL` | No | — | Google OAuth redirect callback URL |
-| `SENDGRID_API_KEY` | No | — | SendGrid API key for emails |
+| `RESEND_API_KEY` | No | — | Resend API key for emails |
 | `SMTP_HOST` | No | — | SMTP host for nodemailer |
 | `SMTP_PORT` | No | `587` | SMTP port |
 | `SMTP_USER` | No | — | SMTP username |
@@ -640,8 +640,8 @@ Runs **daily at midnight** to purge database records and associated Cloudinary u
 | `config/cloudinary.js` | Cloudinary SDK initialization for image uploads |
 | `config/upload.js` | Multer configuration (memoryStorage, 10MB limit, image filter) |
 | `config/firebase.js` | Firebase Admin SDK for FCM (sendNotification, sendToTopic) |
-| `config/email.js` | Nodemailer/SendGrid email transport (used by password reset) |
-| `config/email.sendgrid.js` | SendGrid mail client initialization |
+| `config/email.js` | Nodemailer/Resend email transport (used by password reset) |
+| `config/email.resend.js` | Resend mail client initialization |
 | `config/inventory.db.bridge.js` | Inventory database bridge initialization |
 
 ---

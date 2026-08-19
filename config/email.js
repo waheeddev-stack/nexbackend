@@ -1,15 +1,15 @@
 import nodemailer from "nodemailer";
 
 import {
-  sendPasswordResetEmailSendGrid,
-  sendPasswordResetConfirmationSendGrid,
-} from "./email.sendgrid.js";
+  sendPasswordResetEmailResend,
+  sendPasswordResetConfirmationResend,
+} from "./email.resend.js";
 
 /**
- * Check if SendGrid is configured
+ * Check if Resend is configured
  */
-const isSendGridConfigured = () => {
-  return !!process.env.SENDGRID_API_KEY;
+const isResendConfigured = () => {
+  return !!process.env.RESEND_API_KEY;
 };
 
 /**
@@ -79,17 +79,17 @@ const createTransporter = () => {
 
 /**
  * Send password reset email
- * Uses SendGrid if configured (for production), falls back to Gmail SMTP (for local)
+ * Uses Resend if configured (for production), falls back to Gmail SMTP (for local)
  * @param {string} to - Recipient email
  * @param {string} resetToken - Password reset token
  * @param {string} userName - User's name
  * @returns {Promise<Object>} Email send result
  */
 export const sendPasswordResetEmail = async (to, resetToken, userName) => {
-  // Use SendGrid if configured (production on Render)
-  if (isSendGridConfigured()) {
-    console.log("[EMAIL] Using SendGrid for email delivery");
-    return await sendPasswordResetEmailSendGrid(to, resetToken, userName);
+  // Use Resend if configured (production on Render)
+  if (isResendConfigured()) {
+    console.log("[EMAIL] Using Resend for email delivery");
+    return await sendPasswordResetEmailResend(to, resetToken, userName);
   }
 
   // Fall back to Gmail SMTP (local development)
@@ -382,15 +382,15 @@ This email was sent to: ${to}
 
 /**
  * Send password reset confirmation email
- * Uses SendGrid if configured, falls back to Gmail SMTP
+ * Uses Resend if configured, falls back to Gmail SMTP
  * @param {string} to - Recipient email
  * @param {string} userName - User's name
  * @returns {Promise<Object>} Email send result
  */
 export const sendPasswordResetConfirmation = async (to, userName) => {
-  // Use SendGrid if configured
-  if (isSendGridConfigured()) {
-    return await sendPasswordResetConfirmationSendGrid(to, userName);
+  // Use Resend if configured
+  if (isResendConfigured()) {
+    return await sendPasswordResetConfirmationResend(to, userName);
   }
 
   // Fall back to Gmail SMTP
