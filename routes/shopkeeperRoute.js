@@ -17,6 +17,73 @@ import { createJWEToken } from "../utils/jweToken.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 import { generateBill } from "../utils/revenue.js";
 
+// Upload a buffer to Cloudinary (products folder) and resolve with the result.
+const uploadBufferToCloudinary = (buffer, folder = "products") =>
+  new Promise(async (resolve, reject) => {
+    try {
+      const streamifier = await import("streamifier");
+      const stream = cloudinary.uploader.upload_stream(
+        { folder },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+      streamifier.default.createReadStream(buffer).pipe(stream);
+    } catch (err) {
+      reject(err);
+    }
+  });
+
+// Collect product image URLs from a request.
+// Supports a legacy single `image` file and/or multiple `images` files, plus an
+// optional `imageUrls` JSON array of already-hosted URLs to keep (e.g. existing
+// images the client is preserving). `replaceImages=true` means the client wants
+// the final set to be exactly what is provided (used to clear all images).
+// Returns { images, image, provided } where `images` is null when nothing was
+// sent (so callers can preserve the existing value).
+async function collectProductImages(req) {
+  const files = [];
+  if (req.files?.images?.length) files.push(...req.files.images);
+  if (req.files?.image?.length) files.push(req.files.image[0]);
+
+  const uploaded = [];
+  for (const f of files) {
+    const result = await uploadBufferToCloudinary(f.buffer);
+    uploaded.push(result.secure_url);
+  }
+
+  // Already-hosted URLs the client wants to keep (existing images).
+  let keptUrls = [];
+  if (req.body.imageUrls) {
+    try {
+      const parsed =
+        typeof req.body.imageUrls === "string"
+          ? JSON.parse(req.body.imageUrls)
+          : req.body.imageUrls;
+      if (Array.isArray(parsed)) {
+        keptUrls = parsed.filter((u) => typeof u === "string");
+      }
+    } catch (_) {
+      /* ignore malformed */
+    }
+  } else if (typeof req.body.imageUrl === "string" && req.body.imageUrl) {
+    keptUrls = [req.body.imageUrl];
+  }
+
+  const forceReplace =
+    req.body.replaceImages === true || req.body.replaceImages === "true";
+  const provided = files.length > 0 || keptUrls.length > 0 || forceReplace;
+
+  if (!provided) {
+    return { images: null, image: undefined, provided: false };
+  }
+
+  const images = [...keptUrls, ...uploaded];
+  const image = images.length ? images[0] : null;
+  return { images, image, provided: true };
+}
+
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
   try {
@@ -1572,7 +1639,10 @@ shopkeeperRouter.post(
   verifyToken,
   verifyShopkeeperStatus,
   checkSubscriptionStatus,
-  upload.single("image"),
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "images", maxCount: 10 },
+  ]),
   async (req, res) => {
     try {
       const shop_id = req.user.id;
@@ -1624,32 +1694,22 @@ shopkeeperRouter.post(
         }
       }
 
-      // Handle optional image upload
+      // Handle optional image upload(s)
       let imageUrl = null;
-      if (req.file) {
-        try {
-          const streamifier = await import("streamifier");
-          const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              { folder: "products" },
-              (error, result) => {
-                if (error) return reject(error);
-                resolve(result);
-              }
-            );
-            streamifier.default.createReadStream(req.file.buffer).pipe(stream);
-          });
-          imageUrl = result.secure_url;
-        } catch (uploadErr) {
-          console.error("Product image upload error:", uploadErr);
-          return res
-            .status(500)
-            .json({ success: false, message: "Failed to upload image" });
-        }
+      let imagesArr = [];
+      try {
+        const collected = await collectProductImages(req);
+        imageUrl = collected.image || null;
+        imagesArr = collected.images || [];
+      } catch (uploadErr) {
+        console.error("Product image upload error:", uploadErr);
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to upload image" });
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, global_product_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
           name.trim(),
@@ -1662,6 +1722,7 @@ shopkeeperRouter.post(
           finalStock,
           finalBaselineQty,
           imageUrl,
+          JSON.stringify(imagesArr),
           req.body.global_product_id != null
             ? Number(req.body.global_product_id)
             : null,
@@ -1777,7 +1838,10 @@ shopkeeperRouter.put(
   verifyToken,
   verifyShopkeeperStatus,
   checkSubscriptionStatus,
-  upload.single("image"),
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "images", maxCount: 10 },
+  ]),
   async (req, res) => {
     try {
       const shop_id = req.user.id;
@@ -1802,28 +1866,24 @@ shopkeeperRouter.put(
           .status(404)
           .json({ success: false, message: "Product not found" });
 
-      // Handle optional image upload
+      // Handle optional image upload(s)
       let imageUrl = existing[0].image;
-      if (req.file) {
-        try {
-          const streamifier = await import("streamifier");
-          const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              { folder: "products" },
-              (error, result) => {
-                if (error) return reject(error);
-                resolve(result);
-              }
-            );
-            streamifier.default.createReadStream(req.file.buffer).pipe(stream);
-          });
-          imageUrl = result.secure_url;
-        } catch (uploadErr) {
-          console.error("Product image upload error:", uploadErr);
-          return res
-            .status(500)
-            .json({ success: false, message: "Failed to upload image" });
+      let imagesArr = existing[0].images
+        ? JSON.parse(existing[0].images || "[]")
+        : [];
+      let imagesProvided = false;
+      try {
+        const collected = await collectProductImages(req);
+        if (collected.provided) {
+          imageUrl = collected.image != null ? collected.image : existing[0].image;
+          imagesArr = collected.images || imagesArr;
+          imagesProvided = true;
         }
+      } catch (uploadErr) {
+        console.error("Product image upload error:", uploadErr);
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to upload image" });
       }
 
       const fields = [];
@@ -1918,6 +1978,11 @@ shopkeeperRouter.put(
       if (imageUrl !== existing[0].image) {
         fields.push("image = ?");
         values.push(imageUrl);
+      }
+
+      if (imagesProvided) {
+        fields.push("images = ?");
+        values.push(JSON.stringify(imagesArr));
       }
 
       if (fields.length === 0)
