@@ -9,7 +9,7 @@
 
 import express from "express";
 import verifyToken from "../middleware/auth.js";
-import { getInventoryDB } from "../config/inventory.db.bridge.js";
+import { executeQuery } from "../config/inventory.db.bridge.js";
 import {
   createInventoryProduct,
   updateInventoryStock,
@@ -17,6 +17,17 @@ import {
 } from "../utils/inventory.service.bridge.js";
 
 const router = express.Router();
+
+// Map a products-table row to the inventory product shape, normalizing
+// numeric fields (bigint columns can arrive as strings).
+const toInventoryProduct = (p) => ({
+  id: p.id,
+  name: p.name,
+  stock: Number(p.stock) || 0,
+  baselineQty: Number(p.baselineQty) || 0,
+  restockAt: p.restockAt || null,
+  needsRestock: Number(p.stock) === 0 && p.restockAt != null,
+});
 
 /**
  * POST /api/inventory-mgmt/create-product
@@ -133,11 +144,11 @@ router.get("/product/:id", verifyToken, async (req, res) => {
       product: {
         id: product.id,
         name: product.name,
-        stock: product.stock,
-        baselineQty: product.baselineQty,
-        restockAt: product.restockAt,
-        createdAt: product.createdAt,
-        updatedAt: product.updatedAt,
+        stock: Number(product.stock) || 0,
+        baselineQty: Number(product.baselineQty) || 0,
+        restockAt: product.restockAt || null,
+        createdAt: product.created_at,
+        updatedAt: product.updated_at,
       },
     });
   } catch (error) {
@@ -156,22 +167,22 @@ router.get("/product/:id", verifyToken, async (req, res) => {
  */
 router.get("/products", verifyToken, async (req, res) => {
   try {
-    const { models } = await getInventoryDB();
-    const products = await models.InventoryProduct.findAll({
-      order: [["createdAt", "DESC"]],
-    });
+    // ✅ FIX: the old code called a Sequelize `models.InventoryProduct` API
+    // that no longer exists (the bridge now exposes the raw mysql2 pool),
+    // which crashed with a TypeError. Query the shared products table instead.
+    const rows = await executeQuery(
+      `SELECT id, name, stock, baselineQty, restockAt
+       FROM products
+       ORDER BY created_at DESC
+       LIMIT 1000`
+    );
+
+    const products = rows.map(toInventoryProduct);
 
     res.json({
       success: true,
       count: products.length,
-      products: products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        stock: p.stock,
-        baselineQty: p.baselineQty,
-        restockAt: p.restockAt,
-        needsRestock: p.stock === 0 && p.restockAt !== null,
-      })),
+      products,
     });
   } catch (error) {
     console.error("❌ List products error:", error);
@@ -222,30 +233,26 @@ router.post("/restock/:id", verifyToken, async (req, res) => {
  */
 router.get("/low-stock", verifyToken, async (req, res) => {
   try {
-    const { models } = await getInventoryDB();
     const threshold = parseInt(req.query.threshold) || 10;
 
-    const products = await models.InventoryProduct.findAll({
-      where: {
-        stock: {
-          [models.InventoryProduct.sequelize.Sequelize.Op.lte]: threshold,
-        },
-      },
-      order: [["stock", "ASC"]],
-    });
+    // ✅ FIX: replaced the broken Sequelize `models.InventoryProduct` call
+    // with a direct query on the shared products table.
+    const rows = await executeQuery(
+      `SELECT id, name, stock, baselineQty, restockAt
+       FROM products
+       WHERE stock <= ?
+       ORDER BY stock ASC
+       LIMIT 1000`,
+      [threshold]
+    );
+
+    const products = rows.map(toInventoryProduct);
 
     res.json({
       success: true,
       threshold,
       count: products.length,
-      products: products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        stock: p.stock,
-        baselineQty: p.baselineQty,
-        restockAt: p.restockAt,
-        needsRestock: p.stock === 0 && p.restockAt !== null,
-      })),
+      products,
     });
   } catch (error) {
     console.error("❌ Low stock query error:", error);

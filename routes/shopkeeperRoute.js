@@ -18,22 +18,19 @@ import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 import { generateBill } from "../utils/revenue.js";
 
 // Upload a buffer to Cloudinary (products folder) and resolve with the result.
-const uploadBufferToCloudinary = (buffer, folder = "products") =>
-  new Promise(async (resolve, reject) => {
-    try {
-      const streamifier = await import("streamifier");
-      const stream = cloudinary.uploader.upload_stream(
-        { folder },
-        (error, result) => {
-          if (error) return reject(error);
-          resolve(result);
-        }
-      );
-      streamifier.default.createReadStream(buffer).pipe(stream);
-    } catch (err) {
-      reject(err);
-    }
+const uploadBufferToCloudinary = async (buffer, folder = "products") => {
+  const streamifier = await import("streamifier");
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    );
+    streamifier.default.createReadStream(buffer).pipe(stream);
   });
+};
 
 // Collect product image URLs from a request.
 // Supports a legacy single `image` file and/or multiple `images` files, plus an
@@ -64,7 +61,7 @@ async function collectProductImages(req) {
       if (Array.isArray(parsed)) {
         keptUrls = parsed.filter((u) => typeof u === "string");
       }
-    } catch (_) {
+    } catch {
       /* ignore malformed */
     }
   } else if (typeof req.body.imageUrl === "string" && req.body.imageUrl) {
@@ -1646,8 +1643,16 @@ shopkeeperRouter.post(
   async (req, res) => {
     try {
       const shop_id = req.user.id;
-      const { name, description, category, price, mrp, stock, baselineQty } =
-        req.body;
+      const {
+        name,
+        description,
+        category,
+        price,
+        mrp,
+        stock,
+        baselineQty,
+        barcode,
+      } = req.body;
 
       if (!name || price == null) {
         return res
@@ -1709,7 +1714,7 @@ shopkeeperRouter.post(
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
           name.trim(),
@@ -1726,6 +1731,10 @@ shopkeeperRouter.post(
           req.body.global_product_id != null
             ? Number(req.body.global_product_id)
             : null,
+          barcode != null && String(barcode).trim() !== ""
+            ? String(barcode).trim()
+            : null,
+          finalStock > 0 ? "IN STOCK" : "OUT OF STOCK",
         ]
       );
 
@@ -1808,13 +1817,18 @@ shopkeeperRouter.post(
     try {
       const shop_id = req.user.id;
 
+      // ✅ FIX: single atomic update. The previous version ran a second
+      // UPDATE with `stock < baselineQty` AFTER stock had already been set
+      // to baselineQty, so it matched zero rows and available_stock was
+      // never flipped back to 'IN STOCK'.
       const [result] = await pool.execute(
-        "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
-        [shop_id]
-      );
-
-      await pool.execute(
-        `UPDATE products SET available_stock = 'IN STOCK' WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty AND available_stock <> 'INVISIBLE'`,
+        `UPDATE products
+         SET stock = baselineQty,
+             available_stock = CASE
+               WHEN available_stock <> 'INVISIBLE' THEN 'IN STOCK'
+               ELSE available_stock
+             END
+         WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty`,
         [shop_id]
       );
 
@@ -1875,7 +1889,8 @@ shopkeeperRouter.put(
       try {
         const collected = await collectProductImages(req);
         if (collected.provided) {
-          imageUrl = collected.image != null ? collected.image : existing[0].image;
+          imageUrl =
+            collected.image != null ? collected.image : existing[0].image;
           imagesArr = collected.images || imagesArr;
           imagesProvided = true;
         }
@@ -1940,7 +1955,7 @@ shopkeeperRouter.put(
           });
         }
       }
-      if (stock != null && baselineQty == null) {
+      if (stock != null) {
         const s = Number(stock);
         if (Number.isNaN(s) || s < 0)
           return res
@@ -1950,7 +1965,9 @@ shopkeeperRouter.put(
         values.push(s);
       }
 
-      // ✅ FIX: Add baselineQty handling - also set stock to match baseline
+      // ✅ FIX: baselineQty handling. When stock is also provided (restock
+      // flow), apply both independently so the added quantity is not lost.
+      // Only sync stock to baseline when the caller did not send stock.
       if (baselineQty != null) {
         const b = Number(baselineQty);
         if (Number.isNaN(b) || b < 0)
@@ -1959,9 +1976,19 @@ shopkeeperRouter.put(
             .json({ success: false, message: "Invalid baseline quantity" });
         fields.push("baselineQty = ?");
         values.push(b);
-        // When baseline is set or updated, always sync stock to it as per user requirement
-        fields.push("stock = ?");
-        values.push(b);
+        if (stock == null) {
+          // Baseline-only update: keep stock in sync with the new baseline
+          fields.push("stock = ?");
+          values.push(b);
+        }
+      }
+      if (req.body.barcode !== undefined) {
+        fields.push("barcode = ?");
+        values.push(
+          req.body.barcode != null && String(req.body.barcode).trim() !== ""
+            ? String(req.body.barcode).trim()
+            : null
+        );
       }
       if (available_stock != null) {
         const validStatuses = ["IN STOCK", "OUT OF STOCK", "INVISIBLE"];
@@ -1998,10 +2025,10 @@ shopkeeperRouter.put(
 
       if (available_stock == null) {
         let resolvedStock = null;
-        if (baselineQty != null) {
-          resolvedStock = Number(baselineQty);
-        } else if (stock != null) {
+        if (stock != null) {
           resolvedStock = Number(stock);
+        } else if (baselineQty != null) {
+          resolvedStock = Number(baselineQty);
         }
 
         if (resolvedStock != null) {
@@ -3592,6 +3619,152 @@ shopkeeperRouter.post(
       return res
         .status(500)
         .json({ success: false, message: "Internal Server error" });
+    }
+  }
+);
+
+// ============================================================================
+// SHOPKEEPER NOTIFICATIONS
+// ============================================================================
+
+let ensureNotificationsTablePromise = null;
+const ensureNotificationsTable = () => {
+  if (!ensureNotificationsTablePromise) {
+    ensureNotificationsTablePromise = pool
+      .execute(
+        `CREATE TABLE IF NOT EXISTS shopkeeper_notifications (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          shopkeeper_id INT NOT NULL,
+          type VARCHAR(50) DEFAULT 'general',
+          title VARCHAR(255) NOT NULL,
+          body TEXT,
+          order_id INT NULL,
+          data JSON NULL,
+          is_read TINYINT(1) NOT NULL DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_shopkeeper_notif_shop (shopkeeper_id, is_read)
+        )`
+      )
+      .catch((err) => {
+        ensureNotificationsTablePromise = null;
+        throw err;
+      });
+  }
+  return ensureNotificationsTablePromise;
+};
+
+const safeJsonParse = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * GET /api/shopkeeper/notifications
+ * List notifications for the logged-in shopkeeper.
+ */
+shopkeeperRouter.get("/notifications", verifyToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.user.id;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 100);
+
+    await ensureNotificationsTable();
+
+    const [notifications] = await pool.execute(
+      `SELECT id, type, title, body, order_id, data, is_read, created_at
+       FROM shopkeeper_notifications
+       WHERE shopkeeper_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+      [shopkeeperId, limit]
+    );
+
+    const [unreadRows] = await pool.execute(
+      `SELECT COUNT(*) AS unreadCount
+       FROM shopkeeper_notifications
+       WHERE shopkeeper_id = ? AND is_read = 0`,
+      [shopkeeperId]
+    );
+
+    res.json({
+      success: true,
+      notifications: notifications.map((n) => ({
+        ...n,
+        data: typeof n.data === "string" ? safeJsonParse(n.data) : n.data || {},
+      })),
+      unreadCount: Number(unreadRows[0]?.unreadCount) || 0,
+    });
+  } catch (err) {
+    console.error("Get shopkeeper notifications error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load notifications" });
+  }
+});
+
+/**
+ * POST /api/shopkeeper/notifications/read
+ * Mark the given notification ids as read. Body: { ids: number[] }
+ */
+shopkeeperRouter.post("/notifications/read", verifyToken, async (req, res) => {
+  try {
+    const shopkeeperId = req.user.id;
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(Number).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+
+    if (ids.length === 0) {
+      return res.json({ success: true, updated: 0 });
+    }
+
+    await ensureNotificationsTable();
+
+    const placeholders = ids.map(() => "?").join(",");
+    const [result] = await pool.execute(
+      `UPDATE shopkeeper_notifications
+       SET is_read = 1
+       WHERE shopkeeper_id = ? AND id IN (${placeholders})`,
+      [shopkeeperId, ...ids]
+    );
+
+    res.json({ success: true, updated: result.affectedRows || 0 });
+  } catch (err) {
+    console.error("Mark notifications read error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to mark notifications read" });
+  }
+});
+
+/**
+ * POST /api/shopkeeper/notifications/read-all
+ * Mark all notifications as read for the logged-in shopkeeper.
+ */
+shopkeeperRouter.post(
+  "/notifications/read-all",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const shopkeeperId = req.user.id;
+
+      await ensureNotificationsTable();
+
+      const [result] = await pool.execute(
+        `UPDATE shopkeeper_notifications
+       SET is_read = 1
+       WHERE shopkeeper_id = ? AND is_read = 0`,
+        [shopkeeperId]
+      );
+
+      res.json({ success: true, updated: result.affectedRows || 0 });
+    } catch (err) {
+      console.error("Mark all notifications read error:", err);
+      res.status(500).json({
+        success: false,
+        message: "Failed to mark all notifications read",
+      });
     }
   }
 );

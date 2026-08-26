@@ -1631,6 +1631,128 @@ adminRouter.get("/earnings/summary", verifyAdminToken, async (req, res) => {
   }
 });
 
+// Lazy initialization of the billing_payments table so the earnings
+// management flow (history + record payment) works end-to-end.
+let ensureBillingPaymentsTablePromise = null;
+const ensureBillingPaymentsTable = () => {
+  if (!ensureBillingPaymentsTablePromise) {
+    ensureBillingPaymentsTablePromise = pool
+      .execute(
+        `CREATE TABLE IF NOT EXISTS billing_payments (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          shopkeeper_id INT NOT NULL,
+          amount DECIMAL(10,2) NOT NULL,
+          payment_method VARCHAR(50) DEFAULT 'manual',
+          transaction_id VARCHAR(255) NULL,
+          payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          status VARCHAR(20) DEFAULT 'approved',
+          notes TEXT NULL,
+          approved_by INT NULL,
+          approved_at TIMESTAMP NULL
+        )`
+      )
+      .catch((err) => {
+        ensureBillingPaymentsTablePromise = null;
+        throw err;
+      });
+  }
+  return ensureBillingPaymentsTablePromise;
+};
+
+// GET /api/admin/earnings/:shopkeeperId/history - Payment history for a shopkeeper
+adminRouter.get(
+  "/earnings/:shopkeeperId/history",
+  verifyAdminToken,
+  async (req, res) => {
+    try {
+      const shopkeeperId = Number(req.params.shopkeeperId);
+      if (!Number.isFinite(shopkeeperId) || shopkeeperId <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid shopkeeper id" });
+      }
+
+      await ensureBillingPaymentsTable();
+
+      const [history] = await pool.execute(
+        `SELECT id, shopkeeper_id, amount, payment_method, transaction_id,
+                payment_date, status, notes, approved_by, approved_at
+         FROM billing_payments
+         WHERE shopkeeper_id = ?
+         ORDER BY payment_date DESC
+         LIMIT 200`,
+        [shopkeeperId]
+      );
+
+      res.json({ success: true, history, data: history });
+    } catch (err) {
+      console.error("Get payment history error:", err);
+      res.json({ success: true, history: [], data: [] });
+    }
+  }
+);
+
+// POST /api/admin/earnings/:shopkeeperId/payment - Record a collected payment
+adminRouter.post(
+  "/earnings/:shopkeeperId/payment",
+  verifyAdminToken,
+  async (req, res) => {
+    try {
+      const shopkeeperId = Number(req.params.shopkeeperId);
+      if (!Number.isFinite(shopkeeperId) || shopkeeperId <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid shopkeeper id" });
+      }
+
+      const { amount, payment_method, transaction_id, notes } = req.body || {};
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "A positive amount is required" });
+      }
+
+      const [shops] = await pool.execute(
+        "SELECT id FROM shopkeepers WHERE id = ?",
+        [shopkeeperId]
+      );
+      if (shops.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Shopkeeper not found" });
+      }
+
+      await ensureBillingPaymentsTable();
+
+      const [result] = await pool.execute(
+        `INSERT INTO billing_payments
+           (shopkeeper_id, amount, payment_method, transaction_id, status, notes, approved_by, approved_at)
+         VALUES (?, ?, ?, ?, 'approved', ?, ?, NOW())`,
+        [
+          shopkeeperId,
+          parseFloat(parsedAmount.toFixed(2)),
+          payment_method || "manual",
+          transaction_id || null,
+          notes || null,
+          req.admin?.id || null,
+        ]
+      );
+
+      res.status(201).json({
+        success: true,
+        message: "Payment recorded successfully",
+        data: { id: result.insertId, shopkeeper_id: shopkeeperId },
+      });
+    } catch (err) {
+      console.error("Record payment error:", err);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to record payment" });
+    }
+  }
+);
+
 // Get admin by ID (protected) - keep this at the end
 adminRouter.get("/:id", verifyAdminToken, async (req, res) => {
   try {

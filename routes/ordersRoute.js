@@ -1740,6 +1740,100 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
 });
 
 // ============================================================================
+// ORDER RATING
+// ============================================================================
+
+let ensureRatingsTablePromise = null;
+const ensureRatingsTable = () => {
+  if (!ensureRatingsTablePromise) {
+    ensureRatingsTablePromise = pool
+      .execute(
+        `CREATE TABLE IF NOT EXISTS order_ratings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          order_id INT NOT NULL UNIQUE,
+          user_id INT NOT NULL,
+          rating TINYINT NOT NULL,
+          review TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )`
+      )
+      .catch((err) => {
+        ensureRatingsTablePromise = null;
+        throw err;
+      });
+  }
+  return ensureRatingsTablePromise;
+};
+
+/**
+ * POST /api/orders/:orderId/rate
+ * Rate an order (1-5 stars with optional review text).
+ */
+router.post("/:orderId/rate", verifyToken, async (req, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (Number.isNaN(orderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
+    }
+
+    const { rating, review } = req.body || {};
+    const parsedRating = Number(rating);
+    if (
+      !Number.isInteger(parsedRating) ||
+      parsedRating < 1 ||
+      parsedRating > 5
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be an integer between 1 and 5",
+      });
+    }
+
+    const [orders] = await pool.execute(
+      "SELECT id, user_id FROM orders WHERE id = ?",
+      [orderId]
+    );
+    if (orders.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+    }
+    if (String(orders[0].user_id) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only rate your own orders",
+      });
+    }
+
+    await ensureRatingsTable();
+
+    const [existing] = await pool.execute(
+      "SELECT id FROM order_ratings WHERE order_id = ?",
+      [orderId]
+    );
+    if (existing.length > 0) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Order already rated" });
+    }
+
+    await pool.execute(
+      "INSERT INTO order_ratings (order_id, user_id, rating, review) VALUES (?, ?, ?, ?)",
+      [orderId, req.user.id, parsedRating, (review || "").trim() || null]
+    );
+
+    res.json({ success: true, message: "Rating submitted successfully" });
+  } catch (error) {
+    console.error("Order rating error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to submit rating" });
+  }
+});
+
+// ============================================================================
 // LEGACY ROUTES (Keep for backward compatibility)
 // ============================================================================
 

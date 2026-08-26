@@ -20,6 +20,7 @@ import recommendationRouter from "./routes/recommendationRoute.js";
 import shoppingListRouter from "./routes/shoppingListRoute.js";
 import supportTicketRouter from "./routes/supportTicketRoute.js";
 import shopResolveRoute from "./routes/shopResolveRoute.js";
+import storesRouter from "./routes/storesRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -504,6 +505,7 @@ app.use("/api/shopping-list", shoppingListRouter);
 app.use("/api/inventory-mgmt", inventoryMgmtRouter);
 app.use("/api/navigation", navigationRouter);
 app.use("/api/shops", shopResolveRoute);
+app.use("/api/stores", storesRouter);
 app.use("/api/shopkeeper", supportTicketRouter);
 
 // 404 handler for unmatched routes (MUST be last)

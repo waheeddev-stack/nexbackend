@@ -212,7 +212,7 @@ export async function getInventoryProduct(productId) {
     const connection = await pool.getConnection();
     try {
       const [products] = await connection.execute(
-        "SELECT id, name, stock, baselineQty, restockAt FROM products WHERE id = ?",
+        "SELECT id, name, stock, baselineQty, restockAt, created_at, updated_at FROM products WHERE id = ?",
         [productId]
       );
       return products.length > 0 ? products[0] : null;
@@ -230,7 +230,7 @@ export async function createInventoryProduct(productData) {
     const connection = await pool.getConnection();
     try {
       const [result] = await connection.execute(
-        "INSERT INTO products (name, stock, baselineQty, restockAt, createdAt, updatedAt) VALUES (?, ?, ?, NULL, NOW(), NOW())",
+        "INSERT INTO products (name, stock, baselineQty, restockAt, created_at, updated_at) VALUES (?, ?, ?, NULL, NOW(), NOW())",
         [
           productData.name,
           productData.stock || 0,

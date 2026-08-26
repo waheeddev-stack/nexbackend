@@ -121,6 +121,74 @@ inventoryRouter.get("/by-available-stock", verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/inventory/barcode/:barcode - Lookup a shop product by barcode
+inventoryRouter.get("/barcode/:barcode", verifyToken, async (req, res) => {
+  try {
+    const { barcode } = req.params;
+    const shopId = req.query.shop_id || req.user?.id || req.shopkeeper?.id;
+
+    if (!barcode) {
+      return res.status(400).json({
+        success: false,
+        message: "Barcode is required",
+      });
+    }
+
+    if (!shopId) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop ID is required",
+      });
+    }
+
+    let products = [];
+    try {
+      const [rows] = await db.query(
+        "SELECT * FROM products WHERE barcode = ? AND shop_id = ? LIMIT 1",
+        [barcode, shopId]
+      );
+      products = rows;
+    } catch (dbError) {
+      // Barcode column may not exist yet on this schema - treat as no match
+      // so the client falls back to manual product entry.
+      if (
+        dbError.code === "ER_BAD_FIELD_ERROR" ||
+        /unknown column/i.test(dbError.message || "")
+      ) {
+        return res.json({
+          success: true,
+          product: null,
+          source: "no_barcode_support",
+          message: "Barcode column not available",
+        });
+      }
+      throw dbError;
+    }
+
+    if (products.length === 0) {
+      return res.json({
+        success: true,
+        product: null,
+        source: "not_found",
+        message: "No shop product matches this barcode",
+      });
+    }
+
+    res.json({
+      success: true,
+      product: products[0],
+      source: "shop_product",
+    });
+  } catch (error) {
+    console.error("Barcode lookup error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+});
+
 // GET /api/inventory/history/:productId - Get inventory history for a product
 inventoryRouter.get("/history/:productId", verifyToken, async (req, res) => {
   try {
@@ -154,12 +222,22 @@ inventoryRouter.get("/history/:productId", verifyToken, async (req, res) => {
 // POST /api/inventory/restock - Restock a product
 inventoryRouter.post("/restock", verifyToken, async (req, res) => {
   try {
-    const { barcode, quantity, shop_id } = req.body;
+    const { barcode, quantity } = req.body;
+    // ✅ FIX: derive shop from the authenticated token instead of trusting
+    // the client body (prevents restocking another shop's products).
+    const shop_id = req.user?.id || req.shopkeeper?.id;
 
     if (!barcode || !quantity) {
       return res.status(400).json({
         success: false,
         message: "Barcode and quantity are required",
+      });
+    }
+
+    if (!shop_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Shop ID could not be determined from token",
       });
     }
 
