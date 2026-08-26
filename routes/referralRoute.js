@@ -1,79 +1,100 @@
-import express from "express"
+import express from "express";
 import { customAlphabet } from "nanoid";
 import verifyToken from "../middleware/auth.js";
 import pool from "../config/db.js";
 
 function generatereferralCode(name) {
-    const prefix = name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, "X")
-    const generateSuffix = customAlphabet("ABCDEFGHIJKLMNPQRSTUVWXYZ123456789", 5)
-    return `${prefix}${generateSuffix()}`
+  const prefix = name
+    .substring(0, 3)
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "X");
+  const generateSuffix = customAlphabet(
+    "ABCDEFGHIJKLMNPQRSTUVWXYZ123456789",
+    5
+  );
+  return `${prefix}${generateSuffix()}`;
 }
 
-async function grantReferralReward(referralCode, referedId) {
-    const connection = await pool.getConnection()
-    try {
-        await connection.beginTransaction()
+export async function grantReferralReward(referralCode, referedId) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
 
-        // 1. Look up the referrer from the referral code
-        const [codeRows] = await connection.execute(
-            "SELECT id FROM users WHERE referralcode = ?",
-            [referralCode]
-        )
+    // 1. Look up the referrer from the referral code
+    const [codeRows] = await connection.execute(
+      "SELECT id FROM users WHERE referralcode = ?",
+      [referralCode]
+    );
 
-        if (codeRows.length === 0) {
-            await connection.rollback()
-            return { success: false, status: 404, message: "Invalid referral code" }
-        }
-
-        const referrerid = codeRows[0].id
-
-        // Prevent self-referral
-        if (String(referrerid) === String(referedId)) {
-            await connection.rollback()
-            return { success: false, status: 400, message: "You cannot use your own referral code" }
-        }
-
-        // 2. Check if this referred user has already been rewarded before
-        const [existing] = await connection.execute(
-            "SELECT id FROM refer_transaction WHERE referedid = ?",
-            [referedId]
-        )
-
-        if (existing.length !== 0) {
-            await connection.rollback()
-            return { success: false, status: 403, message: "This user has already been referred" }
-        }
-
-        // 3. Record the referral transaction
-        await connection.execute(
-            "INSERT INTO refer_transaction(refererid, referedid, refered_at) VALUES (?, ?, NOW())",
-            [referrerid, referedId]
-        )
-
-        // 4. Grant credits to both wallets
-        await connection.execute(
-            "UPDATE users SET wallet = COALESCE(wallet,0) + 40 WHERE id = ?",
-            [referrerid]
-        )
-        await connection.execute(
-            "UPDATE users SET wallet = COALESCE(wallet,0) + 80 WHERE id = ?",
-            [referedId]
-        )
-
-        await connection.commit()
-        return { success: true, status: 200, message: "Referral reward granted successfully" }
-
-    } catch (error) {
-        await connection.rollback()
-        if (error.errno === 1062) {
-            // Unique constraint on referedid caught a race — someone else's request beat us to it
-            return { success: false, status: 403, message: "This user has already been referred" }
-        }
-        console.log("Error occurred while granting referral reward: " + error)
-        return { success: false, status: 500, message: "Internal Server error" }
-    } finally {
-        connection.release()
+    if (codeRows.length === 0) {
+      await connection.rollback();
+      return { success: false, status: 404, message: "Invalid referral code" };
     }
+
+    const referrerid = codeRows[0].id;
+
+    // Prevent self-referral
+    if (String(referrerid) === String(referedId)) {
+      await connection.rollback();
+      return {
+        success: false,
+        status: 400,
+        message: "You cannot use your own referral code",
+      };
+    }
+
+    // 2. Check if this referred user has already been rewarded before
+    const [existing] = await connection.execute(
+      "SELECT id FROM refer_transaction WHERE referedid = ?",
+      [referedId]
+    );
+
+    if (existing.length !== 0) {
+      await connection.rollback();
+      return {
+        success: false,
+        status: 403,
+        message: "This user has already been referred",
+      };
+    }
+
+    // 3. Record the referral transaction
+    await connection.execute(
+      "INSERT INTO refer_transaction(refererid, referedid, refered_at) VALUES (?, ?, NOW())",
+      [referrerid, referedId]
+    );
+
+    // 4. Grant credits to both wallets
+    await connection.execute(
+      "UPDATE users SET wallet = COALESCE(wallet,0) + 40 WHERE id = ?",
+      [referrerid]
+    );
+    await connection.execute(
+      "UPDATE users SET wallet = COALESCE(wallet,0) + 80 WHERE id = ?",
+      [referedId]
+    );
+
+    await connection.commit();
+    return {
+      success: true,
+      status: 200,
+      message: "Referral reward granted successfully",
+    };
+  } catch (error) {
+    await connection.rollback();
+    if (error.errno === 1062) {
+      // Unique constraint on referedid caught a race — someone else's request beat us to it
+      return {
+        success: false,
+        status: 403,
+        message: "This user has already been referred",
+      };
+    }
+    console.log("Error occurred while granting referral reward: " + error);
+    return { success: false, status: 500, message: "Internal Server error" };
+  } finally {
+    connection.release();
+  }
 }
 
 /**
@@ -83,20 +104,29 @@ async function grantReferralReward(referralCode, referedId) {
  * @returns {Promise<{success: boolean, status: number, message: string, code?: string}>}
  */
 async function getreferralCodeForUser(userId) {
-    if (!userId) {
-        return { success: false, status: 401, message: "Authentication required" }
-    }
+  if (!userId) {
+    return { success: false, status: 401, message: "Authentication required" };
+  }
 
-    const [rows] = await pool.execute(
-        "SELECT referralcode FROM users WHERE id = ?",
-        [userId]
-    )
+  const [rows] = await pool.execute(
+    "SELECT referralcode FROM users WHERE id = ?",
+    [userId]
+  );
 
-    if (rows.length === 0 || rows[0].referralcode === null) {
-        return { success: false, status: 404, message: "No referral code found for this user" }
-    }
+  if (rows.length === 0 || rows[0].referralcode === null) {
+    return {
+      success: false,
+      status: 404,
+      message: "No referral code found for this user",
+    };
+  }
 
-    return { success: true, status: 200, message: "Referral code fetched", code: rows[0].referralcode }
+  return {
+    success: true,
+    status: 200,
+    message: "Referral code fetched",
+    code: rows[0].referralcode,
+  };
 }
 
 // ===================================
@@ -106,20 +136,18 @@ async function getreferralCodeForUser(userId) {
 const referralRouter = express.Router();
 
 // GET "api/refer/getreferralCode" = gets the referral code of the user
-referralRouter.get(
-    "/getreferralCode",
-    verifyToken,
-    async (req, res) => {
-        try {
-            const userId = req.user?.id
-            const result = await getreferralCodeForUser(userId)
-            return res.status(result.status).json(result)
-        } catch (error) {
-            console.log("Error occurred at getreferralCode route: " + error)
-            return res.status(500).json({ success: false, message: "Internal Server error" })
-        }
-    }
-)
+referralRouter.get("/getreferralCode", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const result = await getreferralCodeForUser(userId);
+    return res.status(result.status).json(result);
+  } catch (error) {
+    console.log("Error occurred at getreferralCode route: " + error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server error" });
+  }
+});
 
 // POST "/api/refer/claimReward" = Grants the reward in the wallet
 // referralRouter.post(
@@ -149,4 +177,4 @@ referralRouter.get(
 
 export { generatereferralCode };
 
-export default referralRouter
+export default referralRouter;

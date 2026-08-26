@@ -8,10 +8,20 @@ const ticketRouter = express.Router();
 // POST /api/shopkeeper/support-ticket
 ticketRouter.post("/support-ticket", verifyToken, async (req, res) => {
   try {
-    const { shopkeeper_id, full_name, email, subject, category, message } = req.body;
+    const { shopkeeper_id, full_name, email, subject, category, message } =
+      req.body;
 
-    if (!shopkeeper_id || !full_name || !email || !subject || !category || !message) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
+    if (
+      !shopkeeper_id ||
+      !full_name ||
+      !email ||
+      !subject ||
+      !category ||
+      !message
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
     }
 
     const [result] = await pool.execute(
@@ -54,10 +64,15 @@ ticketRouter.put("/support-ticket/:ticketId", verifyToken, async (req, res) => {
     const { status } = req.body;
     const { ticketId } = req.params;
 
-    const [tickets] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [ticketId]);
+    const [tickets] = await pool.execute(
+      "SELECT * FROM support_tickets WHERE id = ?",
+      [ticketId]
+    );
 
     if (tickets.length === 0) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Ticket not found" });
     }
 
     if (tickets[0].shopkeeper_id !== req.user.id) {
@@ -65,12 +80,20 @@ ticketRouter.put("/support-ticket/:ticketId", verifyToken, async (req, res) => {
     }
 
     if (status !== "closed") {
-      return res.status(403).json({ success: false, message: "Shopkeeper can only close tickets" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Shopkeeper can only close tickets" });
     }
 
-    await pool.execute("UPDATE support_tickets SET status = 'closed' WHERE id = ?", [ticketId]);
+    await pool.execute(
+      "UPDATE support_tickets SET status = 'closed' WHERE id = ?",
+      [ticketId]
+    );
 
-    const [updated] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [ticketId]);
+    const [updated] = await pool.execute(
+      "SELECT * FROM support_tickets WHERE id = ?",
+      [ticketId]
+    );
 
     res.json({ success: true, message: "Ticket closed", data: updated[0] });
   } catch (err) {

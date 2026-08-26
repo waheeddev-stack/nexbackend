@@ -1,11 +1,11 @@
 /**
  * Order Placement Caching Service
- * 
+ *
  * Implements in-memory caching for frequently accessed data during order placement.
  * Reduces database queries and improves response time.
- * 
+ *
  * Performance Impact: ~50-100ms reduction
- * 
+ *
  * Cache Strategy:
  * - Shopkeeper status: 5-10 minute TTL
  * - Product details: 15-30 minute TTL
@@ -370,7 +370,9 @@ export function clearCacheByPattern(pattern) {
     }
   }
 
-  console.log(`🗑️ Cleared ${cleared} cache entries matching pattern: ${pattern}`);
+  console.log(
+    `🗑️ Cleared ${cleared} cache entries matching pattern: ${pattern}`
+  );
   return cleared;
 }
 
@@ -378,4 +380,3 @@ export function clearCacheByPattern(pattern) {
  * Export cache instance for advanced usage
  */
 export { orderCache };
-

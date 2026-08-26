@@ -1,9 +1,9 @@
 /**
  * Order Batch Operations Service
- * 
+ *
  * Optimizes database operations by batching multiple queries into single operations.
  * Reduces database round-trips and improves order placement performance.
- * 
+ *
  * Performance Impact: ~100-150ms reduction
  */
 
@@ -16,7 +16,7 @@ import pool from "../config/db.js";
 /**
  * Validate multiple products in a single query with stock check
  * CRITICAL: Must run in transaction with row-level locking
- * 
+ *
  * Replaces: validateStockAvailability (now batched)
  * Performance: 1 query instead of N queries
  */
@@ -84,7 +84,7 @@ export async function batchValidateProductsAndStock(
 /**
  * Batch create order items with single multi-row insert
  * CRITICAL: Must run in transaction
- * 
+ *
  * Replaces: createOrderItems (now batched)
  * Performance: 1 query instead of N queries
  */
@@ -138,7 +138,7 @@ export async function batchCreateOrderItems(connection, orderId, items) {
 /**
  * Batch reduce stock for all products in single query
  * CRITICAL: Must run in transaction
- * 
+ *
  * Replaces: Individual stock updates in createOrderItems
  * Performance: 1 query instead of N queries
  */
@@ -181,7 +181,7 @@ export async function batchReduceStock(connection, items) {
 /**
  * Batch fetch user and shopkeeper details
  * Can run in parallel after order commit
- * 
+ *
  * Performance: 2 queries instead of N queries
  */
 export async function batchFetchUserAndShopDetails(userId, shopkeeperId) {
@@ -210,7 +210,7 @@ export async function batchFetchUserAndShopDetails(userId, shopkeeperId) {
 /**
  * Batch fetch product details for multiple products
  * Can run in parallel after order commit
- * 
+ *
  * Performance: 1 query instead of N queries
  */
 export async function batchFetchProductDetails(productIds) {
@@ -234,14 +234,18 @@ export async function batchFetchProductDetails(productIds) {
 /**
  * Batch update user points and credits
  * Can run in parallel after order commit
- * 
+ *
  * Performance: 1 query instead of 2 queries
  */
-export async function batchUpdateUserPoints(userId, pointsToAward, pointsToDeduct = 0) {
+export async function batchUpdateUserPoints(
+  userId,
+  pointsToAward,
+  pointsToDeduct = 0
+) {
   const conn = await pool.getConnection();
   try {
     const netChange = pointsToAward - pointsToDeduct;
-    
+
     await conn.execute(
       `UPDATE users 
        SET store_credits = COALESCE(store_credits, 0) + ?
@@ -258,7 +262,7 @@ export async function batchUpdateUserPoints(userId, pointsToAward, pointsToDeduc
 /**
  * Batch validate multiple shopkeepers
  * Useful for multi-shop orders
- * 
+ *
  * Performance: 1 query instead of N queries
  */
 export async function batchValidateShopkeepers(shopkeeperIds, connection) {
@@ -318,7 +322,7 @@ export async function batchValidateShopkeepers(shopkeeperIds, connection) {
 /**
  * Batch send notifications to multiple recipients
  * Can run in parallel after order commit
- * 
+ *
  * Performance: Parallel execution instead of sequential
  */
 export async function batchSendNotifications(notifications) {
@@ -326,9 +330,8 @@ export async function batchSendNotifications(notifications) {
     return [];
   }
 
-  const { sendExpoPush, sendFCMPush, isFCMToken } = await import(
-    "./expoPush.js"
-  );
+  const { sendExpoPush, sendFCMPush, isFCMToken } =
+    await import("./expoPush.js");
 
   const results = await Promise.allSettled(
     notifications.map(async (notif) => {
@@ -362,7 +365,7 @@ export async function batchSendNotifications(notifications) {
 /**
  * Batch log multiple analytics events
  * Can run in parallel after order commit
- * 
+ *
  * Performance: Single batch operation instead of individual logs
  */
 export async function batchLogAnalytics(events) {
@@ -389,4 +392,3 @@ export async function batchLogAnalytics(events) {
     return { success: false, error: error.message };
   }
 }
-

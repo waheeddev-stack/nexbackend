@@ -64,7 +64,7 @@ router.post("/google/users", async (req, res) => {
     let googleUser;
     try {
       googleUser = await verifyGoogleToken(idToken);
-    } catch (e) {
+    } catch {
       return res.status(401).json({
         success: false,
         message: "Invalid Google token",
@@ -72,9 +72,10 @@ router.post("/google/users", async (req, res) => {
     }
 
     // Check if user exists with this Google ID
-    let [users] = await pool.execute("SELECT * FROM users WHERE google_id = ?", [
-      googleUser.googleId,
-    ]);
+    let [users] = await pool.execute(
+      "SELECT * FROM users WHERE google_id = ?",
+      [googleUser.googleId]
+    );
 
     console.log("🔍 Checking for existing Google user:", {
       googleId: googleUser.googleId,
@@ -144,9 +145,9 @@ router.post("/google/users", async (req, res) => {
           : 9999999999;
         console.log("🆔 Next Google user ID will be:", nextGoogleUserId);
 
-        const MAX_ATTEMPTS = 5
-        let referralcode = ""
-        let result = []
+        const MAX_ATTEMPTS = 5;
+        let referralcode = "";
+        let result = [];
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
           referralcode = generatereferralCode(googleUser.name);
           try {
@@ -161,22 +162,23 @@ router.post("/google/users", async (req, res) => {
                 googleUser.googleId,
                 googleUser.picture || null,
                 expoPushToken || null,
-                referralcode
+                referralcode,
               ]
             );
             break;
           } catch (error) {
             if (error.errno === 1062) {
-              continue
+              continue;
             }
-            console.log("New referral code couldn't be added: " + error)
+            console.log("New referral code couldn't be added: " + error);
           }
         }
 
-        if (!(result) || (result.length === 0)) {
+        if (!result || result.length === 0) {
           return res.status(500).json({
             success: false,
-            message: "Failed to generate a unique referral code. Please try again.",
+            message:
+              "Failed to generate a unique referral code. Please try again.",
           });
         }
         console.log("✅ INSERT result:", result);
@@ -233,7 +235,7 @@ router.post("/google/users", async (req, res) => {
         latitude: user.latitude,
         longitude: user.longitude,
         referralcode: user.referralcode,
-        wallet: user.wallet
+        wallet: user.wallet,
       },
       accessToken,
       refreshToken,
@@ -267,7 +269,7 @@ router.post("/google/shopkeepers", async (req, res) => {
     let googleUser;
     try {
       googleUser = await verifyGoogleToken(idToken);
-    } catch (e) {
+    } catch {
       return res.status(401).json({
         success: false,
         message: "Invalid Google token",
@@ -346,10 +348,10 @@ router.post("/google/shopkeepers", async (req, res) => {
     );
 
     // Save refresh token
-    await pool.execute("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
-      refreshToken,
-      shopkeeper.id,
-    ]);
+    await pool.execute(
+      "UPDATE shopkeepers SET refresh_token = ? WHERE id = ?",
+      [refreshToken, shopkeeper.id]
+    );
 
     // Return shopkeeper data and tokens
     res.json({
@@ -408,7 +410,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     let googleUser;
     try {
       googleUser = await verifyGoogleToken(idToken);
-    } catch (error) {
+    } catch {
       return res.status(401).json({
         success: false,
         message: "Invalid Google token",
@@ -435,7 +437,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     const nextId = maxIdResult[0].max_id + 1;
 
     // Create new shopkeeper
-    const [result] = await pool.execute(
+    await pool.execute(
       `INSERT INTO shopkeepers 
        (id, name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -480,10 +482,10 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     );
 
     // Save refresh token
-    await pool.execute("UPDATE shopkeepers SET refresh_token = ? WHERE id = ?", [
-      refreshToken,
-      shopkeeper.id,
-    ]);
+    await pool.execute(
+      "UPDATE shopkeepers SET refresh_token = ? WHERE id = ?",
+      [refreshToken, shopkeeper.id]
+    );
 
     console.log(`Google Sign-Up: New shopkeeper created ${shopkeeper.email}`);
 

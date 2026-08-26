@@ -38,7 +38,8 @@ router.get("/nearby", async (req, res) => {
   if (!lat || !lng) {
     return res.status(400).json({
       success: false,
-      message: "Latitude (lat) and Longitude (lng) are required query parameters.",
+      message:
+        "Latitude (lat) and Longitude (lng) are required query parameters.",
     });
   }
 
@@ -92,7 +93,10 @@ router.get("/nearby", async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("❌ Error fetching nearby shops from database:", error.message || error);
+    console.error(
+      "❌ Error fetching nearby shops from database:",
+      error.message || error
+    );
     return res.status(500).json({
       success: false,
       message: "Failed to fetch nearby shops",
@@ -109,7 +113,8 @@ router.get("/directions", async (req, res) => {
     if (!startLat || !startLng || !destLat || !destLng) {
       return res.status(400).json({
         success: false,
-        message: "startLat, startLng, destLat, and destLng are required query parameters.",
+        message:
+          "startLat, startLng, destLat, and destLng are required query parameters.",
       });
     }
 
@@ -153,7 +158,10 @@ router.get("/directions", async (req, res) => {
         });
       }
     } catch (fetchErr) {
-      console.warn("⚠️ OSRM API unreachable, generating fallback interpolated route:", fetchErr.message);
+      console.warn(
+        "⚠️ OSRM API unreachable, generating fallback interpolated route:",
+        fetchErr.message
+      );
     }
 
     // Fallback mathematical interpolation routing
@@ -165,7 +173,9 @@ router.get("/directions", async (req, res) => {
       // Add slight curvature to simulate road geometry
       const curveOffset = Math.sin(fraction * Math.PI) * 0.002;
       polyline.push({
-        latitude: parseFloat((sLat + (dLat - sLat) * fraction + curveOffset).toFixed(6)),
+        latitude: parseFloat(
+          (sLat + (dLat - sLat) * fraction + curveOffset).toFixed(6)
+        ),
         longitude: parseFloat((sLng + (dLng - sLng) * fraction).toFixed(6)),
       });
     }
@@ -177,8 +187,14 @@ router.get("/directions", async (req, res) => {
       durationMins: Math.max(5, Math.round(10 + directDistKm * 3)),
       polyline,
       steps: [
-        { instruction: "Head towards destination along main corridor", distanceMeters: directDistKm * 1000 },
-        { instruction: "Arrive at destination store/customer", distanceMeters: 0 },
+        {
+          instruction: "Head towards destination along main corridor",
+          distanceMeters: directDistKm * 1000,
+        },
+        {
+          instruction: "Arrive at destination store/customer",
+          distanceMeters: 0,
+        },
       ],
       timestamp: new Date().toISOString(),
     });
@@ -197,13 +213,17 @@ router.get("/geocode", async (req, res) => {
   try {
     const { lat, lng } = req.query;
     if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: "lat and lng required." });
+      return res
+        .status(400)
+        .json({ success: false, message: "lat and lng required." });
     }
 
     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
     try {
       const resp = await fetch(nominatimUrl, {
-        headers: { "User-Agent": "NexKirana-Backend-App/1.0 (contact@nexkirana.com)" },
+        headers: {
+          "User-Agent": "NexKirana-Backend-App/1.0 (contact@nexkirana.com)",
+        },
       });
       const data = await resp.json();
       if (data && data.display_name) {
@@ -214,7 +234,10 @@ router.get("/geocode", async (req, res) => {
         });
       }
     } catch (err) {
-      console.warn("⚠️ Geocoding API failed, returning fallback formatted address:", err.message);
+      console.warn(
+        "⚠️ Geocoding API failed, returning fallback formatted address:",
+        err.message
+      );
     }
 
     return res.status(200).json({
@@ -223,7 +246,11 @@ router.get("/geocode", async (req, res) => {
       fallback: true,
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: "Geocoding error", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Geocoding error",
+      error: error.message,
+    });
   }
 });
 
@@ -240,7 +267,7 @@ router.post("/track", trackingRateLimiter, verifyToken, async (req, res) => {
         message: "orderId, latitude, and longitude are required in body.",
       });
     }
-    
+
     if (role !== "admin") {
       try {
         const [orders] = await pool.execute(
@@ -250,12 +277,16 @@ router.post("/track", trackingRateLimiter, verifyToken, async (req, res) => {
         if (orders.length === 0) {
           return res.status(403).json({
             success: false,
-            message: "Unauthorized: You are not authorized to track this order.",
+            message:
+              "Unauthorized: You are not authorized to track this order.",
           });
         }
       } catch (dbError) {
         // Fallback if DB check fails (e.g. table not initialized)
-        console.warn("⚠️ Order authorization check failed, proceeding with warning:", dbError.message);
+        console.warn(
+          "⚠️ Order authorization check failed, proceeding with warning:",
+          dbError.message
+        );
       }
     }
 
@@ -282,48 +313,62 @@ router.post("/track", trackingRateLimiter, verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Error broadcasting track location:", error);
-    return res.status(500).json({ success: false, message: "Tracking broadcast failed", error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "Tracking broadcast failed",
+      error: error.message,
+    });
   }
 });
 
 // 5. GET /api/navigation/order/:orderId - Fetch order route data for live tracking
-router.get("/order/:orderId", trackingRateLimiter, verifyToken, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const userId = req.user?.id;
-    const role = req.user?.role;
+router.get(
+  "/order/:orderId",
+  trackingRateLimiter,
+  verifyToken,
+  async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const userId = req.user?.id;
+      const role = req.user?.role;
 
-    if (!orderId) {
-      return res.status(400).json({
-        success: false,
-        message: "Order ID is required.",
-      });
-    }
-    
-    if (role !== "admin") {
-      try {
-        const [orders] = await pool.execute(
-          "SELECT id, user_id, shopkeeper_id FROM orders WHERE id = ?",
-          [orderId]
-        );
-        if (orders.length === 0) {
-          return res.status(404).json({ success: false, message: "Order not found." });
-        }
-        
-        const order = orders[0];
-        if (order.user_id !== userId && order.shopkeeper_id !== userId) {
-          return res.status(403).json({
-            success: false,
-            message: "Unauthorized: You are not authorized to view this order tracking.",
-          });
-        }
-      } catch (dbError) {
-        console.warn("⚠️ Order authorization check failed, proceeding with warning:", dbError.message);
+      if (!orderId) {
+        return res.status(400).json({
+          success: false,
+          message: "Order ID is required.",
+        });
       }
-    }
 
-    const [orderDetails] = await pool.execute(
-      `SELECT 
+      if (role !== "admin") {
+        try {
+          const [orders] = await pool.execute(
+            "SELECT id, user_id, shopkeeper_id FROM orders WHERE id = ?",
+            [orderId]
+          );
+          if (orders.length === 0) {
+            return res
+              .status(404)
+              .json({ success: false, message: "Order not found." });
+          }
+
+          const order = orders[0];
+          if (order.user_id !== userId && order.shopkeeper_id !== userId) {
+            return res.status(403).json({
+              success: false,
+              message:
+                "Unauthorized: You are not authorized to view this order tracking.",
+            });
+          }
+        } catch (dbError) {
+          console.warn(
+            "⚠️ Order authorization check failed, proceeding with warning:",
+            dbError.message
+          );
+        }
+      }
+
+      const [orderDetails] = await pool.execute(
+        `SELECT 
         o.id as order_id,
         u.latitude as customer_lat, u.longitude as customer_lng,
         s.latitude as shop_lat, s.longitude as shop_lng
@@ -331,80 +376,93 @@ router.get("/order/:orderId", trackingRateLimiter, verifyToken, async (req, res)
        JOIN users u ON o.user_id = u.id
        JOIN shopkeepers s ON o.shopkeeper_id = s.id
        WHERE o.id = ?`,
-      [orderId]
-    );
+        [orderId]
+      );
 
-    if (orderDetails.length === 0) {
-      return res.status(404).json({ success: false, message: "Order data not found" });
-    }
-
-    const orderData = orderDetails[0];
-    const shop_location = { latitude: parseFloat(orderData.shop_lat), longitude: parseFloat(orderData.shop_lng) };
-    const customer_location = { latitude: parseFloat(orderData.customer_lat), longitude: parseFloat(orderData.customer_lng) };
-
-    const distance_km = calculateHaversineDistance(
-      shop_location.latitude, shop_location.longitude,
-      customer_location.latitude, customer_location.longitude
-    );
-    const eta_minutes = Math.round(10 + distance_km * 3);
-
-    try {
-      const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${shop_location.longitude},${shop_location.latitude};${customer_location.longitude},${customer_location.latitude}?overview=full&geometries=geojson`;
-
-      const osrmResponse = await fetch(osrmUrl);
-      const osrmData = await osrmResponse.json();
-
-      if (osrmData.routes && osrmData.routes.length > 0) {
-        const route = osrmData.routes[0];
-        const coordinates = route.geometry.coordinates.map((coord) => ({
-          latitude: coord[1],
-          longitude: coord[0],
-        }));
-
-        return res.status(200).json({
-          success: true,
-          data: {
-            order_id: orderId,
-            shop_location: shop_location,
-            customer_location: customer_location,
-            polyline: coordinates,
-            distance_km: (route.distance / 1000).toFixed(2),
-            eta_minutes: Math.round(route.duration / 60),
-            route_steps: route.legs[0].steps.map((step) => step.maneuver?.instruction || "Continue").slice(0, 10),
-          },
-          timestamp: new Date().toISOString(),
-        });
+      if (orderDetails.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Order data not found" });
       }
-    } catch (osrmError) {
-      console.warn("⚠️ OSRM API failed, returning direct route:", osrmError.message);
-    }
 
-    // Fallback: Return direct route if OSRM fails
-    return res.status(200).json({
-      success: true,
-      data: {
-        order_id: orderId,
-        shop_location: shop_location,
-        customer_location: customer_location,
-        polyline: [
-          shop_location,
-          customer_location,
-        ],
-        distance_km: distance_km.toFixed(2),
-        eta_minutes: eta_minutes,
-        route_steps: ["Head directly to customer"],
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("❌ Error fetching order route:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch order route",
-      error: error.message,
-    });
+      const orderData = orderDetails[0];
+      const shop_location = {
+        latitude: parseFloat(orderData.shop_lat),
+        longitude: parseFloat(orderData.shop_lng),
+      };
+      const customer_location = {
+        latitude: parseFloat(orderData.customer_lat),
+        longitude: parseFloat(orderData.customer_lng),
+      };
+
+      const distance_km = calculateHaversineDistance(
+        shop_location.latitude,
+        shop_location.longitude,
+        customer_location.latitude,
+        customer_location.longitude
+      );
+      const eta_minutes = Math.round(10 + distance_km * 3);
+
+      try {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${shop_location.longitude},${shop_location.latitude};${customer_location.longitude},${customer_location.latitude}?overview=full&geometries=geojson`;
+
+        const osrmResponse = await fetch(osrmUrl);
+        const osrmData = await osrmResponse.json();
+
+        if (osrmData.routes && osrmData.routes.length > 0) {
+          const route = osrmData.routes[0];
+          const coordinates = route.geometry.coordinates.map((coord) => ({
+            latitude: coord[1],
+            longitude: coord[0],
+          }));
+
+          return res.status(200).json({
+            success: true,
+            data: {
+              order_id: orderId,
+              shop_location: shop_location,
+              customer_location: customer_location,
+              polyline: coordinates,
+              distance_km: (route.distance / 1000).toFixed(2),
+              eta_minutes: Math.round(route.duration / 60),
+              route_steps: route.legs[0].steps
+                .map((step) => step.maneuver?.instruction || "Continue")
+                .slice(0, 10),
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (osrmError) {
+        console.warn(
+          "⚠️ OSRM API failed, returning direct route:",
+          osrmError.message
+        );
+      }
+
+      // Fallback: Return direct route if OSRM fails
+      return res.status(200).json({
+        success: true,
+        data: {
+          order_id: orderId,
+          shop_location: shop_location,
+          customer_location: customer_location,
+          polyline: [shop_location, customer_location],
+          distance_km: distance_km.toFixed(2),
+          eta_minutes: eta_minutes,
+          route_steps: ["Head directly to customer"],
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Error fetching order route:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch order route",
+        error: error.message,
+      });
+    }
   }
-});
+);
 
 // 6. GET /api/navigation/status - Navigation subsystem health and feature check
 router.get("/status", (req, res) => {
@@ -425,4 +483,3 @@ router.get("/status", (req, res) => {
 });
 
 export default router;
-

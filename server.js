@@ -402,7 +402,6 @@ app.get("/api/db-status", async (req, res) => {
     // Check existing tables without modifying them
     const tables = [
       "admins",
-      "global_products",
       "order_items",
       "orders",
       "products",
@@ -533,7 +532,9 @@ server.listen(PORT, "0.0.0.0", async () => {
     const [columns] = await db.query("SHOW COLUMNS FROM users LIKE 'wallet'");
     if (columns.length === 0) {
       console.log("🔧 Adding missing 'wallet' column to 'users' table...");
-      await db.query("ALTER TABLE users ADD COLUMN wallet DECIMAL(10,2) DEFAULT 0.00");
+      await db.query(
+        "ALTER TABLE users ADD COLUMN wallet DECIMAL(10,2) DEFAULT 0.00"
+      );
       console.log("✅ 'wallet' column added successfully");
     }
   } catch (error) {
@@ -542,10 +543,16 @@ server.listen(PORT, "0.0.0.0", async () => {
 
   // Initialize instant_discount column on orders table if missing
   try {
-    const [orderColumns] = await db.query("SHOW COLUMNS FROM orders LIKE 'instant_discount'");
+    const [orderColumns] = await db.query(
+      "SHOW COLUMNS FROM orders LIKE 'instant_discount'"
+    );
     if (orderColumns.length === 0) {
-      console.log("🔧 Adding missing 'instant_discount' column to 'orders' table...");
-      await db.query("ALTER TABLE orders ADD COLUMN instant_discount DECIMAL(10,2) DEFAULT 0.00");
+      console.log(
+        "🔧 Adding missing 'instant_discount' column to 'orders' table..."
+      );
+      await db.query(
+        "ALTER TABLE orders ADD COLUMN instant_discount DECIMAL(10,2) DEFAULT 0.00"
+      );
       console.log("✅ 'instant_discount' column added successfully");
     }
   } catch (error) {
@@ -611,7 +618,9 @@ server.listen(PORT, "0.0.0.0", async () => {
   try {
     const [tables] = await db.execute("SHOW TABLES LIKE 'shopping_lists'");
     if (tables.length === 0) {
-      console.warn("⚠️ shopping_lists table not found; skipping shopping list cleanup cron startup");
+      console.warn(
+        "⚠️ shopping_lists table not found; skipping shopping list cleanup cron startup"
+      );
     } else {
       startShoppingListCleanupCron();
       console.log("✅ Shopping list cleanup cron job activated");

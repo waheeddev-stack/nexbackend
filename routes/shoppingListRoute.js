@@ -20,7 +20,8 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
     if (!items && !req.file) {
       return res.status(400).json({
         success: false,
-        message: "Please provide a written list (items) or upload a shopping list image.",
+        message:
+          "Please provide a written list (items) or upload a shopping list image.",
       });
     }
 
@@ -157,7 +158,10 @@ router.delete("/:id", verifyToken, async (req, res) => {
       try {
         await cloudinary.uploader.destroy(list.cloudinary_public_id);
       } catch (cloudinaryError) {
-        console.error(`Failed to delete Cloudinary image on manual delete:`, cloudinaryError);
+        console.error(
+          `Failed to delete Cloudinary image on manual delete:`,
+          cloudinaryError
+        );
       }
     }
 

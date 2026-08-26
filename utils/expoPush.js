@@ -20,11 +20,11 @@ function isRateLimited(token, action, resourceId) {
   const key = `${token}:${action}:${resourceId}`;
   const now = Date.now();
   const lastSent = notificationRateLimiter.get(key);
-  
-  if (lastSent && (now - lastSent) < RATE_LIMIT_WINDOW_MS) {
+
+  if (lastSent && now - lastSent < RATE_LIMIT_WINDOW_MS) {
     return true;
   }
-  
+
   notificationRateLimiter.set(key, now);
   // Clean up old entries periodically
   if (notificationRateLimiter.size > 10000) {
@@ -45,23 +45,36 @@ function isRateLimited(token, action, resourceId) {
  * @param {object} options - options { action, resourceId, skipRateLimit }
  * @returns {object} result with tickets, receipts, invalidTokens, nonExpoTokens, errors
  */
-export async function sendExpoPush(tokens, title, body, data = {}, options = {}) {
+export async function sendExpoPush(
+  tokens,
+  title,
+  body,
+  data = {},
+  options = {}
+) {
   const { action, resourceId, skipRateLimit = false } = options;
   if (!tokens) return { success: false, message: "No tokens provided" };
 
   const tokenList = Array.isArray(tokens) ? tokens : [tokens];
   const messages = [];
   const nonExpoTokens = [];
-  
+
   for (const token of tokenList) {
     if (!token) continue;
-    
+
     // Rate limiting check (per token, per action, per resource)
-    if (!skipRateLimit && action && resourceId && isRateLimited(token, action, resourceId)) {
-      console.log(`⏭️ Rate limited notification for token ${token.slice(0, 10)}... action ${action} resource ${resourceId}`);
+    if (
+      !skipRateLimit &&
+      action &&
+      resourceId &&
+      isRateLimited(token, action, resourceId)
+    ) {
+      console.log(
+        `⏭️ Rate limited notification for token ${token.slice(0, 10)}... action ${action} resource ${resourceId}`
+      );
       continue;
     }
-    
+
     if (!Expo.isExpoPushToken(token)) {
       nonExpoTokens.push(token);
       continue;

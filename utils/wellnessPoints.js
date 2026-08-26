@@ -4,10 +4,7 @@
 
 // Calculate wellness points based on delivery time performance
 // timeRemaining: positive = arrived early, negative = arrived late
-const calculateWellnessPoints = (
-  timeRemaining,
-  totalDuration = 7 * 60 * 1000
-) => {
+const calculateWellnessPoints = (timeRemaining) => {
   // Convert to minutes (can be negative)
   const minutesRemaining = timeRemaining / (60 * 1000);
 
@@ -48,7 +45,7 @@ const getPointValue = () => 0.1; // ₹0.1 per point
 
 // Calculate maximum points allowed (30% of order value)
 const calculateMaxPointsAllowed = (availablePoints, totalAmount) => {
-  const maxFromAmount = Math.floor(totalAmount / getPointValue() * 0.3);
+  const maxFromAmount = Math.floor((totalAmount / getPointValue()) * 0.3);
   return Math.min(availablePoints, maxFromAmount);
 };
 

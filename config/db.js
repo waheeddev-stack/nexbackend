@@ -68,18 +68,6 @@ const pool = mysql.createPool({
       console.log(`⚠️ Products table check: ${error.message}`);
     }
 
-    // Check global_products count
-    try {
-      const [globalProductCount] = await connection.execute(
-        "SELECT COUNT(*) as count FROM global_products"
-      );
-      console.log(
-        `🌐 Global products in database: ${globalProductCount[0].count}`
-      );
-    } catch (error) {
-      console.log(`⚠️ Global products table check: ${error.message}`);
-    }
-
     connection.release();
   } catch (err) {
     console.error("❌ TiDB Cloud connection failed:", err.message);

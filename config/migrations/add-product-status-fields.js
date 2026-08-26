@@ -1,5 +1,3 @@
-import path from "path";
-
 /**
  * Migration: Add available_stock and is_visible columns to products table
  * This script generates the SQL commands needed for the migration
@@ -33,14 +31,16 @@ SHOW COLUMNS FROM products LIKE "is_visible";
 -- Expected output should show the new columns with their data types
 `;
 
-console.log('📋 Migration SQL Commands:');
-console.log('='.repeat(60));
+console.log("📋 Migration SQL Commands:");
+console.log("=".repeat(60));
 console.log(sqlCommands);
-console.log('='.repeat(60));
-console.log('\n💡 To run this migration:');
-console.log('1. Open your database client (e.g., MySQL Workbench, TiDB Cloud Console)');
-console.log('2. Select your database');
-console.log('3. Run the SQL commands above');
-console.log('4. Verify the changes with SHOW COLUMNS FROM products;');
+console.log("=".repeat(60));
+console.log("\n💡 To run this migration:");
+console.log(
+  "1. Open your database client (e.g., MySQL Workbench, TiDB Cloud Console)"
+);
+console.log("2. Select your database");
+console.log("3. Run the SQL commands above");
+console.log("4. Verify the changes with SHOW COLUMNS FROM products;");
 
 export { sqlCommands };

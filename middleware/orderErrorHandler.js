@@ -150,7 +150,7 @@ export const handleCartTokenExpiration = async (req, res, next) => {
           role: payload.role,
           exp: payload.exp,
         };
-      } catch (e) {
+      } catch {
         return res.status(401).json({
           success: false,
           message:

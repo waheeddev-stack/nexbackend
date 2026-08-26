@@ -28,7 +28,6 @@ function scoreRecommendationCandidates({
   popularityMap = new Map(),
   topN = 5,
 }) {
-  const productMap = new Map(catalog.map((product) => [product.id, product]));
   const seen = new Set(userProductIds);
   const scored = [];
 
@@ -38,7 +37,8 @@ function scoreRecommendationCandidates({
     const coPurchaseScore = coPurchaseMap.get(product.id) || 0;
     const categoryScore = categoryAffinity.get(product.category) || 0;
     const popularityScore = popularityMap.get(product.id) || 0;
-    const score = coPurchaseScore * 2.8 + categoryScore * 1.6 + popularityScore * 0.1;
+    const score =
+      coPurchaseScore * 2.8 + categoryScore * 1.6 + popularityScore * 0.1;
 
     if (score > 0 || product.category) {
       scored.push({
@@ -53,7 +53,12 @@ function scoreRecommendationCandidates({
   return scored.sort((a, b) => b.score - a.score).slice(0, topN);
 }
 
-function getBehavioralRecommendations({ userProductIds = [], catalog = [], allOrders = [], topN = 5 }) {
+function getBehavioralRecommendations({
+  userProductIds = [],
+  catalog = [],
+  allOrders = [],
+  topN = 5,
+}) {
   const productMap = new Map(catalog.map((product) => [product.id, product]));
   const purchaseCounts = new Map();
   const pairCounts = new Map();
@@ -83,7 +88,11 @@ function getBehavioralRecommendations({ userProductIds = [], catalog = [], allOr
 
   for (const [key, count] of pairCounts.entries()) {
     const [left, right] = key.split(":").map(Number);
-    const relevant = userProductIds.includes(left) ? right : userProductIds.includes(right) ? left : null;
+    const relevant = userProductIds.includes(left)
+      ? right
+      : userProductIds.includes(right)
+        ? left
+        : null;
 
     if (!relevant || seen.has(relevant)) continue;
 
@@ -118,23 +127,33 @@ function getBehavioralRecommendations({ userProductIds = [], catalog = [], allOr
   return ranked;
 }
 
-function getContentRecommendations({ userProducts = [], catalog = [], topN = 5 }) {
-  const productMap = new Map(catalog.map((product) => [product.id, product]));
-  const userTokens = userProducts.flatMap((product) => tokenize(`${product.name} ${product.category} ${product.description}`));
+function getContentRecommendations({
+  userProducts = [],
+  catalog = [],
+  topN = 5,
+}) {
+  const userTokens = userProducts.flatMap((product) =>
+    tokenize(`${product.name} ${product.category} ${product.description}`)
+  );
   const scored = [];
 
   for (const product of catalog) {
     if (userProducts.some((item) => item.id === product.id)) continue;
-    const productTokens = tokenize(`${product.name} ${product.category} ${product.description}`);
+    const productTokens = tokenize(
+      `${product.name} ${product.category} ${product.description}`
+    );
     const similarity = calculateJaccard(userTokens, productTokens);
     if (similarity > 0) {
-      scored.push({ product_id: product.id, score: similarity, reason: "content", product });
+      scored.push({
+        product_id: product.id,
+        score: similarity,
+        reason: "content",
+        product,
+      });
     }
   }
 
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topN);
+  return scored.sort((a, b) => b.score - a.score).slice(0, topN);
 }
 
 async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
@@ -166,7 +185,11 @@ async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
 
   for (const row of orderRows) {
     if (!orderMap.has(row.id)) {
-      orderMap.set(row.id, { id: row.id, created_at: row.created_at, items: [] });
+      orderMap.set(row.id, {
+        id: row.id,
+        created_at: row.created_at,
+        items: [],
+      });
       allOrders.push(orderMap.get(row.id));
     }
     if (row.product_id != null) {
@@ -176,7 +199,9 @@ async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
 
   const coPurchaseMap = new Map();
   for (const order of allOrders) {
-    const products = (order.items || []).map((item) => item.product_id).filter(Boolean);
+    const products = (order.items || [])
+      .map((item) => item.product_id)
+      .filter(Boolean);
     for (const current of products) {
       for (const other of products) {
         if (current === other) continue;
@@ -189,7 +214,9 @@ async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
   const categoryAffinity = new Map();
   const categoryWeights = new Map();
   for (const order of allOrders) {
-    const products = (order.items || []).map((item) => item.product_id).filter(Boolean);
+    const products = (order.items || [])
+      .map((item) => item.product_id)
+      .filter(Boolean);
     for (const productId of products) {
       const product = catalog.find((item) => item.id === productId);
       if (!product) continue;
@@ -226,7 +253,9 @@ async function getRecommendationsForUser(userId, { topN = 5 } = {}) {
   });
 
   const content = getContentRecommendations({
-    userProducts: catalog.filter((product) => userPurchases.includes(product.id)),
+    userProducts: catalog.filter((product) =>
+      userPurchases.includes(product.id)
+    ),
     catalog,
     topN,
   });

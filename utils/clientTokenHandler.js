@@ -98,7 +98,7 @@ const parseJWTPayload = (token) => {
 
     const payload = JSON.parse(atob(parts[1]));
     return payload;
-  } catch (err) {
+  } catch {
     // JWE tokens can't be parsed client-side, return null
     return null;
   }

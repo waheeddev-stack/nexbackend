@@ -7,7 +7,12 @@ router.post("/resolve", async (req, res) => {
   try {
     const { lat, lng } = req.body;
 
-    if (lat == null || lng == null || isNaN(Number(lat)) || isNaN(Number(lng))) {
+    if (
+      lat == null ||
+      lng == null ||
+      isNaN(Number(lat)) ||
+      isNaN(Number(lng))
+    ) {
       return res
         .status(400)
         .json({ success: false, message: "lat and lng are required" });

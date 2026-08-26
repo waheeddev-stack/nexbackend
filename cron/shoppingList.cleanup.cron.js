@@ -8,7 +8,9 @@ let cronJob = null;
  * Cleanup shopping lists and Cloudinary images older than 15 days
  */
 export async function cleanupExpiredShoppingLists() {
-  console.log("🔄 Starting expired shopping lists cleanup (15-day retention policy)...");
+  console.log(
+    "🔄 Starting expired shopping lists cleanup (15-day retention policy)..."
+  );
   try {
     // 1. Fetch all expired shopping lists (older than 15 days) that have images
     const [expiredLists] = await pool.query(`
@@ -17,7 +19,9 @@ export async function cleanupExpiredShoppingLists() {
       WHERE created_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
     `);
 
-    console.log(`🔍 Found ${expiredLists.length} expired shopping list(s) to cleanup`);
+    console.log(
+      `🔍 Found ${expiredLists.length} expired shopping list(s) to cleanup`
+    );
 
     const idsToDelete = [];
     const failedImageDeletes = [];
@@ -30,23 +34,35 @@ export async function cleanupExpiredShoppingLists() {
       }
 
       try {
-        console.log(`🗑️ Deleting Cloudinary image ${list.cloudinary_public_id} for expired list ${list.id}...`);
+        console.log(
+          `🗑️ Deleting Cloudinary image ${list.cloudinary_public_id} for expired list ${list.id}...`
+        );
         await cloudinary.uploader.destroy(list.cloudinary_public_id);
         idsToDelete.push(list.id);
       } catch (cloudinaryError) {
         failedImageDeletes.push(list.id);
-        console.error(`❌ Failed to delete Cloudinary image for list ${list.id}:`, cloudinaryError);
+        console.error(
+          `❌ Failed to delete Cloudinary image for list ${list.id}:`,
+          cloudinaryError
+        );
       }
     }
 
     // 3. Delete records from the database (skip rows whose image deletion failed so we can retry later)
     if (idsToDelete.length > 0) {
-      const [result] = await pool.query("DELETE FROM shopping_lists WHERE id IN (?)", [idsToDelete]);
-      console.log(`✅ Deleted ${result.affectedRows} expired shopping list record(s) from database`);
+      const [result] = await pool.query(
+        "DELETE FROM shopping_lists WHERE id IN (?)",
+        [idsToDelete]
+      );
+      console.log(
+        `✅ Deleted ${result.affectedRows} expired shopping list record(s) from database`
+      );
     }
 
     if (failedImageDeletes.length > 0) {
-      console.warn(`⚠️ Skipped deleting ${failedImageDeletes.length} record(s) due to Cloudinary deletion failures`);
+      console.warn(
+        `⚠️ Skipped deleting ${failedImageDeletes.length} record(s) due to Cloudinary deletion failures`
+      );
     }
   } catch (error) {
     console.error("❌ Expired shopping lists cleanup error:", error);
@@ -69,7 +85,7 @@ export function startShoppingListCleanupCron() {
   });
 
   console.log("✅ Shopping list cleanup cron started (schedule: 0 0 * * *)");
-  
+
   // Run an initial cleanup run on startup to catch anything that expired while the server was down
   cleanupExpiredShoppingLists();
 }
@@ -92,6 +108,7 @@ export function getShoppingListCleanupCronStatus() {
   return {
     running: cronJob !== null,
     schedule: "0 0 * * *",
-    description: "Deletes expired shopping lists and their Cloudinary images after 15 days.",
+    description:
+      "Deletes expired shopping lists and their Cloudinary images after 15 days.",
   };
 }

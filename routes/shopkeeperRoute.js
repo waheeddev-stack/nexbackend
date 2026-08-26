@@ -9,7 +9,6 @@ import upload from "../config/upload.js";
 import verifyToken from "../middleware/auth.js";
 import { checkSubscriptionStatus } from "../middleware/checkSubscription.js";
 // import checkPaymentStatus from "../middleware/checkPaymentStatus.js"; // Disabled - earnings system not implemented
-import { awardWellnessPoints } from "../utils/wellnessPoints.js";
 import {
   calculateSubscriptionStatus,
   canAccessApp,
@@ -21,9 +20,10 @@ import { generateBill } from "../utils/revenue.js";
 // Middleware to check if shopkeeper is verified (compatible with existing database)
 const verifyShopkeeperStatus = async (req, res, next) => {
   try {
-    const [user] = await pool.execute("SELECT * FROM shopkeepers WHERE id = ?", [
-      req.user.id,
-    ]);
+    const [user] = await pool.execute(
+      "SELECT * FROM shopkeepers WHERE id = ?",
+      [req.user.id]
+    );
 
     if (user.length === 0) {
       return res
@@ -260,7 +260,7 @@ shopkeeperRouter.get(
         ) {
           homeDeliveryActive = Boolean(deliveryStatus.home_delivery_active);
         }
-      } catch (err) {
+      } catch {
         // Column doesn't exist, use default
         homeDeliveryActive = true;
       }
@@ -271,14 +271,16 @@ shopkeeperRouter.get(
           isOnline: Boolean(shopkeeper.is_online),
           homeDeliveryActive: homeDeliveryActive,
           todayRevenue: parseFloat(todayRevenueData?.todayRevenue || 0),
-          yesterdayRevenue: parseFloat(yesterdayRevenueData?.yesterdayRevenue || 0),
+          yesterdayRevenue: parseFloat(
+            yesterdayRevenueData?.yesterdayRevenue || 0
+          ),
           totalSales: parseFloat(salesData?.totalSales || 0),
           ordersDelivered: parseInt(deliveredData?.ordersDelivered || 0),
           cancelledOrders: parseInt(cancelledData?.cancelledOrders || 0),
           pendingOrders: parseInt(pendingData?.pendingOrders || 0),
           totalProducts: parseInt(productStats?.totalProducts || 0),
           lowStockProducts: parseInt(productStats?.lowStockProducts || 0),
-          topProducts: topProductsData.map(p => ({
+          topProducts: topProductsData.map((p) => ({
             id: p.id,
             name: p.name,
             price: p.price,
@@ -295,10 +297,10 @@ shopkeeperRouter.get(
             : null,
           topSelling: topProduct
             ? {
-              productId: topProduct.productId,
-              name: topProduct.name,
-              unitsSold: parseInt(topProduct.unitsSold),
-            }
+                productId: topProduct.productId,
+                name: topProduct.name,
+                unitsSold: parseInt(topProduct.unitsSold),
+              }
             : null,
         },
       });
@@ -386,7 +388,7 @@ shopkeeperRouter.get(
 
       // Group orders by customer
       const customerOrders = {};
-      orders.forEach(order => {
+      orders.forEach((order) => {
         if (!customerOrders[order.user_id]) {
           customerOrders[order.user_id] = {
             id: String(order.user_id),
@@ -394,7 +396,7 @@ shopkeeperRouter.get(
             email: order.email,
             phone: order.phone,
             credits: order.credits,
-            orders: []
+            orders: [],
           };
         }
         customerOrders[order.user_id].orders.push({
@@ -403,7 +405,7 @@ shopkeeperRouter.get(
           status: order.status,
           created_at: order.created_at,
           order_type: order.order_type,
-          delivery_mode: order.delivery_mode
+          delivery_mode: order.delivery_mode,
         });
       });
 
@@ -425,15 +427,18 @@ shopkeeperRouter.patch(
       const customerId = req.params.id;
       const { credits } = req.body;
       const shopkeeper_id = req.user.id;
-      
+
       // Verify the customer has ordered from this shopkeeper before allowing update
       const [validCustomer] = await pool.execute(
         `SELECT 1 FROM orders WHERE user_id = ? AND shopkeeper_id = ? LIMIT 1`,
         [customerId, shopkeeper_id]
       );
-      
+
       if (validCustomer.length === 0) {
-         return res.status(403).json({ success: false, message: "Not authorized to update this customer" });
+        return res.status(403).json({
+          success: false,
+          message: "Not authorized to update this customer",
+        });
       }
 
       await pool.execute(
@@ -458,24 +463,30 @@ shopkeeperRouter.get(
   async (req, res) => {
     try {
       const shopkeeper_id = req.user.id;
-      const timeframe = req.query.timeframe || 'weekly';
+      const timeframe = req.query.timeframe || "weekly";
 
-      let dateFilter = '';
-      let previousDateFilter = '';
-      let groupBy = '';
-      
-      if (timeframe === 'daily') {
-        dateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)';
-        groupBy = 'DATE(o.created_at)';
-      } else if (timeframe === 'monthly') {
-        dateFilter = "AND o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND o.created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)";
-        previousDateFilter = "AND o.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH) AND o.created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')";
-        groupBy = 'DATE(o.created_at)';
-      } else { // weekly
-        dateFilter = 'AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AND o.created_at < DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY)';
-        previousDateFilter = 'AND o.created_at >= DATE_SUB(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY) AND o.created_at < DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)';
-        groupBy = 'DATE(o.created_at)';
+      let dateFilter = "";
+      let previousDateFilter = "";
+      let groupBy = "";
+
+      if (timeframe === "daily") {
+        dateFilter = "AND o.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        previousDateFilter =
+          "AND o.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND o.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        groupBy = "DATE(o.created_at)";
+      } else if (timeframe === "monthly") {
+        dateFilter =
+          "AND o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND o.created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)";
+        previousDateFilter =
+          "AND o.created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH) AND o.created_at < DATE_FORMAT(CURDATE(), '%Y-%m-01')";
+        groupBy = "DATE(o.created_at)";
+      } else {
+        // weekly
+        dateFilter =
+          "AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AND o.created_at < DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY)";
+        previousDateFilter =
+          "AND o.created_at >= DATE_SUB(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY) AND o.created_at < DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)";
+        groupBy = "DATE(o.created_at)";
       }
 
       // Total Sales & Pending Orders
@@ -487,14 +498,14 @@ shopkeeperRouter.get(
           COUNT(CASE WHEN o.status != 'Cancelled' THEN 1 END) as totalOrdersCount
          FROM orders o
          WHERE o.shopkeeper_id = ? ${dateFilter}`,
-         [shopkeeper_id]
+        [shopkeeper_id]
       );
 
       const [[previousStats]] = await pool.query(
         `SELECT SUM(CASE WHEN o.status IN ('Completed', 'Delivered') THEN o.total_amount ELSE 0 END) as totalSales
          FROM orders o
          WHERE o.shopkeeper_id = ? ${previousDateFilter}`,
-         [shopkeeper_id]
+        [shopkeeper_id]
       );
 
       const totalSales = parseFloat(currentStats.totalSales || 0);
@@ -504,9 +515,10 @@ shopkeeperRouter.get(
         growth = ((totalSales - prevSales) / prevSales) * 100;
       }
 
-      const receivedPct = currentStats.totalOrdersCount > 0 
-        ? (currentStats.completedCount / currentStats.totalOrdersCount) * 100 
-        : 0;
+      const receivedPct =
+        currentStats.totalOrdersCount > 0
+          ? (currentStats.completedCount / currentStats.totalOrdersCount) * 100
+          : 0;
 
       // Low Stock Count
       const [[lowStock]] = await pool.execute(
@@ -520,7 +532,7 @@ shopkeeperRouter.get(
          FROM orders o
          WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY ${groupBy}`,
-         [shopkeeper_id]
+        [shopkeeper_id]
       );
 
       // Top Products
@@ -532,7 +544,7 @@ shopkeeperRouter.get(
          WHERE o.shopkeeper_id = ? AND p.shop_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY p.id, p.name
          ORDER BY sold DESC LIMIT 5`,
-         [shopkeeper_id, shopkeeper_id]
+        [shopkeeper_id, shopkeeper_id]
       );
 
       // Top Customers
@@ -543,7 +555,7 @@ shopkeeperRouter.get(
          WHERE o.shopkeeper_id = ? AND o.status IN ('Completed', 'Delivered') ${dateFilter}
          GROUP BY u.id, u.name
          ORDER BY totalSpent DESC LIMIT 5`,
-         [shopkeeper_id]
+        [shopkeeper_id]
       );
 
       res.json({
@@ -556,12 +568,13 @@ shopkeeperRouter.get(
         pendingOrders: currentStats.pendingOrders || 0,
         lowStockCount: lowStock.count || 0,
         topProducts,
-        topCustomers
+        topCustomers,
       });
-
     } catch (err) {
       console.error("Analytics error:", err.message, err.stack);
-      res.status(500).json({ success: false, message: "Server error", detail: err.message });
+      res
+        .status(500)
+        .json({ success: false, message: "Server error", detail: err.message });
     }
   }
 );
@@ -1289,7 +1302,7 @@ shopkeeperRouter.get(
       // Fetch order items for all orders
       if (orderRows.length > 0) {
         const orderIds = orderRows.map((o) => o.order_id);
-        const placeholders = orderIds.map(() => '?').join(',');
+        const placeholders = orderIds.map(() => "?").join(",");
         const [itemRows] = await pool.execute(
           `SELECT
           oi.order_id,
@@ -1463,7 +1476,9 @@ shopkeeperRouter.patch(
               "UPDATE orders SET credits_granted = 1 WHERE id = ?",
               [orderIdNum]
             );
-            console.log(`✅ Settled ${order.credits_earned} wallet credits for order ${orderIdNum}`);
+            console.log(
+              `✅ Settled ${order.credits_earned} wallet credits for order ${orderIdNum}`
+            );
           }
         } catch (settleErr) {
           console.error("Error settling wallet credits:", settleErr);
@@ -1505,7 +1520,7 @@ shopkeeperRouter.patch(
           `Order #${orderIdNum} Update`,
           `Your order status has been updated to ${status}.`,
           { orderId: orderIdNum, status },
-          { action: 'order_status_update', resourceId: String(orderIdNum) }
+          { action: "order_status_update", resourceId: String(orderIdNum) }
         );
       }
 
@@ -1537,7 +1552,7 @@ shopkeeperRouter.get(
         [shop_id]
       );
       // Ensure mrp is included in response
-      const productsWithMrp = products.map(p => ({
+      const productsWithMrp = products.map((p) => ({
         ...p,
         mrp: p.mrp || null,
       }));
@@ -1602,9 +1617,10 @@ shopkeeperRouter.post(
       const parsedMrp = mrp != null ? Number(mrp) : parsedPrice;
       if (!Number.isNaN(parsedMrp) && parsedMrp >= 0) {
         if (parsedMrp < parsedPrice) {
-          return res
-            .status(400)
-            .json({ success: false, message: "MRP cannot be less than selling price" });
+          return res.status(400).json({
+            success: false,
+            message: "MRP cannot be less than selling price",
+          });
         }
       }
 
@@ -1633,17 +1649,22 @@ shopkeeperRouter.post(
       }
 
       const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, global_product_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           shop_id,
           name.trim(),
           description || null,
           category || null,
           formattedPrice,
-          Number.isNaN(parsedMrp) || parsedMrp < 0 ? formattedPrice : parseFloat(parsedMrp.toFixed(2)),
+          Number.isNaN(parsedMrp) || parsedMrp < 0
+            ? formattedPrice
+            : parseFloat(parsedMrp.toFixed(2)),
           finalStock,
           finalBaselineQty,
           imageUrl,
+          req.body.global_product_id != null
+            ? Number(req.body.global_product_id)
+            : null,
         ]
       );
 
@@ -1679,29 +1700,33 @@ shopkeeperRouter.put(
       const { baselineQty } = req.body;
 
       if (baselineQty == null) {
-        return res.status(400).json({ success: false, message: "Baseline quantity is required" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Baseline quantity is required" });
       }
 
       const b = Number(baselineQty);
       if (Number.isNaN(b) || b < 0) {
-        return res.status(400).json({ success: false, message: "Invalid baseline quantity" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid baseline quantity" });
       }
 
-const [result] = await pool.execute(
-    "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
-    [b, b, shop_id]
-  );
+      const [result] = await pool.execute(
+        "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
+        [b, b, shop_id]
+      );
 
-  await pool.execute(
-    `UPDATE products SET available_stock = CASE WHEN stock = 0 THEN 'OUT OF STOCK' ELSE 'IN STOCK' END WHERE shop_id = ? AND available_stock <> 'INVISIBLE'`,
-    [shop_id]
-  );
+      await pool.execute(
+        `UPDATE products SET available_stock = CASE WHEN stock = 0 THEN 'OUT OF STOCK' ELSE 'IN STOCK' END WHERE shop_id = ? AND available_stock <> 'INVISIBLE'`,
+        [shop_id]
+      );
 
-  res.json({
+      res.json({
         success: true,
         message: `Successfully updated baseline quantity for ${result.affectedRows} products`,
         updatedCount: result.affectedRows,
-        baselineQty: b
+        baselineQty: b,
       });
     } catch (err) {
       console.error("Bulk update baseline error:", err);
@@ -1722,20 +1747,20 @@ shopkeeperRouter.post(
     try {
       const shop_id = req.user.id;
 
-const [result] = await pool.execute(
-    "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
-    [shop_id]
-  );
+      const [result] = await pool.execute(
+        "UPDATE products SET stock = baselineQty WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty",
+        [shop_id]
+      );
 
-  await pool.execute(
-    `UPDATE products SET available_stock = 'IN STOCK' WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty AND available_stock <> 'INVISIBLE'`,
-    [shop_id]
-  );
+      await pool.execute(
+        `UPDATE products SET available_stock = 'IN STOCK' WHERE shop_id = ? AND baselineQty > 0 AND stock < baselineQty AND available_stock <> 'INVISIBLE'`,
+        [shop_id]
+      );
 
-  res.json({
+      res.json({
         success: true,
         message: `Successfully restocked ${result.affectedRows} product(s) to baseline quantity`,
-        updatedCount: result.affectedRows
+        updatedCount: result.affectedRows,
       });
     } catch (err) {
       console.error("Bulk restock error:", err);
@@ -1757,8 +1782,16 @@ shopkeeperRouter.put(
     try {
       const shop_id = req.user.id;
       const productId = req.params.id;
-      const { name, description, category, price, mrp, stock, baselineQty, available_stock } =
-        req.body;
+      const {
+        name,
+        description,
+        category,
+        price,
+        mrp,
+        stock,
+        baselineQty,
+        available_stock,
+      } = req.body;
 
       const [existing] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
@@ -1826,11 +1859,13 @@ shopkeeperRouter.put(
             .json({ success: false, message: "Invalid MRP" });
         const formattedMrp = parseFloat(m.toFixed(2));
         // Validate that selling price does not exceed MRP
-        const effectivePrice = price != null ? Number(price) : existing[0].price;
+        const effectivePrice =
+          price != null ? Number(price) : existing[0].price;
         if (effectivePrice != null && formattedMrp < effectivePrice) {
-          return res
-            .status(400)
-            .json({ success: false, message: "MRP cannot be less than selling price" });
+          return res.status(400).json({
+            success: false,
+            message: "MRP cannot be less than selling price",
+          });
         }
         fields.push("mrp = ?");
         values.push(formattedMrp);
@@ -1839,9 +1874,10 @@ shopkeeperRouter.put(
       if (price != null && mrp == null && existing[0].mrp != null) {
         const p = Number(price);
         if (p > Number(existing[0].mrp)) {
-          return res
-            .status(400)
-            .json({ success: false, message: "Selling price cannot exceed MRP" });
+          return res.status(400).json({
+            success: false,
+            message: "Selling price cannot exceed MRP",
+          });
         }
       }
       if (stock != null && baselineQty == null) {
@@ -1868,11 +1904,13 @@ shopkeeperRouter.put(
         values.push(b);
       }
       if (available_stock != null) {
-        const validStatuses = ['IN STOCK', 'OUT OF STOCK', 'INVISIBLE'];
+        const validStatuses = ["IN STOCK", "OUT OF STOCK", "INVISIBLE"];
         if (!validStatuses.includes(available_stock))
-          return res
-            .status(400)
-            .json({ success: false, message: "Invalid available_stock value. Must be: IN STOCK, OUT OF STOCK, or INVISIBLE" });
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid available_stock value. Must be: IN STOCK, OUT OF STOCK, or INVISIBLE",
+          });
         fields.push("available_stock = ?");
         values.push(available_stock);
       }
@@ -1887,30 +1925,30 @@ shopkeeperRouter.put(
           .status(400)
           .json({ success: false, message: "No fields to update" });
 
-values.push(productId, shop_id);
-                await pool.execute(
-                    `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
-                    values
-                  );
+      values.push(productId, shop_id);
+      await pool.execute(
+        `UPDATE products SET ${fields.join(", ")} WHERE id = ? AND shop_id = ?`,
+        values
+      );
 
-                if (available_stock == null) {
-                  let resolvedStock = null;
-                  if (baselineQty != null) {
-                    resolvedStock = Number(baselineQty);
-                  } else if (stock != null) {
-                    resolvedStock = Number(stock);
-                  }
+      if (available_stock == null) {
+        let resolvedStock = null;
+        if (baselineQty != null) {
+          resolvedStock = Number(baselineQty);
+        } else if (stock != null) {
+          resolvedStock = Number(stock);
+        }
 
-                  if (resolvedStock != null) {
-                    const syncStatus = resolvedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
-                    await pool.execute(
-                      `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
-                      [syncStatus, productId]
-                    );
-                  }
-                }
+        if (resolvedStock != null) {
+          const syncStatus = resolvedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+          await pool.execute(
+            `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+            [syncStatus, productId]
+          );
+        }
+      }
 
-                const [updated] = await pool.execute(
+      const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -1970,186 +2008,6 @@ shopkeeperRouter.delete(
   }
 );
 
-// --- Access global products (shopkeeper) ---
-// List all global products (read-only for shopkeepers) filtered by shop scale
-shopkeeperRouter.get(
-  "/global-products",
-  verifyToken,
-  verifyShopkeeperStatus,
-  async (req, res) => {
-    try {
-      // Get shopkeeper's scale
-      const [shopkeeper] = await pool.execute(
-        "SELECT shop_scale FROM shopkeepers WHERE id = ?",
-        [req.user.id]
-      );
-
-      if (shopkeeper.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Shopkeeper not found" });
-      }
-
-      const shopScale = shopkeeper[0].shop_scale || "small";
-
-      // Get products available for this shop scale
-      const [rows] = await pool.execute(
-        `
-      SELECT
-        id,
-        name,
-        price,
-        category,
-        description,
-        image,
-        brand,
-        barcode,
-        shop_scales,
-        created_at
-      FROM global_products
-      WHERE JSON_CONTAINS(shop_scales, '"all"')
-         OR JSON_CONTAINS(shop_scales, ?)
-      ORDER BY created_at DESC
-    `,
-        [JSON.stringify(shopScale)]
-      );
-
-      // Parse shop_scales for response - handle both JSON arrays and plain strings
-      const products = rows.map((product) => {
-        let shopScales = ["all"];
-        if (product.shop_scales) {
-          try {
-            const parsed = JSON.parse(product.shop_scales);
-            // Handle both array and plain string formats
-            shopScales = Array.isArray(parsed) ? parsed : [parsed];
-          } catch (error) {
-            // Fallback: treat plain string as single-item array
-            shopScales = [product.shop_scales];
-          }
-        }
-        return {
-          ...product,
-          shopScales: shopScales,
-        };
-      });
-
-      res.json({
-        success: true,
-        products: products,
-        shopScale: shopScale,
-      });
-    } catch (err) {
-      console.error("Get global products error:", err);
-      res.status(500).json({ success: false, message: "Server error" });
-    }
-  }
-);
-
-// Add a product into shopkeeper's catalog from global_products
-// body: { global_product_id, price (optional override), baselineQty (required) }
-shopkeeperRouter.post(
-  "/products/from-global",
-  verifyToken,
-  verifyShopkeeperStatus,
-  async (req, res) => {
-    try {
-      const shop_id = req.user.id;
-      const { global_product_id, price, baselineQty, stock, mrp } = req.body;
-
-      if (!global_product_id) {
-        return res
-          .status(400)
-          .json({ success: false, message: "global_product_id is required" });
-      }
-
-      // Handle baselineQty and stock logic:
-      // 1. If baselineQty is provided, use it for both stock and baselineQty
-      // 2. If baselineQty is not provided, use stock for both
-      // 3. Default to 0 if neither provided
-      let finalBaselineQty =
-        baselineQty != null
-          ? Number(baselineQty)
-          : stock != null
-            ? Number(stock)
-            : 0;
-      let finalStock = finalBaselineQty; // Always sync stock to baseline on creation
-
-      if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid stock or baseline quantity",
-        });
-      }
-
-      // Verify global product exists
-      const [gpRows] = await pool.execute(
-        "SELECT * FROM global_products WHERE id = ?",
-        [global_product_id]
-      );
-      if (gpRows.length === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Global product not found" });
-      }
-      const gp = gpRows[0];
-
-      // Prevent duplicate addition for same shop
-      const [exists] = await pool.execute(
-        "SELECT id FROM products WHERE shop_id = ? AND global_product_id = ?",
-        [shop_id, global_product_id]
-      );
-      if (exists.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Product already added to your catalog",
-        });
-      }
-
-      const priceToUse = price != null ? Number(price) : gp.price;
-      if (Number.isNaN(priceToUse) || priceToUse < 0) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid price" });
-      }
-
-      // Use provided mrp or fall back to global product's price as MRP
-      const mrpToUse = mrp != null ? Number(mrp) : gp.price;
-
-      // Set both stock and baselineQty to the same value
-      const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, global_product_id, name, description, category, price, mrp, stock, baselineQty, image)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          shop_id,
-          global_product_id,
-          gp.name,
-          gp.description || null,
-          gp.category || null,
-          priceToUse,
-          mrpToUse,
-          finalStock,
-          finalBaselineQty,
-          gp.image || null,
-        ]
-      );
-
-      const [created] = await pool.execute(
-        "SELECT * FROM products WHERE id = ?",
-        [result.insertId]
-      );
-      res.status(201).json({
-        success: true,
-        id: result.insertId,
-        product: created[0],
-        message: "Product added from global catalog",
-      });
-    } catch (err) {
-      console.error("Add from global error:", err);
-      res.status(500).json({ success: false, message: "Server error" });
-    }
-  }
-);
-
 // Update only stock for a shopkeeper's product
 shopkeeperRouter.patch(
   "/products/:id/stock",
@@ -2183,18 +2041,18 @@ shopkeeperRouter.patch(
           .json({ success: false, message: "Product not found" });
       }
 
-await pool.execute(
-    "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
-    [parsedStock, productId, shop_id]
-  );
+      await pool.execute(
+        "UPDATE products SET stock = ? WHERE id = ? AND shop_id = ?",
+        [parsedStock, productId, shop_id]
+      );
 
-const syncStatus = parsedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
-await pool.execute(
-  `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
-  [syncStatus, productId]
-);
+      const syncStatus = parsedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+      await pool.execute(
+        `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+        [syncStatus, productId]
+      );
 
-const [updated] = await pool.execute(
+      const [updated] = await pool.execute(
         "SELECT * FROM products WHERE id = ? AND shop_id = ?",
         [productId, shop_id]
       );
@@ -2228,9 +2086,7 @@ shopkeeperRouter.patch(
 
       const count = result.affectedRows || 0;
 
-      console.log(
-        `👁️ Set ${count} products visible for shop ${shop_id}`
-      );
+      console.log(`👁️ Set ${count} products visible for shop ${shop_id}`);
 
       res.json({
         success: true,
@@ -2360,11 +2216,13 @@ shopkeeperRouter.get(
 
       res.json({
         success: true,
-        bill: bill
+        bill: bill,
       });
     } catch (err) {
       console.error("Generate bill error:", err);
-      res.status(500).json({ success: false, message: "Server error", error: err.message });
+      res
+        .status(500)
+        .json({ success: false, message: "Server error", error: err.message });
     }
   }
 );
@@ -2434,11 +2292,16 @@ shopkeeperRouter.get(
       const now = new Date();
 
       // Calculate payment status using subscription logic
-      const nextPaymentDue = data.next_payment_due ? new Date(data.next_payment_due) : null;
-      const gracePeriodEnd = data.grace_period_end ? new Date(data.grace_period_end) : null;
+      const nextPaymentDue = data.next_payment_due
+        ? new Date(data.next_payment_due)
+        : null;
+      const gracePeriodEnd = data.grace_period_end
+        ? new Date(data.grace_period_end)
+        : null;
 
       const isPaymentOverdue = nextPaymentDue && now > nextPaymentDue;
-      const isInGracePeriod = isPaymentOverdue && gracePeriodEnd && now <= gracePeriodEnd;
+      const isInGracePeriod =
+        isPaymentOverdue && gracePeriodEnd && now <= gracePeriodEnd;
       const isAccountSuspended = gracePeriodEnd && now > gracePeriodEnd;
 
       let isBlocked = false;
@@ -2488,9 +2351,18 @@ shopkeeperRouter.get(
           isBlocked,
           pendingAmount,
           nextPaymentDate,
-          status: isAccountSuspended ? "blocked" : isInGracePeriod ? "grace_period" : "active",
+          status: isAccountSuspended
+            ? "blocked"
+            : isInGracePeriod
+              ? "grace_period"
+              : "active",
           feeAmount,
-          graceDaysRemaining: gracePeriodEnd ? Math.max(0, Math.ceil((gracePeriodEnd - now) / (1000 * 60 * 60 * 24))) : 0
+          graceDaysRemaining: gracePeriodEnd
+            ? Math.max(
+                0,
+                Math.ceil((gracePeriodEnd - now) / (1000 * 60 * 60 * 24))
+              )
+            : 0,
         },
       });
     } catch (err) {
@@ -2500,7 +2372,7 @@ shopkeeperRouter.get(
   }
 );
 
-// Update shop scale and auto-add matching global products
+// Update shop scale
 shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
   try {
     const shopkeeperId = req.params.id;
@@ -2526,63 +2398,9 @@ shopkeeperRouter.put("/update-scale/:id", verifyToken, async (req, res) => {
         .json({ success: false, message: "Shopkeeper not found" });
     }
 
-    // Auto-add global products matching this scale to shopkeeper's products
-    let productsAdded = 0;
-    try {
-      // Get global products available for this scale (matching scale or "all")
-      const [globalProducts] = await pool.execute(
-        `
-        SELECT id, name, description, category, price, image
-        FROM global_products
-        WHERE JSON_CONTAINS(shop_scales, '"all"')
-           OR JSON_CONTAINS(shop_scales, ?)
-      `,
-        [JSON.stringify(shop_scale)]
-      );
-
-      // Get existing products for this shopkeeper to avoid duplicates
-      const [existingProducts] = await pool.execute(
-        "SELECT global_product_id FROM products WHERE shop_id = ? AND global_product_id IS NOT NULL",
-        [shopkeeperId]
-      );
-      const existingGlobalIds = new Set(
-        existingProducts.map((p) => p.global_product_id)
-      );
-
-      // Add products that don't already exist
-      for (const gp of globalProducts) {
-        if (!existingGlobalIds.has(gp.id)) {
-          await pool.execute(
-            `INSERT INTO products (shop_id, global_product_id, name, description, category, price, mrp, stock, image)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              shopkeeperId,
-              gp.id,
-              gp.name,
-              gp.description || null,
-              gp.category || null,
-              gp.price || 0,
-              gp.price || 0,
-              0,
-              gp.image || null,
-            ]
-          );
-          productsAdded++;
-        }
-      }
-
-      console.log(
-        `Auto-added ${productsAdded} products for shopkeeper ${shopkeeperId} with scale ${shop_scale}`
-      );
-    } catch (productErr) {
-      console.error("Error auto-adding products:", productErr);
-      // Don't fail the whole request if product addition fails
-    }
-
     res.json({
       success: true,
       message: `Shop scale updated to ${shop_scale}`,
-      products_added: productsAdded,
     });
   } catch (err) {
     console.error("Update shop scale error:", err);
@@ -2635,7 +2453,9 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
         daysUntilDue,
         is_trial_active: false,
         is_verified: data.is_verified === 1 || data.is_verified === true,
-        can_access: data.subscription_status !== "suspended" && (data.is_verified === 1 || data.is_verified === true),
+        can_access:
+          data.subscription_status !== "suspended" &&
+          (data.is_verified === 1 || data.is_verified === true),
       },
     });
   } catch (err) {
@@ -2796,10 +2616,15 @@ shopkeeperRouter.post(
             [orderIdNum]
           );
           walletCreditSettled = order.credits_earned;
-          console.log(`✅ Settled ${walletCreditSettled} wallet credits for order ${orderIdNum}`);
+          console.log(
+            `✅ Settled ${walletCreditSettled} wallet credits for order ${orderIdNum}`
+          );
         }
       } catch (settleErr) {
-        console.error("Error settling wallet credits in verify-pickup:", settleErr);
+        console.error(
+          "Error settling wallet credits in verify-pickup:",
+          settleErr
+        );
       }
 
       // Emit Socket.IO events if req.io is available
@@ -2836,20 +2661,27 @@ shopkeeperRouter.post(
         );
 
         if (customer?.expo_push_token) {
-          const message = walletCreditSettled > 0
-            ? `🎉 Your order #${orderIdNum} has been verified and completed! You earned ₹${(walletCreditSettled * 0.1).toFixed(0)} in wallet credit.`
-            : `🎉 Your order #${orderIdNum} has been verified and completed!`;
-const token = customer.expo_push_token;
+          const message =
+            walletCreditSettled > 0
+              ? `🎉 Your order #${orderIdNum} has been verified and completed! You earned ₹${(walletCreditSettled * 0.1).toFixed(0)} in wallet credit.`
+              : `🎉 Your order #${orderIdNum} has been verified and completed!`;
+          const token = customer.expo_push_token;
           if (isFCMToken(token)) {
             await sendFCMPush(token, "Order Completed", message, {
               orderId: String(orderIdNum),
               status: "Completed",
             });
           } else {
-            await sendExpoPush(token, "Order Completed", message, {
-              orderId: String(orderIdNum),
-              status: "Completed",
-            }, { action: 'order_completed', resourceId: String(orderIdNum) });
+            await sendExpoPush(
+              token,
+              "Order Completed",
+              message,
+              {
+                orderId: String(orderIdNum),
+                status: "Completed",
+              },
+              { action: "order_completed", resourceId: String(orderIdNum) }
+            );
           }
         }
       } catch (pushError) {
@@ -3105,10 +2937,10 @@ shopkeeperRouter.get(
         [customersStats],
         [revenueStats],
         [activityStats],
-        [stockStats]
       ] = await Promise.all([
         // Orders metrics
-        pool.execute(`
+        pool.execute(
+          `
           SELECT 
             COUNT(*) as total_orders,
             SUM(CASE WHEN status IN ('Completed', 'Delivered') THEN 1 ELSE 0 END) as completed_orders,
@@ -3116,29 +2948,38 @@ shopkeeperRouter.get(
             SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending_orders
           FROM orders 
           WHERE shopkeeper_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-        `, [shopkeeper_id]),
+        `,
+          [shopkeeper_id]
+        ),
 
         // Products metrics
-        pool.execute(`
+        pool.execute(
+          `
           SELECT 
             COUNT(*) as total_products,
             SUM(CASE WHEN stock <= baselineQty OR stock <= 5 THEN 1 ELSE 0 END) as low_stock_products,
             SUM(CASE WHEN stock = 0 THEN 1 ELSE 0 END) as out_of_stock_products
           FROM products 
           WHERE shop_id = ?
-        `, [shopkeeper_id]),
+        `,
+          [shopkeeper_id]
+        ),
 
         // Customers metrics
-        pool.execute(`
+        pool.execute(
+          `
           SELECT 
             COUNT(DISTINCT user_id) as total_customers,
             SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as new_customers_week
           FROM orders 
           WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered')
-        `, [shopkeeper_id]),
+        `,
+          [shopkeeper_id]
+        ),
 
         // Revenue metrics
-        pool.execute(`
+        pool.execute(
+          `
           SELECT 
             COALESCE(SUM(total_amount), 0) as revenue_30d,
             COALESCE(SUM(total_amount), 0) as revenue_7d
@@ -3146,26 +2987,22 @@ shopkeeperRouter.get(
           WHERE shopkeeper_id = ? 
             AND status IN ('Completed', 'Delivered')
             AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-        `, [shopkeeper_id]),
+        `,
+          [shopkeeper_id]
+        ),
 
         // Activity metrics (last login, order response time)
-        pool.execute(`
+        pool.execute(
+          `
           SELECT 
             MAX(created_at) as last_order_date,
             AVG(TIMESTAMPDIFF(MINUTE, created_at, updated_at)) as avg_response_minutes
           FROM orders 
           WHERE shopkeeper_id = ? AND status IN ('Completed', 'Delivered')
             AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-        `, [shopkeeper_id]),
-
-        // Stock turnover
-        pool.execute(`
-          SELECT 
-            COALESCE(SUM(stock), 0) as total_stock,
-            COALESCE(AVG(stock), 0) as avg_stock
-          FROM products 
-          WHERE shop_id = ?
-        `, [shopkeeper_id])
+        `,
+          [shopkeeper_id]
+        ),
       ]);
 
       const o = ordersStats[0];
@@ -3173,7 +3010,6 @@ shopkeeperRouter.get(
       const c = customersStats[0];
       const r = revenueStats[0];
       const a = activityStats[0];
-      const s = stockStats[0];
 
       // Calculate health score (0-100)
       // Factors:
@@ -3187,33 +3023,48 @@ shopkeeperRouter.get(
       const totalOrders = o.total_orders || 0;
       const completedOrders = o.completed_orders || 0;
       const cancelledOrders = o.cancelled_orders || 0;
-      const completionRate = totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 100;
-      const cancellationRate = totalOrders > 0 ? (cancelledOrders / totalOrders) * 100 : 0;
+      const completionRate =
+        totalOrders > 0 ? (completedOrders / totalOrders) * 100 : 100;
+      const cancellationRate =
+        totalOrders > 0 ? (cancelledOrders / totalOrders) * 100 : 0;
 
       const totalProducts = p.total_products || 0;
       const lowStockProducts = p.low_stock_products || 0;
       const outOfStockProducts = p.out_of_stock_products || 0;
-      const stockHealthRate = totalProducts > 0 ? (1 - (outOfStockProducts / totalProducts)) * 100 : 100;
+      const stockHealthRate =
+        totalProducts > 0
+          ? (1 - outOfStockProducts / totalProducts) * 100
+          : 100;
 
       const totalCustomers = c.total_customers || 0;
       const newCustomersWeek = c.new_customers_week || 0;
-      const customerGrowthRate = totalCustomers > 0 ? (newCustomersWeek / totalCustomers) * 100 : 0;
+      const customerGrowthRate =
+        totalCustomers > 0 ? (newCustomersWeek / totalCustomers) * 100 : 0;
 
       const revenue30d = parseFloat(r.revenue_30d) || 0;
       const revenue7d = parseFloat(r.revenue_7d) || 0;
-      const revenueTrend = revenue30d > 0 ? (revenue7d / (revenue30d / 4.3)) * 100 : 100; // weekly vs monthly avg
+      const revenueTrend =
+        revenue30d > 0 ? (revenue7d / (revenue30d / 4.3)) * 100 : 100; // weekly vs monthly avg
 
       const avgResponseMinutes = a.avg_response_minutes || 0;
-      const responseScore = avgResponseMinutes <= 10 ? 100 : avgResponseMinutes <= 30 ? 80 : avgResponseMinutes <= 60 ? 60 : 40;
+      const responseScore =
+        avgResponseMinutes <= 10
+          ? 100
+          : avgResponseMinutes <= 30
+            ? 80
+            : avgResponseMinutes <= 60
+              ? 60
+              : 40;
 
       // Weighted score
       let healthScore = 0;
       healthScore += completionRate * 0.25;
-      healthScore += stockHealthRate * 0.20;
+      healthScore += stockHealthRate * 0.2;
       healthScore += Math.min(customerGrowthRate * 5, 100) * 0.15; // Cap at 100
       healthScore += Math.min(revenueTrend, 100) * 0.15;
       healthScore += responseScore * 0.15;
-      healthScore += (100 - (lowStockProducts / Math.max(totalProducts, 1)) * 100) * 0.10;
+      healthScore +=
+        (100 - (lowStockProducts / Math.max(totalProducts, 1)) * 100) * 0.1;
 
       healthScore = Math.round(Math.max(0, Math.min(100, healthScore)));
 
@@ -3226,12 +3077,20 @@ shopkeeperRouter.get(
 
       // Generate recommendations
       const recommendations = [];
-      if (completionRate < 90) recommendations.push("Improve order completion rate");
-      if (outOfStockProducts > 0) recommendations.push(`Restock ${outOfStockProducts} out-of-stock products`);
-      if (lowStockProducts > totalProducts * 0.3) recommendations.push("Too many low-stock items");
-      if (customerGrowthRate < 5) recommendations.push("Focus on customer acquisition");
-      if (avgResponseMinutes > 30) recommendations.push("Improve order response time");
-      if (revenueTrend < 80) recommendations.push("Revenue declining - consider promotions");
+      if (completionRate < 90)
+        recommendations.push("Improve order completion rate");
+      if (outOfStockProducts > 0)
+        recommendations.push(
+          `Restock ${outOfStockProducts} out-of-stock products`
+        );
+      if (lowStockProducts > totalProducts * 0.3)
+        recommendations.push("Too many low-stock items");
+      if (customerGrowthRate < 5)
+        recommendations.push("Focus on customer acquisition");
+      if (avgResponseMinutes > 30)
+        recommendations.push("Improve order response time");
+      if (revenueTrend < 80)
+        recommendations.push("Revenue declining - consider promotions");
 
       res.json({
         success: true,
@@ -3244,35 +3103,42 @@ shopkeeperRouter.get(
               completed: completedOrders,
               cancelled: cancelledOrders,
               completionRate: Math.round(completionRate * 10) / 10,
-              cancellationRate: Math.round(cancellationRate * 10) / 10
+              cancellationRate: Math.round(cancellationRate * 10) / 10,
             },
             products: {
               total: totalProducts,
               lowStock: lowStockProducts,
               outOfStock: outOfStockProducts,
-              stockHealthRate: Math.round(stockHealthRate * 10) / 10
+              stockHealthRate: Math.round(stockHealthRate * 10) / 10,
             },
             customers: {
               total: totalCustomers,
               newThisWeek: newCustomersWeek,
-              growthRate: Math.round(customerGrowthRate * 10) / 10
+              growthRate: Math.round(customerGrowthRate * 10) / 10,
             },
             revenue: {
               last30Days: revenue30d,
               last7Days: revenue7d,
-              trend: Math.round(revenueTrend)
+              trend: Math.round(revenueTrend),
             },
             operations: {
               avgResponseMinutes: Math.round(avgResponseMinutes),
-              responseScore
-            }
+              responseScore,
+            },
           },
-          recommendations: recommendations.length > 0 ? recommendations : ["All systems healthy"]
-        }
+          recommendations:
+            recommendations.length > 0
+              ? recommendations
+              : ["All systems healthy"],
+        },
       });
     } catch (err) {
       console.error("Store health calculation error:", err);
-      res.status(500).json({ success: false, message: "Failed to calculate store health", error: err.message });
+      res.status(500).json({
+        success: false,
+        message: "Failed to calculate store health",
+        error: err.message,
+      });
     }
   }
 );
@@ -3296,14 +3162,17 @@ shopkeeperRouter.get(
         )
         .catch(() => [[]]);
 
-      const paymentInfo = paymentRows.length > 0 ? paymentRows[0] : {
-        upi_id: "",
-        bank_account: "",
-        bank_name: "",
-        ifsc_code: "",
-        account_holder: "NexKirana Admin",
-        qr_code: null
-      };
+      const paymentInfo =
+        paymentRows.length > 0
+          ? paymentRows[0]
+          : {
+              upi_id: "",
+              bank_account: "",
+              bank_name: "",
+              ifsc_code: "",
+              account_holder: "NexKirana Admin",
+              qr_code: null,
+            };
 
       // Calculate amount due (based on shop scale)
       let amountDue = 0;
@@ -3349,7 +3218,7 @@ shopkeeperRouter.get(
       if (!modalType) {
         return res.json({
           success: true,
-          data: { showModal: false }
+          data: { showModal: false },
         });
       }
 
@@ -3370,20 +3239,24 @@ shopkeeperRouter.get(
             bank_name: paymentInfo.bank_name,
             ifsc_code: paymentInfo.ifsc_code,
             account_holder: paymentInfo.account_holder,
-            qr_code: paymentInfo.qr_code
+            qr_code: paymentInfo.qr_code,
           },
           subscription: {
             status: statusInfo.status,
             daysOverdue: statusInfo.daysOverdue,
             graceDaysRemaining: statusInfo.graceDaysRemaining,
             nextPaymentDue: statusInfo.nextPaymentDue,
-            gracePeriodEnd: statusInfo.gracePeriodEnd
-          }
-        }
+            gracePeriodEnd: statusInfo.gracePeriodEnd,
+          },
+        },
       });
     } catch (err) {
       console.error("Payment modal data error:", err);
-      res.status(500).json({ success: false, message: "Failed to get payment modal data", error: err.message });
+      res.status(500).json({
+        success: false,
+        message: "Failed to get payment modal data",
+        error: err.message,
+      });
     }
   }
 );
@@ -3399,35 +3272,47 @@ shopkeeperRouter.patch(
   async (req, res) => {
     const connection = await pool.getConnection();
     try {
-      const shopkeeperid = req.user?.id
-      const customerid = req.body.customerid
-      const credits_awarded = Number(req.body.credits_awarded)
+      const shopkeeperid = req.user?.id;
+      const customerid = req.body.customerid;
+      const credits_awarded = Number(req.body.credits_awarded);
 
       if (!shopkeeperid) {
         connection.release();
-        return res.status(401).json({ success: false, message: "Shopkeeper Id is empty" })
+        return res
+          .status(401)
+          .json({ success: false, message: "Shopkeeper Id is empty" });
       }
       if (!customerid) {
         connection.release();
-        return res.status(401).json({ success: false, message: "Customer Id is empty" })
+        return res
+          .status(401)
+          .json({ success: false, message: "Customer Id is empty" });
       }
       if (!Number.isFinite(credits_awarded) || credits_awarded <= 0) {
         connection.release();
-        return res.status(400).json({ success: false, message: "New credits were not sent." })
+        return res
+          .status(400)
+          .json({ success: false, message: "New credits were not sent." });
       }
       if (credits_awarded > 750) {
         connection.release();
-        return res.status(400).json({ success: false, message: "The amount of credits is too much" })
+        return res.status(400).json({
+          success: false,
+          message: "The amount of credits is too much",
+        });
       }
 
       const [rows] = await connection.execute(
         "SELECT 1 FROM orders WHERE shopkeeper_id = ? AND user_id = ?",
         [shopkeeperid, customerid]
-      )
+      );
 
       if (rows.length <= 0) {
         connection.release();
-        return res.status(400).json({ success: false, message: "Customer should have made at least one order from the shop" })
+        return res.status(400).json({
+          success: false,
+          message: "Customer should have made at least one order from the shop",
+        });
       }
 
       await connection.beginTransaction();
@@ -3435,31 +3320,36 @@ shopkeeperRouter.patch(
       const [result] = await connection.execute(
         "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
         [credits_awarded, customerid]
-      )
+      );
 
       if (result.affectedRows === 0) {
         await connection.rollback();
         connection.release();
-        return res.status(404).json({ success: false, message: "Customer Not found." })
+        return res
+          .status(404)
+          .json({ success: false, message: "Customer Not found." });
       }
 
       await connection.commit();
       connection.release();
 
-      return res.status(200).json({ success: true, message: "Credits awarded successfully" })
-
+      return res
+        .status(200)
+        .json({ success: true, message: "Credits awarded successfully" });
     } catch (error) {
       if (connection) {
         await connection.rollback().catch(() => {});
         connection.release();
       }
-      console.log("Error occurred while updating credits: " + error)
-      return res.status(500).json({ success: false, message: "Internal Server error" })
+      console.log("Error occurred while updating credits: " + error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal Server error" });
     }
   }
 );
 
-// UPDATE /api/shopkeeper/:shopkeeperid/getcustomers - Get all the Nexkirana customers of the shop 
+// UPDATE /api/shopkeeper/:shopkeeperid/getcustomers - Get all the Nexkirana customers of the shop
 shopkeeperRouter.get(
   "/:shopkeeperid/getcustomers",
   verifyToken,
@@ -3467,16 +3357,18 @@ shopkeeperRouter.get(
   checkSubscriptionStatus,
   async (req, res) => {
     try {
-      const shopkeeperIdFromToken = req.user?.id
-      const { shopkeeperid: shopkeeperIdFromParams } = req.params
+      const shopkeeperIdFromToken = req.user?.id;
+      const { shopkeeperid: shopkeeperIdFromParams } = req.params;
 
       if (!shopkeeperIdFromToken) {
-        return res.status(401).json({ success: false, message: "Authentication required" })
+        return res
+          .status(401)
+          .json({ success: false, message: "Authentication required" });
       }
       if (String(shopkeeperIdFromParams) !== String(shopkeeperIdFromToken)) {
-        return res.status(403).json({ success: false, message: "Forbidden" })
+        return res.status(403).json({ success: false, message: "Forbidden" });
       }
-      const shopkeeperid = shopkeeperIdFromToken
+      const shopkeeperid = shopkeeperIdFromToken;
 
       const [rows] = await pool.execute(
         `SELECT DISTINCT u.id AS user_id, u.name, u.store_credits
@@ -3484,17 +3376,20 @@ shopkeeperRouter.get(
      JOIN users u ON u.id = o.user_id
      WHERE o.shopkeeper_id = ?`,
         [shopkeeperid]
-      )
+      );
 
       if (rows.length === 0) {
-        return res.status(404).json({ success: false, message: "No customer records found" })
+        return res
+          .status(404)
+          .json({ success: false, message: "No customer records found" });
       }
 
-      return res.status(200).json({ success: true, result: rows })
-
+      return res.status(200).json({ success: true, result: rows });
     } catch (error) {
-      console.log("Error occurred at get customers: " + error)
-      return res.status(500).json({ success: false, message: "Internal Server error" })
+      console.log("Error occurred at get customers: " + error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal Server error" });
     }
   }
 );
@@ -3511,16 +3406,20 @@ shopkeeperRouter.post(
   async (req, res) => {
     try {
       const shopkeeper_id = req.user.id;
-      const { customer_id, total_amount, amount_paid, order_value, source, items } = req.body;
+      const { customer_id, total_amount, amount_paid, items } = req.body;
 
       if (!customer_id) {
-        return res.status(400).json({ success: false, message: "Customer ID is required" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Customer ID is required" });
       }
       // Use amount_paid (what customer actually pays after discount) as total_amount
       // Fallback to total_amount for backward compatibility
       const finalAmount = amount_paid || total_amount;
       if (!finalAmount || finalAmount <= 0) {
-        return res.status(400).json({ success: false, message: "Valid amount is required" });
+        return res
+          .status(400)
+          .json({ success: false, message: "Valid amount is required" });
       }
 
       // Calculate credits based on amount paid (what customer actually pays)
@@ -3533,11 +3432,12 @@ shopkeeperRouter.post(
         if (amount >= 1000) rate = 0.05;
         else if (amount >= 500) rate = 0.03;
         else if (amount >= 50) rate = 0.02;
-        
+
         const totalDiscount = amount * rate;
-        const cappedDiscount = rate === 0.05 ? Math.min(totalDiscount, 150) : totalDiscount;
+        const cappedDiscount =
+          rate === 0.05 ? Math.min(totalDiscount, 150) : totalDiscount;
         const credits = Math.round(cappedDiscount * 5); // walletRupees * 10 = (totalDiscount/2) * 10 = totalDiscount * 5
-        
+
         // Cap credits at 1500 for >=1000 (150 * 10 = 1500)
         if (rate === 0.05) return Math.min(credits, 1500);
         return credits;
@@ -3557,7 +3457,9 @@ shopkeeperRouter.post(
         if (!customer) {
           await conn.rollback();
           conn.release();
-          return res.status(404).json({ success: false, message: "Customer not found" });
+          return res
+            .status(404)
+            .json({ success: false, message: "Customer not found" });
         }
 
         // Generate next order ID
@@ -3622,7 +3524,9 @@ shopkeeperRouter.post(
       }
     } catch (error) {
       console.error("Error creating order:", error);
-      return res.status(500).json({ success: false, message: "Internal Server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal Server error" });
     }
   }
 );

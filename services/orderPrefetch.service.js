@@ -1,9 +1,9 @@
 /**
  * Order Prefetch Service
- * 
+ *
  * Pre-fetches and caches all data needed for fast order placement.
  * This service runs in the background and keeps data fresh.
- * 
+ *
  * Performance Impact: Reduces order placement from 5-6s to <1s
  */
 
@@ -113,7 +113,8 @@ export function invalidateShopkeeperCache(shopkeeperId) {
  */
 export async function prefetchShopProducts(shopkeeperId) {
   try {
-    const [products] = await pool.execute(`
+    const [products] = await pool.execute(
+      `
       SELECT 
         id,
         name,
@@ -124,7 +125,9 @@ export async function prefetchShopProducts(shopkeeperId) {
         shop_id
       FROM products 
       WHERE shop_id = ? AND is_deleted = 0
-    `, [shopkeeperId]);
+    `,
+      [shopkeeperId]
+    );
 
     // Cache products by shop (2 min TTL - stock changes frequently)
     prefetchCache.set(`products:shop:${shopkeeperId}`, products, 120);
@@ -134,10 +137,15 @@ export async function prefetchShopProducts(shopkeeperId) {
       prefetchCache.set(`product:${product.id}`, product, 120);
     }
 
-    console.log(`✅ Pre-fetched ${products.length} products for shop ${shopkeeperId}`);
+    console.log(
+      `✅ Pre-fetched ${products.length} products for shop ${shopkeeperId}`
+    );
     return { success: true, count: products.length };
   } catch (error) {
-    console.error(`❌ Failed to prefetch products for shop ${shopkeeperId}:`, error);
+    console.error(
+      `❌ Failed to prefetch products for shop ${shopkeeperId}:`,
+      error
+    );
     return { success: false, error: error.message };
   }
 }
@@ -176,7 +184,8 @@ export function invalidateProductCache(shopkeeperId, productId = null) {
  */
 export async function prefetchUserData(userId) {
   try {
-    const [users] = await pool.execute(`
+    const [users] = await pool.execute(
+      `
       SELECT 
         id,
         name,
@@ -186,7 +195,9 @@ export async function prefetchUserData(userId) {
         expo_push_token
       FROM users 
       WHERE id = ?
-    `, [userId]);
+    `,
+      [userId]
+    );
 
     if (users.length === 0) {
       return { success: false, error: "User not found" };
@@ -226,9 +237,12 @@ export function invalidateUserCache(userId) {
  */
 export function startBackgroundRefresh() {
   // Refresh shopkeepers every 5 minutes
-  setInterval(() => {
-    prefetchShopkeepersData();
-  }, 5 * 60 * 1000);
+  setInterval(
+    () => {
+      prefetchShopkeepersData();
+    },
+    5 * 60 * 1000
+  );
 
   // Initial fetch
   prefetchShopkeepersData();
@@ -257,18 +271,23 @@ export async function prefetchOrderData(userId, shopkeeperId) {
     // Fetch in parallel
     const [userResult, shopResult, productsResult] = await Promise.all([
       prefetchUserData(userId),
-      getCachedShopkeeper(shopkeeperId) 
+      getCachedShopkeeper(shopkeeperId)
         ? Promise.resolve({ success: true, cached: true })
-        : pool.execute(`
+        : pool
+            .execute(
+              `
             SELECT id, subscription_status, is_deleted, shop_name, name, phone, address, expo_push_token
             FROM shopkeepers WHERE id = ?
-          `, [shopkeeperId]).then(([shops]) => {
-            if (shops.length > 0) {
-              prefetchCache.set(`shop:${shopkeeperId}`, shops[0], 300);
-              return { success: true, shop: shops[0] };
-            }
-            return { success: false };
-          }),
+          `,
+              [shopkeeperId]
+            )
+            .then(([shops]) => {
+              if (shops.length > 0) {
+                prefetchCache.set(`shop:${shopkeeperId}`, shops[0], 300);
+                return { success: true, shop: shops[0] };
+              }
+              return { success: false };
+            }),
       prefetchShopProducts(shopkeeperId),
     ]);
 

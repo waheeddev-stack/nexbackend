@@ -116,9 +116,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
         const a =
           Math.sin(dLat / 2) * Math.sin(dLat / 2) +
           Math.cos((lat * Math.PI) / 180) *
-          Math.cos((shop.latitude * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
+            Math.cos((shop.latitude * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         const verifiedDistance = R * c * 1000; // Meters
 
@@ -155,9 +155,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
         verifiedShops.push(shop);
       }
     } else {
-      console.log(
-        `❌ No verified shops found within ${finalRadiusKm}km`
-      );
+      console.log(`❌ No verified shops found within ${finalRadiusKm}km`);
     }
 
     // Check for unverified shops nearby (for debugging)
@@ -213,7 +211,9 @@ userrouter.get("/nearby-shops", async (req, res) => {
     console.log(
       `📦 Found ${products.length} products across ${shopIds.length} shops`
     );
-    const hasOfflineShops = verifiedShops.some((s) => s.is_online === 0 || s.is_online === false);
+    const hasOfflineShops = verifiedShops.some(
+      (s) => s.is_online === 0 || s.is_online === false
+    );
     const shopsWithProducts = verifiedShops.map((shop) => ({
       ...shop,
       address:
@@ -223,7 +223,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
         .filter((p) => p.shop_id === shop.id)
         .map((p) => ({
           ...p,
-          available_stock: p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
+          available_stock:
+            p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
           unit:
             p.stock == null || p.stock >= 5
               ? "In stock"
@@ -232,7 +233,7 @@ userrouter.get("/nearby-shops", async (req, res) => {
                 : p.stock === 1
                   ? "1 left"
                   : `${p.stock} left`,
-        }))
+        })),
     }));
 
     res.json({
@@ -256,7 +257,9 @@ userrouter.post("/get-products", async (req, res) => {
     const lastId = parseInt(last_product_send_id) || 0;
 
     if (!shopId || isNaN(shopId)) {
-      return res.status(400).json({ success: false, message: "Invalid shop ID" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid shop ID" });
     }
 
     let query;
@@ -283,7 +286,8 @@ userrouter.post("/get-products", async (req, res) => {
     const hasMore = rows.length > pageLimit;
     const products = rows.slice(0, pageLimit).map((p) => ({
       ...p,
-      available_stock: p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
+      available_stock:
+        p.stock == null || p.stock > 0 ? "IN STOCK" : "OUT OF STOCK",
       unit:
         p.stock == null || p.stock >= 5
           ? "In stock"
@@ -336,95 +340,100 @@ userrouter.get("/shop-info/:shopId", async (req, res) => {
   }
 });
 
-import {
-  createRateLimiter,
-} from "../middleware/validation.js";
+import { createRateLimiter } from "../middleware/validation.js";
 
 // Rate limiting for auth endpoints
 const authRateLimit = createRateLimiter(15 * 60 * 1000, 5); // 5 attempts per 15 minutes
 
 // REGISTER
-userrouter.post(
-  "/signup",
-  authRateLimit,
-  async (req, res) => {
-    try {
-      const validatedData = req.body;
+userrouter.post("/signup", authRateLimit, async (req, res) => {
+  try {
+    const validatedData = req.body;
 
-      // Validate required fields
-      if (!validatedData.name || !validatedData.name.trim()) {
-        return res.status(400).json({ success: false, message: "Name is required" });
-      }
-      if (!validatedData.phone || !validatedData.phone.trim()) {
-        return res.status(400).json({ success: false, message: "Phone number is required" });
-      }
-
-      // Check if user already exists
-      const [existingUser] = await pool.execute(
-        "SELECT * FROM users WHERE email = ?",
-        [validatedData.email]
-      );
-      if (existingUser.length > 0) {
-        return res
-          .status(400)
-          .json({ success: false, message: "User already exists" });
-      }
-
-      // Hash the password
-      const hashedPassword = await bcrypt.hash(validatedData.password, 12); // Increased rounds for better security
-
-      // Get the next available ID (since auto-increment isn't working)
-      const [maxIdResult] = await pool.execute(
-        "SELECT MAX(id) as maxId FROM users"
-      );
-      const nextId = (maxIdResult[0].maxId || 0) + 1;
-
-      const MAX_ATTEMPTS = 5
-      let inserted = false
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        const referralcode = generatereferralCode(validatedData.name);
-        try {
-          // Insert new user into database with explicit ID
-          await pool.execute(
-            "INSERT INTO users (id, name, email, password, phone, referralcode) VALUES (?, ?, ?, ?, ?, ?)",
-            [nextId, validatedData.name, validatedData.email, hashedPassword, validatedData.phone, referralcode]
-          );
-          inserted = true
-          break;
-        } catch (error) {
-          if (error.errno === 1062) {
-            continue
-          }
-          console.log("New User couldn't be added: " + error)
-          break
-        }
-      }
-
-      if (!inserted) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to register user. Please try again.",
-        })
-      }
-
-      // Fetch the newly created user
-      const [userRows] = await pool.execute(
-        "SELECT id, name, email, phone, store_credits, created_at FROM users WHERE id = ?",
-        [nextId]
-      );
-      const user = userRows[0];
-
-      return res.json({
-        success: true,
-        user,
-        message: "User registered successfully",
-      });
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ success: false, message: "Server error" });
+    // Validate required fields
+    if (!validatedData.name || !validatedData.name.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Name is required" });
     }
+    if (!validatedData.phone || !validatedData.phone.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required" });
+    }
+
+    // Check if user already exists
+    const [existingUser] = await pool.execute(
+      "SELECT * FROM users WHERE email = ?",
+      [validatedData.email]
+    );
+    if (existingUser.length > 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "User already exists" });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(validatedData.password, 12); // Increased rounds for better security
+
+    // Get the next available ID (since auto-increment isn't working)
+    const [maxIdResult] = await pool.execute(
+      "SELECT MAX(id) as maxId FROM users"
+    );
+    const nextId = (maxIdResult[0].maxId || 0) + 1;
+
+    const MAX_ATTEMPTS = 5;
+    let inserted = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const referralcode = generatereferralCode(validatedData.name);
+      try {
+        // Insert new user into database with explicit ID
+        await pool.execute(
+          "INSERT INTO users (id, name, email, password, phone, referralcode) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            nextId,
+            validatedData.name,
+            validatedData.email,
+            hashedPassword,
+            validatedData.phone,
+            referralcode,
+          ]
+        );
+        inserted = true;
+        break;
+      } catch (error) {
+        if (error.errno === 1062) {
+          continue;
+        }
+        console.log("New User couldn't be added: " + error);
+        break;
+      }
+    }
+
+    if (!inserted) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to register user. Please try again.",
+      });
+    }
+
+    // Fetch the newly created user
+    const [userRows] = await pool.execute(
+      "SELECT id, name, email, phone, store_credits, created_at FROM users WHERE id = ?",
+      [nextId]
+    );
+    const user = userRows[0];
+
+    return res.json({
+      success: true,
+      user,
+      message: "User registered successfully",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-);
+});
 
 // LOGIN
 userrouter.post("/signin", authRateLimit, async (req, res) => {
@@ -529,7 +538,16 @@ userrouter.get("/profile/:id", async (req, res) => {
 // UPDATE PROFILE (with image upload)
 userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   try {
-    const { name, phone, address, area, landmark, pincode, latitude, longitude } = req.body;
+    const {
+      name,
+      phone,
+      address,
+      area,
+      landmark,
+      pincode,
+      latitude,
+      longitude,
+    } = req.body;
     const { id } = req.params;
 
     // First, check if user exists
@@ -777,9 +795,15 @@ userrouter.get("/leaderboard", verifyToken, async (req, res) => {
 
     const userRank = rows[0];
 
-    if (!userRank) { return res.status(404).json({ success: false, message: "User is not found" }) };
+    if (!userRank) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User is not found" });
+    }
 
-    return res.status(200).json({ success: true, user_rank: userRank, leaderboard: leaderboard });
+    return res
+      .status(200)
+      .json({ success: true, user_rank: userRank, leaderboard: leaderboard });
   } catch (err) {
     console.error("Leaderboard error:", err);
     res.status(500).json({ success: false, message: "Server error" });
@@ -803,14 +827,22 @@ userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
     const userId = req.user.id;
 
     // Validate required inputs
-    if (!shop_name || typeof shop_name !== "string" || shop_name.trim().length === 0) {
+    if (
+      !shop_name ||
+      typeof shop_name !== "string" ||
+      shop_name.trim().length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Shop name is required.",
       });
     }
 
-    if (!address || typeof address !== "string" || address.trim().length === 0) {
+    if (
+      !address ||
+      typeof address !== "string" ||
+      address.trim().length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Address is required.",
@@ -824,7 +856,11 @@ userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
       });
     }
 
-    if (!pincode || typeof pincode !== "string" || pincode.trim().length === 0) {
+    if (
+      !pincode ||
+      typeof pincode !== "string" ||
+      pincode.trim().length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Pincode is required.",
@@ -846,8 +882,12 @@ userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
       address.trim(),
       landmark ? landmark.trim() : null,
       pincode.trim(),
-      latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
-      longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+      latitude !== undefined && latitude !== null && latitude !== ""
+        ? parseFloat(latitude)
+        : null,
+      longitude !== undefined && longitude !== null && longitude !== ""
+        ? parseFloat(longitude)
+        : null,
       notes ? notes.trim() : null,
     ];
 
@@ -865,8 +905,14 @@ userrouter.post("/suggest-shop", verifyToken, async (req, res) => {
         address: address.trim(),
         landmark: landmark ? landmark.trim() : null,
         pincode: pincode.trim(),
-        latitude: latitude !== undefined && latitude !== null && latitude !== "" ? parseFloat(latitude) : null,
-        longitude: longitude !== undefined && longitude !== null && longitude !== "" ? parseFloat(longitude) : null,
+        latitude:
+          latitude !== undefined && latitude !== null && latitude !== ""
+            ? parseFloat(latitude)
+            : null,
+        longitude:
+          longitude !== undefined && longitude !== null && longitude !== ""
+            ? parseFloat(longitude)
+            : null,
         notes: notes ? notes.trim() : null,
         status: "pending",
         created_at: new Date().toISOString(),

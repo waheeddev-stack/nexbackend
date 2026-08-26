@@ -5,7 +5,7 @@ export function createRateLimiter(windowMs, max) {
   return (req, res, next) => {
     const ip = req.ip || req.connection.remoteAddress;
     const now = Date.now();
-    
+
     if (!ipRequestCounts.has(ip)) {
       ipRequestCounts.set(ip, { count: 1, resetTime: now + windowMs });
     } else {
@@ -16,11 +16,11 @@ export function createRateLimiter(windowMs, max) {
       } else {
         record.count++;
       }
-      
+
       if (record.count > max) {
         return res.status(429).json({
           success: false,
-          message: "Too many requests, please try again later."
+          message: "Too many requests, please try again later.",
         });
       }
     }
@@ -53,7 +53,7 @@ export function validatePassword(password) {
   }
   return password;
 }
-export const validate = (schema) => (req, res, next) => {
+export const validate = () => (req, res, next) => {
   req.validatedData = req.body;
   next();
 };

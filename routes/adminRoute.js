@@ -489,7 +489,9 @@ adminRouter.post("/register", async (req, res) => {
 // List all admins (protected)
 adminRouter.get("/", verifyAdminToken, async (req, res) => {
   try {
-    const [rows] = await pool.execute("SELECT id, email, created_at FROM admins");
+    const [rows] = await pool.execute(
+      "SELECT id, email, created_at FROM admins"
+    );
     res.json({ success: true, data: rows });
   } catch (err) {
     res
@@ -505,7 +507,9 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
       "SELECT COUNT(*) as count FROM shopkeepers"
     );
     // Customers count
-    const [customers] = await pool.execute("SELECT COUNT(*) as count FROM users");
+    const [customers] = await pool.execute(
+      "SELECT COUNT(*) as count FROM users"
+    );
     // Orders count and revenue
     const [ordersRows] = await pool.execute(
       "SELECT COUNT(*) as count, COALESCE(SUM(total_amount),0) as revenue FROM orders"
@@ -654,314 +658,6 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 //   }
 // });
 
-// --- Admin CRUD for global_products (admin only) ---
-
-// List all global products
-adminRouter.get("/global-products", verifyAdminToken, async (req, res) => {
-  try {
-    const [rows] = await pool.execute(
-      "SELECT id, name, price, category, description, image, brand, barcode, shop_scales, created_at FROM global_products ORDER BY created_at DESC"
-    );
-
-    // Parse shop_scales JSON for each product - handle both JSON arrays and plain strings
-    const products = rows.map((product) => {
-      let shopScales = ["all"];
-      if (product.shop_scales) {
-        try {
-          const parsed = JSON.parse(product.shop_scales);
-          // Handle both array and plain string formats
-          shopScales = Array.isArray(parsed) ? parsed : [parsed];
-        } catch (e) {
-          // Fallback: treat plain string as single-item array
-          shopScales = [product.shop_scales];
-        }
-      }
-      return {
-        ...product,
-        shopScales: shopScales,
-      };
-    });
-
-    res.json({ success: true, data: products });
-  } catch (err) {
-    console.error("Get global products error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: err.message });
-  }
-});
-
-// Create a global product (admin)
-adminRouter.post(
-  "/global-products",
-  verifyAdminToken,
-  upload.single("image"),
-  async (req, res) => {
-    const {
-      name,
-      price,
-      category,
-      description,
-      brand,
-      barcode,
-      shopScales,
-      imageUrl: providedImageUrl, // Image URL from OpenFoodFacts or other sources
-    } = req.body;
-
-    if (!name || !price) {
-      return res.status(400).json({
-        success: false,
-        message: "Name and price are required",
-      });
-    }
-
-    // Check for duplicate barcode if provided
-    if (barcode) {
-      try {
-        const [existingProducts] = await pool.execute(
-          "SELECT id, name FROM global_products WHERE barcode = ?",
-          [barcode]
-        );
-
-        if (existingProducts.length > 0) {
-          return res.status(409).json({
-            success: false,
-            message: `Product with barcode ${barcode} already exists: "${existingProducts[0].name}"`,
-            existingProduct: existingProducts[0],
-          });
-        }
-      } catch (checkErr) {
-        console.error("Error checking duplicate barcode:", checkErr);
-        // Continue with creation if check fails
-      }
-    }
-
-    let imageUrl = null;
-    try {
-      // Priority: uploaded file > provided URL
-      if (req.file) {
-        const streamUpload = () =>
-          new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              (error, result) => {
-                if (result) resolve(result);
-                else reject(error);
-              }
-            );
-            streamifier.createReadStream(req.file.buffer).pipe(stream);
-          });
-        const result = await streamUpload();
-        imageUrl = result.secure_url;
-      } else if (providedImageUrl) {
-        // Use the provided image URL (e.g., from OpenFoodFacts)
-        imageUrl = providedImageUrl;
-      }
-
-      // Parse shopScales if it's a string, otherwise use as-is
-      let parsedShopScales = ["all"]; // default
-      if (shopScales) {
-        try {
-          parsedShopScales =
-            typeof shopScales === "string"
-              ? JSON.parse(shopScales)
-              : shopScales;
-        } catch (e) {
-          console.warn("Failed to parse shopScales, using default:", e);
-        }
-      }
-
-      const connection = await pool.getConnection();
-      await connection.beginTransaction();
-
-      try {
-        // Lock the table and get next ID
-        const [maxIdResult] = await connection.execute(
-          "SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM global_products FOR UPDATE"
-        );
-        const nextId = maxIdResult[0].next_id;
-
-        // ✅ FIX: Ensure price is stored with exactly 2 decimal places
-        const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
-
-        const [dbResult] = await connection.execute(
-          "INSERT INTO global_products (id, name, price, category, description, image, brand, barcode, shop_scales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [
-            nextId,
-            name,
-            formattedPrice,
-            category || null,
-            description || "",
-            imageUrl,
-            brand || null,
-            barcode || null,
-            JSON.stringify(parsedShopScales),
-          ]
-        );
-
-        await connection.commit();
-        connection.release();
-
-        // Use nextId for response since insertId might be 0
-        const actualId = dbResult.insertId || nextId;
-
-        res.status(201).json({
-          success: true,
-          data: {
-            id: actualId,
-            name,
-            price,
-            category: category || null,
-            description,
-            image: imageUrl,
-            brand: brand || null,
-            barcode: barcode || null,
-            shopScales: parsedShopScales,
-          },
-        });
-      } catch (transactionError) {
-        await connection.rollback();
-        connection.release();
-        throw transactionError;
-      }
-    } catch (err) {
-      console.error("Create global product error:", err);
-      res
-        .status(500)
-        .json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
-
-// Update a global product (admin)
-adminRouter.put(
-  "/global-products/:id",
-  verifyAdminToken,
-  upload.single("image"),
-  async (req, res) => {
-    const productId = req.params.id;
-
-    // Validate product ID
-    if (!productId || productId === "null" || productId === "undefined") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid product ID. Product ID is required for update.",
-      });
-    }
-
-    const {
-      name,
-      price,
-      category,
-      description,
-      brand,
-      barcode,
-      shopScales,
-      imageUrl: providedImageUrl, // Image URL from OpenFoodFacts or other sources
-    } = req.body;
-    let imageUrl = req.body.image || null;
-
-    try {
-      // Priority: uploaded file > provided URL > existing image
-      if (req.file) {
-        const streamUpload = () =>
-          new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-              (error, result) => {
-                if (result) resolve(result);
-                else reject(error);
-              }
-            );
-            streamifier.createReadStream(req.file.buffer).pipe(stream);
-          });
-        const result = await streamUpload();
-        imageUrl = result.secure_url;
-      } else if (providedImageUrl) {
-        // Use the provided image URL (e.g., from OpenFoodFacts)
-        imageUrl = providedImageUrl;
-      }
-
-      // Parse shopScales if it's a string, otherwise use as-is
-      let parsedShopScales = ["all"]; // default
-      if (shopScales) {
-        try {
-          parsedShopScales =
-            typeof shopScales === "string"
-              ? JSON.parse(shopScales)
-              : shopScales;
-        } catch (e) {
-          console.warn("Failed to parse shopScales, using default:", e);
-        }
-      }
-
-      // ✅ FIX: Ensure price is stored with exactly 2 decimal places
-      const formattedPrice = parseFloat(parseFloat(price).toFixed(2));
-
-      const [dbResult] = await pool.execute(
-        "UPDATE global_products SET name=?, price=?, category=?, description=?, image=?, brand=?, barcode=?, shop_scales=? WHERE id=?",
-        [
-          name,
-          formattedPrice,
-          category || null,
-          description || "",
-          imageUrl,
-          brand || null,
-          barcode || null,
-          JSON.stringify(parsedShopScales),
-          parseInt(productId),
-        ]
-      );
-
-      if (dbResult.affectedRows === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Global product not found" });
-      }
-
-      res.json({ success: true, message: "Global product updated" });
-    } catch (err) {
-      console.error("Update global product error:", err);
-      res
-        .status(500)
-        .json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
-
-// Delete a global product (admin)
-adminRouter.delete(
-  "/global-products/:id",
-  verifyAdminToken,
-  async (req, res) => {
-    const productId = req.params.id;
-
-    // Validate product ID
-    if (!productId || productId === "null" || productId === "undefined") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid product ID. Product ID is required for deletion.",
-      });
-    }
-
-    try {
-      const [result] = await pool.execute(
-        "DELETE FROM global_products WHERE id = ?",
-        [parseInt(productId)]
-      );
-      if (result.affectedRows === 0) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Global product not found" });
-      }
-      res.json({ success: true, message: "Global product deleted" });
-    } catch (err) {
-      console.error("Delete global product error:", err);
-      res
-        .status(500)
-        .json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
-
 // Delete a shopkeeper (admin)
 adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
   const shopkeeperId = req.params.id;
@@ -1008,9 +704,10 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
     }
 
     // Delete shopkeeper (cascade will handle related records based on DB constraints)
-    const [result] = await pool.execute("DELETE FROM shopkeepers WHERE id = ?", [
-      parseInt(shopkeeperId),
-    ]);
+    const [result] = await pool.execute(
+      "DELETE FROM shopkeepers WHERE id = ?",
+      [parseInt(shopkeeperId)]
+    );
 
     if (result.affectedRows === 0) {
       return res
@@ -1270,60 +967,6 @@ adminRouter.get("/products", verifyAdminToken, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
-// GET /api/admin/global-products/scale/:shopScale - Get global products available for specific shop scale
-adminRouter.get(
-  "/global-products/scale/:shopScale",
-  verifyAdminToken,
-  async (req, res) => {
-    try {
-      const { shopScale } = req.params;
-
-      if (!["small", "medium", "large"].includes(shopScale)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid shop scale. Must be small, medium, or large",
-        });
-      }
-
-      const [rows] = await pool.execute(
-        `
-      SELECT 
-        id, 
-        name, 
-        price,
-        category, 
-        description, 
-        image, 
-        brand, 
-        barcode, 
-        shop_scales,
-        created_at 
-      FROM global_products 
-      WHERE JSON_CONTAINS(shop_scales, '"all"') 
-         OR JSON_CONTAINS(shop_scales, ?)
-      ORDER BY created_at DESC
-    `,
-        [JSON.stringify(shopScale)]
-      );
-
-      // Parse shop_scales for response
-      const products = rows.map((product) => ({
-        ...product,
-        shopScales: product.shop_scales
-          ? JSON.parse(product.shop_scales)
-          : ["all"],
-      }));
-
-      res.json({ success: true, data: products, shopScale });
-    } catch (err) {
-      console.error("Get scale-specific products error:", err);
-      res
-        .status(500)
-        .json({ success: false, message: "Server error", error: err.message });
-    }
-  }
-);
 
 // PUT /api/admin/shopkeepers/:id/scale - Update shopkeeper scale
 adminRouter.put(
@@ -2172,7 +1815,9 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
         }
       }
 
-      const sales = salesData.find(s => s.shopkeeper_id === earning.shopkeeper_id) || { gross_revenue: 0, completed_orders_count: 0 };
+      const sales = salesData.find(
+        (s) => s.shopkeeper_id === earning.shopkeeper_id
+      ) || { gross_revenue: 0, completed_orders_count: 0 };
       const feeDetails = calculatePlatformFee(Number(sales.gross_revenue));
 
       let daysUntilDue = 0;
@@ -2180,7 +1825,9 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       let graceDaysRemaining = 0;
       const now = new Date();
       if (earning.next_payment_due) {
-        daysUntilDue = Math.ceil((new Date(earning.next_payment_due) - now) / (1000 * 60 * 60 * 24));
+        daysUntilDue = Math.ceil(
+          (new Date(earning.next_payment_due) - now) / (1000 * 60 * 60 * 24)
+        );
         if (daysUntilDue < 0) {
           daysOverdue = Math.abs(daysUntilDue);
           daysUntilDue = 0;
@@ -2189,7 +1836,9 @@ adminRouter.get("/shopkeeper-earnings", verifyAdminToken, async (req, res) => {
       if (earning.grace_period_end) {
         const graceEnd = new Date(earning.grace_period_end);
         if (graceEnd > now) {
-          graceDaysRemaining = Math.ceil((graceEnd - now) / (1000 * 60 * 60 * 24));
+          graceDaysRemaining = Math.ceil(
+            (graceEnd - now) / (1000 * 60 * 60 * 24)
+          );
         }
       }
 
@@ -2695,7 +2344,9 @@ adminRouter.get("/support-tickets/:id", verifyAdminToken, async (req, res) => {
     );
 
     if (tickets.length === 0) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Ticket not found" });
     }
 
     res.json({ success: true, data: tickets[0] });
@@ -2711,10 +2362,15 @@ adminRouter.put("/support-tickets/:id", verifyAdminToken, async (req, res) => {
   try {
     const { status, admin_response } = req.body;
 
-    const [tickets] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [req.params.id]);
+    const [tickets] = await pool.execute(
+      "SELECT * FROM support_tickets WHERE id = ?",
+      [req.params.id]
+    );
 
     if (tickets.length === 0) {
-      return res.status(404).json({ success: false, message: "Ticket not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Ticket not found" });
     }
 
     const updates = [];
@@ -2740,7 +2396,10 @@ adminRouter.put("/support-tickets/:id", verifyAdminToken, async (req, res) => {
       );
     }
 
-    const [updated] = await pool.execute("SELECT * FROM support_tickets WHERE id = ?", [req.params.id]);
+    const [updated] = await pool.execute(
+      "SELECT * FROM support_tickets WHERE id = ?",
+      [req.params.id]
+    );
 
     res.json({ success: true, message: "Ticket updated", data: updated[0] });
   } catch (err) {

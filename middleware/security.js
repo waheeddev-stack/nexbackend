@@ -107,6 +107,7 @@ export const requestLogger = (req, res, next) => {
 
 // Error handling middleware
 export const errorHandler = (error, req, res, _next) => {
+  void _next;
   console.error("Error occurred:", {
     message: error.message,
     stack: config.NODE_ENV !== "production" ? error.stack : undefined,
@@ -205,7 +206,14 @@ export const corsConfig = {
   credentials: true,
   methods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  exposedHeaders: ["X-Total-Count", "X-New-Token", "X-Token-Refresh", "X-Token-Expires-In", "X-Order-Token-Warning", "X-Order-Message"],
+  exposedHeaders: [
+    "X-Total-Count",
+    "X-New-Token",
+    "X-Token-Refresh",
+    "X-Token-Expires-In",
+    "X-Order-Token-Warning",
+    "X-Order-Message",
+  ],
   maxAge: 86400, // 24 hours
 };
 

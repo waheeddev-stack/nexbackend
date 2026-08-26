@@ -1,6 +1,6 @@
 /**
  * Order Prefetch Routes
- * 
+ *
  * These endpoints allow the frontend to pre-fetch and cache data
  * needed for fast order placement.
  */

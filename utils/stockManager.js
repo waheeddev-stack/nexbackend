@@ -13,7 +13,7 @@ export const restoreStockForCancelledOrder = async (
   reason = null,
   connection = null
 ) => {
-  const conn = connection || await pool.getConnection();
+  const conn = connection || (await pool.getConnection());
   const hasExternalTx = !!connection;
 
   try {
@@ -90,7 +90,7 @@ export const restoreStockForCancelledOrder = async (
             [item.quantity, item.product_id]
           );
 
-if (updateResult.affectedRows > 0) {
+          if (updateResult.affectedRows > 0) {
             const newStock = item.current_stock + item.quantity;
 
             restoredItems.push({

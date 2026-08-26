@@ -6,7 +6,9 @@ const router = express.Router();
 
 router.get("/", verifyToken, async (req, res) => {
   try {
-    const userId = Number(req.user?.id || req.query.user_id || req.params.userId);
+    const userId = Number(
+      req.user?.id || req.query.user_id || req.params.userId
+    );
     const topN = Number(req.query.top_n || req.query.topN || 5);
 
     if (!userId) {

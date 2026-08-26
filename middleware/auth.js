@@ -122,7 +122,7 @@ export const requireRole = () => {
       // For now, we'll assume role is in token or can be determined from user ID
 
       next();
-    } catch (e) {
+    } catch {
       return res.status(500).json({
         success: false,
         message: "Authorization service error",

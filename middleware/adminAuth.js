@@ -35,7 +35,7 @@ const verifyAdminToken = async (req, res, next) => {
           "✅ JWT token verified successfully for admin ID:",
           decoded.id
         );
-      } catch (e) {
+      } catch {
         console.error("❌ Both JWE and JWT verification failed");
         throw jweError; // Throw the original JWE error
       }

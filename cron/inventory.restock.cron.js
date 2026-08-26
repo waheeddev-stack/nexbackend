@@ -44,7 +44,7 @@ export function startRestockCron() {
       // 1. stock = 0 (completely out of stock)
       // 2. baselineQty > 0 (has a valid baseline quantity set by shopkeeper)
       // Note: Products with baselineQty = 0 or NULL won't be restocked (shopkeeper hasn't set baseline yet)
-const [result] = await pool.query(`
+      const [result] = await pool.query(`
         UPDATE products
         SET stock = baselineQty,
             available_stock = 'IN STOCK'

@@ -7,20 +7,14 @@ import {
 } from "../middleware/orderErrorHandler.js";
 import { refreshTokenIfNeeded } from "../middleware/tokenRefresh.js";
 import pool from "../config/db.js";
+import { onOrderCreated } from "../middleware/inventory.order.hooks.js";
 import {
-  validateStockAvailability,
-  onOrderCreated,
-} from "../middleware/inventory.order.hooks.js";
-import {
-  TIMER_DURATION_SECONDS,
   TIME_SLOT_CONFIG,
   calculateDeliverySlots,
-  getSlotForTimestamp,
 } from "../config/constants.js";
 import {
   validatePointsUsage,
   deductWellnessPoints,
-  awardWellnessPoints,
 } from "../utils/wellnessPoints.js";
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
@@ -28,11 +22,9 @@ import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 import { calculateTieredDiscount } from "../utils/discountTiers.js";
 import {
   getCachedShopkeeper,
-  getCachedProduct,
   getCachedUser,
   invalidateProductCache,
   invalidateUserCache,
-  prefetchOrderData,
   startBackgroundRefresh,
 } from "../services/orderPrefetch.service.js";
 
@@ -48,35 +40,65 @@ startBackgroundRefresh();
  * Execute background tasks without blocking order response
  * All errors are caught and logged, never thrown
  */
-async function executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection) {
+async function executeBackgroundTasksAsync(
+  orderId,
+  userId,
+  shopkeeperId,
+  finalTotal,
+  connection
+) {
   try {
     // Execute all background tasks in parallel with error handling
     const tasks = [
       // Task 1: Send notifications (non-blocking)
-      sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal, connection)
-        .catch(err => {
-          console.error(`❌ Failed to send notifications for order ${orderId}:`, err.message);
-          return { success: false, task: 'notifications', error: err.message };
-        }),
+      sendNotificationsAsync(
+        orderId,
+        userId,
+        shopkeeperId,
+        finalTotal,
+        connection
+      ).catch((err) => {
+        console.error(
+          `❌ Failed to send notifications for order ${orderId}:`,
+          err.message
+        );
+        return { success: false, task: "notifications", error: err.message };
+      }),
 
       // Task 2: Log order analytics (non-blocking)
-      logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal)
-        .catch(err => {
-          console.error(`❌ Failed to log order analytics for order ${orderId}:`, err.message);
-          return { success: false, task: 'analytics', error: err.message };
-        })
+      logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal).catch(
+        (err) => {
+          console.error(
+            `❌ Failed to log order analytics for order ${orderId}:`,
+            err.message
+          );
+          return { success: false, task: "analytics", error: err.message };
+        }
+      ),
     ];
 
     // Execute all tasks in parallel, don't wait for them
-    Promise.allSettled(tasks).then((results) => {
-      const succeeded = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
-      console.log(`✅ Background tasks for order ${orderId}: ${succeeded} succeeded, ${failed} failed`);
-    }).catch(err => {
-      console.error(`❌ Unexpected error in background task execution for order ${orderId}:`, err);
-    });
+    Promise.allSettled(tasks)
+      .then((results) => {
+        const succeeded = results.filter(
+          (r) => r.status === "fulfilled"
+        ).length;
+        const failed = results.filter((r) => r.status === "rejected").length;
+        console.log(
+          `✅ Background tasks for order ${orderId}: ${succeeded} succeeded, ${failed} failed`
+        );
+      })
+      .catch((err) => {
+        console.error(
+          `❌ Unexpected error in background task execution for order ${orderId}:`,
+          err
+        );
+      });
   } catch (err) {
-    console.error(`❌ Failed to start background tasks for order ${orderId}:`, err);
+    console.error(
+      `❌ Failed to start background tasks for order ${orderId}:`,
+      err
+    );
     // Don't throw - background tasks should never block order placement
   }
 }
@@ -84,7 +106,13 @@ async function executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalT
 /**
  * Send push notifications to shopkeeper and customer
  */
-async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal, connection) {
+async function sendNotificationsAsync(
+  orderId,
+  userId,
+  shopkeeperId,
+  finalTotal,
+  connection
+) {
   try {
     // Get shopkeeper details
     const [shopkeeperRows] = await connection.execute(
@@ -99,16 +127,25 @@ async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal,
         const token = shopkeeper.expo_push_token;
         const title = "📦 New Order Received!";
         const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
-        const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+        const payload = {
+          orderId: String(orderId),
+          shopId: String(shopkeeperId),
+        };
 
         if (isFCMToken(token)) {
           await sendFCMPush(token, title, body, payload);
         } else {
-          await sendExpoPush(token, title, body, payload, { action: 'new_order', resourceId: String(orderId) });
+          await sendExpoPush(token, title, body, payload, {
+            action: "new_order",
+            resourceId: String(orderId),
+          });
         }
         console.log(`✅ Push notification sent to shopkeeper ${shopkeeperId}`);
       } catch (pushErr) {
-        console.error(`⚠️ Failed to send push to shopkeeper ${shopkeeperId}:`, pushErr.message);
+        console.error(
+          `⚠️ Failed to send push to shopkeeper ${shopkeeperId}:`,
+          pushErr.message
+        );
       }
     }
 
@@ -130,15 +167,21 @@ async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal,
         if (isFCMToken(token)) {
           await sendFCMPush(token, title, body, payload);
         } else {
-          await sendExpoPush(token, title, body, payload, { action: 'order_placed', resourceId: String(orderId) });
+          await sendExpoPush(token, title, body, payload, {
+            action: "order_placed",
+            resourceId: String(orderId),
+          });
         }
         console.log(`✅ Push notification sent to customer ${userId}`);
       } catch (pushErr) {
-        console.error(`⚠️ Failed to send push to customer ${userId}:`, pushErr.message);
+        console.error(
+          `⚠️ Failed to send push to customer ${userId}:`,
+          pushErr.message
+        );
       }
     }
 
-    return { success: true, task: 'notifications' };
+    return { success: true, task: "notifications" };
   } catch (error) {
     console.error(`❌ Error in sendNotificationsAsync:`, error);
     throw error;
@@ -146,43 +189,22 @@ async function sendNotificationsAsync(orderId, userId, shopkeeperId, finalTotal,
 }
 
 /**
- * Award wellness points to customer
- */
-async function awardWellnessPointsAsync(userId, finalTotal, orderId) {
-  try {
-    // Award 1% of order amount as wellness points
-    const pointsToAward = Math.floor(finalTotal * 0.01);
-
-    if (pointsToAward > 0) {
-      const conn = await pool.getConnection();
-      try {
-        await conn.execute(
-          "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
-          [pointsToAward, userId]
-        );
-        console.log(`✅ Awarded ${pointsToAward} wellness points to user ${userId} for order ${orderId}`);
-      } finally {
-        conn.release();
-      }
-    }
-
-    return { success: true, task: 'wellness_points', pointsAwarded: pointsToAward };
-  } catch (error) {
-    console.error(`❌ Error in awardWellnessPointsAsync:`, error);
-    throw error;
-  }
-}
-
-/**
  * Log order analytics for reporting
  */
-async function logOrderAnalyticsAsync(orderId, userId, shopkeeperId, finalTotal) {
+async function logOrderAnalyticsAsync(
+  orderId,
+  userId,
+  shopkeeperId,
+  finalTotal
+) {
   try {
     // Log order creation for analytics
-    console.log(`📊 Order Analytics - Order: ${orderId}, User: ${userId}, Shop: ${shopkeeperId}, Amount: ₹${finalTotal}`);
+    console.log(
+      `📊 Order Analytics - Order: ${orderId}, User: ${userId}, Shop: ${shopkeeperId}, Amount: ₹${finalTotal}`
+    );
 
     // Could be extended to write to analytics table or external service
-    return { success: true, task: 'analytics' };
+    return { success: true, task: "analytics" };
   } catch (error) {
     console.error(`❌ Error in logOrderAnalyticsAsync:`, error);
     throw error;
@@ -212,16 +234,16 @@ router.get("/delivery-slots", verifyToken, async (req, res) => {
         maxAdvanceBookingDays: TIME_SLOT_CONFIG.MAX_ADVANCE_BOOKING_DAYS,
         operatingHours: {
           start: `${TIME_SLOT_CONFIG.START_HOUR}:00`,
-          end: `${TIME_SLOT_CONFIG.END_HOUR}:00`
-        }
-      }
+          end: `${TIME_SLOT_CONFIG.END_HOUR}:00`,
+        },
+      },
     });
   } catch (error) {
-    console.error('Error fetching delivery slots:', error);
+    console.error("Error fetching delivery slots:", error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch delivery slots',
-      error: error.message
+      message: "Failed to fetch delivery slots",
+      error: error.message,
     });
   }
 });
@@ -445,7 +467,9 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
 
     // Only allow cancellation of certain statuses (case-insensitive)
     const cancellableStatuses = ["Pending", "Paid", "Processing"];
-    const orderStatus = order.status.charAt(0).toUpperCase() + order.status.slice(1).toLowerCase();
+    const orderStatus =
+      order.status.charAt(0).toUpperCase() +
+      order.status.slice(1).toLowerCase();
     if (!cancellableStatuses.includes(orderStatus)) {
       return res.status(400).json({
         success: false,
@@ -519,7 +543,8 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
 
       // Send push notification to the other party (not the canceller)
       try {
-        const targetId = userRole === "user" ? order.shopkeeper_id : order.user_id;
+        const targetId =
+          userRole === "user" ? order.shopkeeper_id : order.user_id;
         const targetTable = userRole === "user" ? "shopkeepers" : "users";
         const [[target]] = await pool.execute(
           `SELECT expo_push_token FROM ${targetTable} WHERE id = ?`,
@@ -529,22 +554,36 @@ router.post("/:orderId/cancel", verifyToken, async (req, res) => {
         if (target?.expo_push_token) {
           const cancelledBy = userRole === "user" ? "customer" : "shopkeeper";
           const title = `Order #${orderIdNum} Cancelled`;
-          const body = `Order was cancelled by ${cancelledBy}${cancellation_reason ? `: ${cancellation_reason}` : ''}`;
+          const body = `Order was cancelled by ${cancelledBy}${cancellation_reason ? `: ${cancellation_reason}` : ""}`;
           const pushPayload = {
             orderId: String(orderIdNum),
             status: "Cancelled",
             cancellation_reason,
-            cancelled_by: cancelledBy
+            cancelled_by: cancelledBy,
           };
 
           try {
             if (isFCMToken(target.expo_push_token)) {
-              await sendFCMPush(target.expo_push_token, title, body, pushPayload);
+              await sendFCMPush(
+                target.expo_push_token,
+                title,
+                body,
+                pushPayload
+              );
             } else {
-              await sendExpoPush(target.expo_push_token, title, body, pushPayload, { action: 'order_cancelled', resourceId: String(orderIdNum) });
+              await sendExpoPush(
+                target.expo_push_token,
+                title,
+                body,
+                pushPayload,
+                { action: "order_cancelled", resourceId: String(orderIdNum) }
+              );
             }
           } catch (pushErr) {
-            console.error(`Failed to send cancellation push to ${targetTable}:`, pushErr);
+            console.error(
+              `Failed to send cancellation push to ${targetTable}:`,
+              pushErr
+            );
           }
         }
       } catch (pushErr) {
@@ -593,9 +632,10 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
     );
 
     // Then delete orders
-    const [result] = await pool.execute("DELETE FROM orders WHERE user_id = ?", [
-      userId,
-    ]);
+    const [result] = await pool.execute(
+      "DELETE FROM orders WHERE user_id = ?",
+      [userId]
+    );
 
     res.json({
       success: true,
@@ -843,7 +883,8 @@ async function createOrderHandler(req, res) {
       const pid = firstItem?.productId || firstItem?.product_id;
       if (pid) {
         const [[row]] = await pool.execute(
-          "SELECT shop_id FROM products WHERE id = ? LIMIT 1", [pid]
+          "SELECT shop_id FROM products WHERE id = ? LIMIT 1",
+          [pid]
         );
         if (row) shopkeeperId = row.shop_id;
       }
@@ -871,8 +912,8 @@ async function createOrderHandler(req, res) {
         connection.release();
         return res.status(404).json({
           success: false,
-          message: 'Shopkeeper not found',
-          code: 'SHOP_NOT_FOUND'
+          message: "Shopkeeper not found",
+          code: "SHOP_NOT_FOUND",
         });
       }
       shopkeeper = shopkeeperCheck[0];
@@ -883,30 +924,36 @@ async function createOrderHandler(req, res) {
       connection.release();
       return res.status(400).json({
         success: false,
-        message: 'This shop is no longer available',
-        code: 'SHOP_DELETED'
+        message: "This shop is no longer available",
+        code: "SHOP_DELETED",
       });
     }
 
-    if (shopkeeper.subscription_status !== 'active') {
+    if (shopkeeper.subscription_status !== "active") {
       connection.release();
       return res.status(400).json({
         success: false,
         message: `Shop is currently ${shopkeeper.subscription_status}. Cannot place orders.`,
-        code: 'SHOP_INACTIVE',
-        shopStatus: shopkeeper.subscription_status
+        code: "SHOP_INACTIVE",
+        shopStatus: shopkeeper.subscription_status,
       });
     }
 
     // Validate delivery type against shop's home_delivery_active setting
-    const _deliveryType = req.body.deliveryType || req.body.order_type || req.body.delivery_type;
-    const _isDeliveryOrder = _deliveryType && _deliveryType !== 'store_pickup' && _deliveryType !== 'pickup' && _deliveryType !== 'click_and_collect';
+    const _deliveryType =
+      req.body.deliveryType || req.body.order_type || req.body.delivery_type;
+    const _isDeliveryOrder =
+      _deliveryType &&
+      _deliveryType !== "store_pickup" &&
+      _deliveryType !== "pickup" &&
+      _deliveryType !== "click_and_collect";
     if (_isDeliveryOrder && shopkeeper.home_delivery_active !== 1) {
       connection.release();
       return res.status(400).json({
         success: false,
-        message: 'Home delivery is currently disabled for this shop. Please select pickup.',
-        code: 'DELIVERY_DISABLED'
+        message:
+          "Home delivery is currently disabled for this shop. Please select pickup.",
+        code: "DELIVERY_DISABLED",
       });
     }
 
@@ -920,8 +967,6 @@ async function createOrderHandler(req, res) {
       totalAmount: reqTotalAmount,
       total,
       grandTotal,
-      shopkeeperId: reqShopkeeperId,
-      shopId,
       paymentMethod = "cod",
       deliveryAddress: reqDeliveryAddress,
       address,
@@ -938,11 +983,15 @@ async function createOrderHandler(req, res) {
     const deliveryAddress = reqDeliveryAddress || address || null;
     const creditsUsed = reqCreditsUsed || pointsToRedeem || 0;
     const scheduledTime = reqScheduledTime || req.body.scheduledTime || null;
-    const isPickup = orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup";
+    const isPickup =
+      orderType === "store_pickup" ||
+      orderType === "click_and_collect" ||
+      orderType === "pickup";
     const finalScheduledTime = isPickup ? null : scheduledTime;
 
     // Calculate raw subtotal (pre-discount) for tiered discount and points validation
-    const rawSubtotal = req.body.subtotal || reqTotalAmount || grandTotal || total;
+    const rawSubtotal =
+      req.body.subtotal || reqTotalAmount || grandTotal || total;
 
     // Validate required fields
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -967,14 +1016,14 @@ async function createOrderHandler(req, res) {
       return res.status(400).json({
         success: false,
         message: `Home delivery requires a minimum order of ₹200. Your order is ₹${Number(rawSubtotal).toFixed(0)}.`,
-        code: 'MIN_ORDER_NOT_MET',
+        code: "MIN_ORDER_NOT_MET",
       });
     }
 
     // CRITICAL FIX #3: Validate stock availability with row-level locking
     // Lock rows for update to prevent concurrent modifications
-    const productIds = items.map(item => item.productId || item.product_id);
-    const placeholders = productIds.map(() => '?').join(',');
+    const productIds = items.map((item) => item.productId || item.product_id);
+    const placeholders = productIds.map(() => "?").join(",");
 
     const [products_check] = await connection.execute(
       `SELECT id, stock, available_stock FROM products WHERE id IN (${placeholders}) AND shop_id = ? AND available_stock NOT IN ('INVISIBLE', 'OUT OF STOCK') FOR UPDATE`,
@@ -984,15 +1033,17 @@ async function createOrderHandler(req, res) {
     // Validate stock for each item
     for (const item of items) {
       const productId = item.productId || item.product_id;
-      const product = products_check.find(p => String(p.id) === String(productId));
+      const product = products_check.find(
+        (p) => String(p.id) === String(productId)
+      );
 
       if (!product) {
         await connection.rollback();
         return res.status(404).json({
           success: false,
           message: `Product ${productId} not found`,
-          code: 'PRODUCT_NOT_FOUND',
-          productId
+          code: "PRODUCT_NOT_FOUND",
+          productId,
         });
       }
 
@@ -1001,10 +1052,10 @@ async function createOrderHandler(req, res) {
         return res.status(400).json({
           success: false,
           message: `Insufficient stock for product ${productId}`,
-          code: 'INSUFFICIENT_STOCK',
+          code: "INSUFFICIENT_STOCK",
           productId,
           requestedQuantity: item.quantity,
-          availableStock: product.stock
+          availableStock: product.stock,
         });
       }
     }
@@ -1012,7 +1063,9 @@ async function createOrderHandler(req, res) {
     // Generate pickup/verification code for ALL orders (both pickup and delivery)
     const pickupCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    console.log(`📋 Order creation: deliveryType="${orderType}", pickupCode="${pickupCode}" (type=${typeof pickupCode})`);
+    console.log(
+      `📋 Order creation: deliveryType="${orderType}", pickupCode="${pickupCode}" (type=${typeof pickupCode})`
+    );
 
     // OPTIMIZATION #2: Use cached user data for points (saves ~30-50ms)
     let pointsDiscount = 0;
@@ -1064,7 +1117,8 @@ async function createOrderHandler(req, res) {
       }
     }
 
-    const { instantDiscount, walletCredit } = calculateTieredDiscount(rawSubtotal);
+    const { instantDiscount, walletCredit } =
+      calculateTieredDiscount(rawSubtotal);
 
     const finalTotal = rawSubtotal - instantDiscount - pointsDiscount;
 
@@ -1116,7 +1170,9 @@ async function createOrderHandler(req, res) {
         latitude,
         longitude,
         pickupCode,
-        orderType === "store_pickup" || orderType === "click_and_collect" || orderType === "pickup"
+        orderType === "store_pickup" ||
+        orderType === "click_and_collect" ||
+        orderType === "pickup"
           ? "pickup"
           : "delivery",
         finalScheduledTime,
@@ -1147,7 +1203,7 @@ async function createOrderHandler(req, res) {
         }
 
         // Add to batch insert
-        itemValues.push('(?, ?, ?, ?, ?)');
+        itemValues.push("(?, ?, ?, ?, ?)");
         itemParams.push(itemId, orderId, productId, quantity, price);
 
         // Prepare stock update
@@ -1160,7 +1216,7 @@ async function createOrderHandler(req, res) {
       if (itemValues.length > 0) {
         await connection.execute(
           `INSERT INTO order_items (id, order_id, product_id, quantity, price) 
-           VALUES ${itemValues.join(', ')}`,
+           VALUES ${itemValues.join(", ")}`,
           itemParams
         );
 
@@ -1203,7 +1259,7 @@ async function createOrderHandler(req, res) {
     setImmediate(async () => {
       try {
         // Execute inventory hook in background
-        await onOrderCreated(orderId).catch(err => {
+        await onOrderCreated(orderId).catch((err) => {
           console.error(`❌ Inventory hook error for order ${orderId}:`, err);
         });
 
@@ -1217,10 +1273,12 @@ async function createOrderHandler(req, res) {
 
           if (!shopkeeperData) {
             fetchPromises.push(
-              connection.execute(
-                "SELECT shop_name, name, phone, address, latitude, longitude, expo_push_token FROM shopkeepers WHERE id = ?",
-                [shopkeeperId]
-              ).then(([rows]) => rows[0])
+              connection
+                .execute(
+                  "SELECT shop_name, name, phone, address, latitude, longitude, expo_push_token FROM shopkeepers WHERE id = ?",
+                  [shopkeeperId]
+                )
+                .then(([rows]) => rows[0])
             );
           } else {
             fetchPromises.push(Promise.resolve(shopkeeperData));
@@ -1228,10 +1286,11 @@ async function createOrderHandler(req, res) {
 
           if (!userData) {
             fetchPromises.push(
-              connection.execute(
-                "SELECT expo_push_token FROM users WHERE id = ?",
-                [userId]
-              ).then(([rows]) => rows[0])
+              connection
+                .execute("SELECT expo_push_token FROM users WHERE id = ?", [
+                  userId,
+                ])
+                .then(([rows]) => rows[0])
             );
           } else {
             fetchPromises.push(Promise.resolve(userData));
@@ -1250,13 +1309,21 @@ async function createOrderHandler(req, res) {
           const token = shopkeeperData.expo_push_token;
           const title = "📦 New Order Received!";
           const body = `You have a new order (#${orderId}) worth ₹${finalTotal.toFixed(2)}.`;
-          const payload = { orderId: String(orderId), shopId: String(shopkeeperId) };
+          const payload = {
+            orderId: String(orderId),
+            shopId: String(shopkeeperId),
+          };
 
           notificationPromises.push(
             (isFCMToken(token)
               ? sendFCMPush(token, title, body, payload)
-              : sendExpoPush(token, title, body, payload, { action: 'new_order', resourceId: String(orderId) })
-            ).catch(err => console.error(`Failed to send push to shopkeeper:`, err))
+              : sendExpoPush(token, title, body, payload, {
+                  action: "new_order",
+                  resourceId: String(orderId),
+                })
+            ).catch((err) =>
+              console.error(`Failed to send push to shopkeeper:`, err)
+            )
           );
         }
 
@@ -1270,8 +1337,13 @@ async function createOrderHandler(req, res) {
           notificationPromises.push(
             (isFCMToken(token)
               ? sendFCMPush(token, title, body, payload)
-              : sendExpoPush(token, title, body, payload, { action: 'order_placed', resourceId: String(orderId) })
-            ).catch(err => console.error(`Failed to send push to customer:`, err))
+              : sendExpoPush(token, title, body, payload, {
+                  action: "order_placed",
+                  resourceId: String(orderId),
+                })
+            ).catch((err) =>
+              console.error(`Failed to send push to customer:`, err)
+            )
           );
         }
 
@@ -1302,15 +1374,23 @@ async function createOrderHandler(req, res) {
         }
 
         // Execute background tasks (wellness points, analytics)
-        await executeBackgroundTasksAsync(orderId, userId, shopkeeperId, finalTotal, connection);
+        await executeBackgroundTasksAsync(
+          orderId,
+          userId,
+          shopkeeperId,
+          finalTotal,
+          connection
+        );
 
         console.log(`✅ Background tasks completed for order ${orderId}`);
       } catch (bgError) {
-        console.error(`❌ Background task error for order ${orderId}:`, bgError);
+        console.error(
+          `❌ Background task error for order ${orderId}:`,
+          bgError
+        );
         // Don't throw - order is already created
       }
     });
-
   } catch (error) {
     await connection.rollback();
     console.error("Create order error:", error);
@@ -1325,7 +1405,7 @@ async function createOrderHandler(req, res) {
 }
 router.post("/", verifyToken, createOrderHandler);
 
-router.get('/repeat-order', verifyToken, async (req, res) => {
+router.get("/repeat-order", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
@@ -1337,7 +1417,9 @@ router.get('/repeat-order', verifyToken, async (req, res) => {
     );
 
     if (orders.length === 0) {
-      return res.status(404).json({ success: false, message: 'No completed orders found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "No completed orders found" });
     }
 
     const lastOrder = orders[0];
@@ -1352,7 +1434,7 @@ router.get('/repeat-order', verifyToken, async (req, res) => {
     return res.status(200).json({
       success: true,
       order: lastOrder,
-      items: items.map(item => ({
+      items: items.map((item) => ({
         product_id: item.product_id,
         quantity: item.quantity,
         price: parseFloat(item.price),
@@ -1362,12 +1444,14 @@ router.get('/repeat-order', verifyToken, async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error('Error fetching repeat order:', err);
-    res.status(500).json({ success: false, message: 'Error fetching repeat order' });
+    console.error("Error fetching repeat order:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error fetching repeat order" });
   }
 });
 
-router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
+router.post("/repeat-order/:orderid", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const orderId = req.params.orderid;
@@ -1378,7 +1462,7 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
     if (verifyOrder.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "No order of the user found of the specified id."
+        message: "No order of the user found of the specified id.",
       });
     }
     const oldOrder = verifyOrder[0];
@@ -1391,7 +1475,7 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
     if (items.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No items found for this order'
+        message: "No items found for this order",
       });
     }
 
@@ -1402,7 +1486,7 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
 
     // Reshape req.body to match what createOrderHandler expects
     req.body = {
-      items: items.map(i => ({
+      items: items.map((i) => ({
         productId: i.product_id,
         quantity: i.quantity,
         price: i.price,
@@ -1410,7 +1494,7 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
       shopkeeperId: oldOrder.shopkeeper_id,
       deliveryType: oldOrder.order_type || "delivery",
       totalAmount,
-      paymentMethod: oldOrder.payment_method || 'cod',
+      paymentMethod: oldOrder.payment_method || "cod",
       deliveryAddress: oldOrder.delivery_address,
       latitude: oldOrder.latitude,
       longitude: oldOrder.longitude,
@@ -1419,8 +1503,10 @@ router.post('/repeat-order/:orderid', verifyToken, async (req, res) => {
     // Delegate to the shared order-creation logic
     return createOrderHandler(req, res);
   } catch (err) {
-    console.error('Error creating repeat order:', err);
-    res.status(500).json({ success: false, message: 'Error creating repeat order' });
+    console.error("Error creating repeat order:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error creating repeat order" });
   }
 });
 
@@ -1552,9 +1638,10 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
         throw err;
       }
     } else if (dbStatus === "Completed") {
-      await pool.execute("UPDATE orders SET status = 'Completed' WHERE id = ?", [
-        orderIdNum,
-      ]);
+      await pool.execute(
+        "UPDATE orders SET status = 'Completed' WHERE id = ?",
+        [orderIdNum]
+      );
 
       // Settle pending wallet credit
       try {
@@ -1562,7 +1649,11 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           "SELECT credits_earned, credits_granted FROM orders WHERE id = ?",
           [orderIdNum]
         );
-        if (walletData && !walletData.credits_granted && walletData.credits_earned > 0) {
+        if (
+          walletData &&
+          !walletData.credits_granted &&
+          walletData.credits_earned > 0
+        ) {
           await pool.execute(
             "UPDATE users SET store_credits = COALESCE(store_credits, 0) + ? WHERE id = ?",
             [walletData.credits_earned, order.user_id]
@@ -1571,7 +1662,9 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
             "UPDATE orders SET credits_granted = 1 WHERE id = ?",
             [orderIdNum]
           );
-          console.log(`✅ Settled ${walletData.credits_earned} wallet credits for order ${orderIdNum}`);
+          console.log(
+            `✅ Settled ${walletData.credits_earned} wallet credits for order ${orderIdNum}`
+          );
         }
       } catch (settleErr) {
         console.error("Error settling wallet credits:", settleErr);
@@ -1617,7 +1710,10 @@ router.patch("/:orderId/status", verifyToken, async (req, res) => {
           if (isFCMToken(target.expo_push_token)) {
             await sendFCMPush(target.expo_push_token, title, body, payload);
           } else {
-            await sendExpoPush(target.expo_push_token, title, body, payload, { action: 'order_status_update', resourceId: String(orderIdNum) });
+            await sendExpoPush(target.expo_push_token, title, body, payload, {
+              action: "order_status_update",
+              resourceId: String(orderIdNum),
+            });
           }
         } catch (pushErr) {
           console.error(
