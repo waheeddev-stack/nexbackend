@@ -53,6 +53,7 @@ credentials.json
 # IDE
 .vscode/
 .idea/
+.opencode/
 
 # OS
 .DS_Store
