@@ -1629,6 +1629,32 @@ shopkeeperRouter.get(
 );
 
 /**
+ * GET single product by id (fixes 404 on /products/:id)
+ */
+shopkeeperRouter.get(
+  "/products/:id",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+      const productId = req.params.id;
+      const [rows] = await pool.execute(
+        "SELECT * FROM products WHERE id = ? AND shop_id = ?",
+        [productId, shop_id]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Product not found" });
+      }
+      res.json({ success: true, product: rows[0] });
+    } catch (err) {
+      console.error("Get single product error:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+/**
  * ADD new product
  */
 shopkeeperRouter.post(
@@ -1751,7 +1777,144 @@ shopkeeperRouter.post(
       });
     } catch (err) {
       console.error("Add product error:", err);
+      // Surface duplicate barcode etc as 400 instead of 500
+      if (err.code === 'ER_DUP_ENTRY' || err.message?.includes('Duplicate')) {
+        return res.status(409).json({ success: false, message: 'Duplicate barcode or product already exists', error: err.message });
+      }
       res.status(500).json({ success: false, message: "Server error" });
+    }
+  }
+);
+
+/**
+ * POST /api/shopkeeper/products/import-from-global
+ * Fetch a global product from inventory-backend (Neon Postgres) and create it as a shop product in nexbackend (TiDB)
+ * Body: { global_product_id, price?, mrp?, stock?, baselineQty?, shop_id? } - shop_id derived from token if not provided
+ * This solves "fetch global products from inventory-backend and upload the selected product to nexbackend database"
+ */
+shopkeeperRouter.post(
+  "/products/import-from-global",
+  verifyToken,
+  verifyShopkeeperStatus,
+  async (req, res) => {
+    try {
+      const shop_id = req.user.id;
+      const { global_product_id, price: overridePrice, mrp: overrideMrp, stock, baselineQty } = req.body;
+
+      if (!global_product_id) {
+        return res.status(400).json({ success: false, message: "global_product_id is required" });
+      }
+      const globalId = Number(global_product_id);
+      if (Number.isNaN(globalId)) {
+        return res.status(400).json({ success: false, message: "global_product_id must be a number" });
+      }
+
+      // Check if already imported
+      const [existingByGlobal] = await pool.execute(
+        "SELECT id FROM products WHERE shop_id = ? AND global_product_id = ? LIMIT 1",
+        [shop_id, globalId]
+      );
+      if (existingByGlobal.length > 0) {
+        return res.status(409).json({ success: false, message: "Product already imported from global catalog", existingProductId: existingByGlobal[0].id });
+      }
+
+      // Fetch from inventory-backend via HTTP (uses shared JWT_SECRET so shopkeeper token works as shopkeeper token there)
+      const INVENTORY_URL = process.env.INVENTORY_BACKEND_URL || "https://inventory-backend-lgpi.onrender.com";
+      // Use the shopkeeper's own token to authenticate to inventory-backend as shopkeeper (it accepts shopkeeper role)
+      const authHeader = req.headers.authorization;
+      let globalProduct = null;
+      try {
+        const fetchRes = await fetch(`${INVENTORY_URL}/api/shopkeeper/global-products`, {
+          headers: { Authorization: authHeader },
+        });
+        if (!fetchRes.ok) {
+          const text = await fetchRes.text();
+          throw new Error(`inventory-backend responded ${fetchRes.status}: ${text.slice(0,300)}`);
+        }
+        const json = await fetchRes.json();
+        const list = json.products || json.data || [];
+        globalProduct = list.find(p => Number(p.id) === globalId);
+        if (!globalProduct) {
+          // Fallback: try admin endpoint with same token if shopkeeper browse filtered it out
+          // Try fetching single via admin endpoint if token is admin (rare)
+          throw new Error(`Global product ${globalId} not found in catalog (available: ${list.length})`);
+        }
+      } catch (fetchErr) {
+        console.error("Fetch global product failed:", fetchErr);
+        // Fallback path: direct Postgres query if INVENTORY_DATABASE_URL is configured (for server-to-server sync)
+        if (process.env.INVENTORY_DATABASE_URL || process.env.DATABASE_URL?.includes("neon.tech")) {
+          try {
+            const { Pool } = await import("pg");
+            const connStr = process.env.INVENTORY_DATABASE_URL || process.env.DATABASE_URL;
+            const pgPool = new Pool({ connectionString: connStr, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
+            const pgRes = await pgPool.query("SELECT * FROM global_products WHERE id = $1", [globalId]);
+            await pgPool.end();
+            if (pgRes.rows.length === 0) throw new Error(`Global product ${globalId} not found via direct DB`);
+            const r = pgRes.rows[0];
+            globalProduct = {
+              id: r.id,
+              name: r.name,
+              price: r.price,
+              category: r.category,
+              description: r.description,
+              image: r.image,
+              images: r.images || [],
+              barcode: r.barcode,
+              brand: r.brand,
+              weight: r.weight,
+              unit: r.unit,
+            };
+          } catch (pgErr) {
+            return res.status(502).json({ success: false, message: "Failed to fetch global product from inventory-backend", error: fetchErr.message, pgError: pgErr.message });
+          }
+        } else {
+          return res.status(502).json({ success: false, message: "Failed to fetch global product from inventory-backend", error: fetchErr.message });
+        }
+      }
+
+      // Map fields
+      const name = globalProduct.name;
+      const category = globalProduct.category || null;
+      const description = globalProduct.description || null;
+      const barcode = globalProduct.barcode || null;
+      // Price logic: override > global price
+      const parsedGlobalPrice = Number(globalProduct.price);
+      const parsedPrice = overridePrice != null ? Number(overridePrice) : parsedGlobalPrice;
+      if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+        return res.status(400).json({ success: false, message: "Invalid price" });
+      }
+      const formattedPrice = parseFloat(parsedPrice.toFixed(2));
+      let parsedMrp = overrideMrp != null ? Number(overrideMrp) : parsedPrice;
+      if (Number.isNaN(parsedMrp) || parsedMrp < formattedPrice) parsedMrp = formattedPrice;
+      const formattedMrp = parseFloat(parsedMrp.toFixed(2));
+
+      let finalBaselineQty = baselineQty != null ? Number(baselineQty) : stock != null ? Number(stock) : 7;
+      if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) finalBaselineQty = 7;
+      let finalStock = finalBaselineQty;
+
+      const imageUrl = globalProduct.image || (Array.isArray(globalProduct.images) && globalProduct.images[0]) || null;
+      const imagesArr = Array.isArray(globalProduct.images) && globalProduct.images.length ? globalProduct.images : (imageUrl ? [imageUrl] : []);
+
+      // Check duplicate barcode in this shop's products
+      if (barcode) {
+        const [dup] = await pool.execute("SELECT id FROM products WHERE barcode = ? AND shop_id = ? LIMIT 1", [barcode, shop_id]);
+        if (dup.length > 0) {
+          return res.status(409).json({ success: false, message: `Barcode ${barcode} already exists for this shop`, existingProductId: dup[0].id });
+        }
+      }
+
+      const [result] = await pool.execute(
+        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [shop_id, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, imageUrl, JSON.stringify(imagesArr), globalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
+      );
+      const [created] = await pool.execute("SELECT * FROM products WHERE id = ?", [result.insertId]);
+      res.status(201).json({ success: true, id: result.insertId, product: created[0], message: `Imported "${name}" from global catalog (global_id=${globalId}) to shop ${shop_id}` });
+    } catch (err) {
+      console.error("Import from global error:", err);
+      if (err.code === 'ER_DUP_ENTRY') {
+        return res.status(409).json({ success: false, message: 'Duplicate entry (barcode likely)', error: err.message });
+      }
+      res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
   }
 );
