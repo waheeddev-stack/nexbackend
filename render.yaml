@@ -15,6 +15,21 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: PGHOST
+        sync: false
+      - key: PGPORT
+        sync: false
+      - key: PGUSER
+        sync: false
+      - key: PGPASSWORD
+        sync: false
+      - key: PGDATABASE
+        sync: false
+      - key: PGSSLMODE
+        value: require
+      # Legacy DB_* kept for rollback (deprecated)
       - key: DB_HOST
         sync: false
       - key: DB_PORT
@@ -27,6 +42,13 @@ services:
         sync: false
       - key: DB_SSL
         sync: false
+      - key: IMAGEKIT_PUBLIC_KEY
+        sync: false
+      - key: IMAGEKIT_PRIVATE_KEY
+        sync: false
+      - key: IMAGEKIT_URL_ENDPOINT
+        sync: false
+      # Deprecated Cloudinary shim
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

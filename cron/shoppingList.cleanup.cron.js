@@ -1,11 +1,14 @@
 import cron from "node-cron";
 import pool from "../config/db.js";
+import imagekit from "../config/imagekit.js";
+// backward compat: cloudinary shim now points to imagekit
 import cloudinary from "../config/cloudinary.js";
 
 let cronJob = null;
 
 /**
- * Cleanup shopping lists and Cloudinary images older than 15 days
+ * Cleanup shopping lists and ImageKit images older than 15 days
+ * (migrated from Cloudinary; destroys via ImageKit shim)
  */
 export async function cleanupExpiredShoppingLists() {
   console.log(
@@ -13,10 +16,11 @@ export async function cleanupExpiredShoppingLists() {
   );
   try {
     // 1. Fetch all expired shopping lists (older than 15 days) that have images
+    // Supports both legacy cloudinary_public_id and new imagekit_file_id
     const [expiredLists] = await pool.query(`
-      SELECT id, cloudinary_public_id 
+      SELECT id, cloudinary_public_id, imagekit_file_id
       FROM shopping_lists 
-      WHERE created_at < DATE_SUB(NOW(), INTERVAL 15 DAY)
+      WHERE created_at < NOW() - INTERVAL '15 days'
     `);
 
     console.log(
@@ -26,24 +30,30 @@ export async function cleanupExpiredShoppingLists() {
     const idsToDelete = [];
     const failedImageDeletes = [];
 
-    // 2. Delete Cloudinary images (when present) and track which rows can be removed
+    // 2. Delete ImageKit images (when present) and track which rows can be removed
     for (const list of expiredLists) {
-      if (!list.cloudinary_public_id) {
+      const fileId = list.imagekit_file_id || list.cloudinary_public_id;
+      if (!fileId) {
         idsToDelete.push(list.id);
         continue;
       }
 
       try {
         console.log(
-          `🗑️ Deleting Cloudinary image ${list.cloudinary_public_id} for expired list ${list.id}...`
+          `🗑️ Deleting ImageKit file ${fileId} for expired list ${list.id}...`
         );
-        await cloudinary.uploader.destroy(list.cloudinary_public_id);
+        // shim supports both destroy(fileId) and deleteFile
+        if (imagekit.isConfigured()) {
+          await imagekit.uploader.destroy(fileId);
+        } else {
+          await cloudinary.uploader.destroy(fileId);
+        }
         idsToDelete.push(list.id);
-      } catch (cloudinaryError) {
+      } catch (imagekitError) {
         failedImageDeletes.push(list.id);
         console.error(
-          `❌ Failed to delete Cloudinary image for list ${list.id}:`,
-          cloudinaryError
+          `❌ Failed to delete ImageKit file for list ${list.id}:`,
+          imagekitError
         );
       }
     }
@@ -61,7 +71,7 @@ export async function cleanupExpiredShoppingLists() {
 
     if (failedImageDeletes.length > 0) {
       console.warn(
-        `⚠️ Skipped deleting ${failedImageDeletes.length} record(s) due to Cloudinary deletion failures`
+        `⚠️ Skipped deleting ${failedImageDeletes.length} record(s) due to ImageKit deletion failures`
       );
     }
   } catch (error) {
@@ -109,6 +119,6 @@ export function getShoppingListCleanupCronStatus() {
     running: cronJob !== null,
     schedule: "0 0 * * *",
     description:
-      "Deletes expired shopping lists and their Cloudinary images after 15 days.",
+      "Deletes expired shopping lists and their ImageKit images after 15 days.",
   };
 }

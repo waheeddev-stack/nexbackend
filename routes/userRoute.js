@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import pool from "../config/db.js";
 import dotenv from "dotenv";
 import upload from "../config/upload.js";
-import cloudinary from "../config/cloudinary.js";
+import imagekit from "../config/imagekit.js";
 import verifyToken from "../middleware/auth.js";
 import { createJWEToken } from "../utils/jweToken.js";
 import { generatereferralCode } from "./referralRoute.js";
@@ -581,10 +581,10 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     let imgUrl = null;
     if (req.file) {
-      // Use streamifier for cloudinary upload
+      // Use streamifier for ImageKit upload (via shim)
       const streamifier = await import("streamifier");
       const result = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
+        const stream = imagekit.uploader.upload_stream(
           { folder: "users" },
           (error, result) => {
             if (error) return reject(error);
@@ -593,8 +593,8 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
         );
         streamifier.default.createReadStream(req.file.buffer).pipe(stream);
       });
-      imgUrl = result.secure_url;
-      console.log("Cloudinary URL:", imgUrl);
+      imgUrl = result.secure_url || result.url;
+      console.log("ImageKit URL:", imgUrl);
     }
 
     const fields = [];

@@ -1,7 +1,8 @@
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import express from "express";
-import cloudinary from "../config/cloudinary.js";
+import imagekit from "../config/imagekit.js";
+import cloudinary from "../config/cloudinary.js"; // shim -> imagekit
 import pool from "../config/db.js";
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
@@ -17,11 +18,13 @@ import { createJWEToken } from "../utils/jweToken.js";
 import { restoreStockForCancelledOrder } from "../utils/stockManager.js";
 import { generateBill } from "../utils/revenue.js";
 
-// Upload a buffer to Cloudinary (products folder) and resolve with the result.
+// Upload a buffer to ImageKit (products folder) and resolve with the result.
+// Cloudinary shim kept for backward compat; uses ImageKit under the hood.
 const uploadBufferToCloudinary = async (buffer, folder = "products") => {
+  // name kept for minimal diff; actually uploads to ImageKit
   const streamifier = await import("streamifier");
   return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
+    const stream = imagekit.uploader.upload_stream(
       { folder },
       (error, result) => {
         if (error) return reject(error);
@@ -797,7 +800,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
       try {
         const streamifier = await import("streamifier");
         const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
+          const stream = imagekit.uploader.upload_stream(
             { folder: "shopkeepers" },
             (error, result) => {
               if (error) return reject(error);
@@ -1122,7 +1125,7 @@ shopkeeperRouter.put(
         if (req.files?.img && req.files.img[0]) {
           const file = req.files.img[0];
           const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
+            const stream = imagekit.uploader.upload_stream(
               { folder: "shopkeepers" },
               (error, result) => {
                 if (error) return reject(error);
@@ -1137,7 +1140,7 @@ shopkeeperRouter.put(
         if (req.files?.upi_qr && req.files.upi_qr[0]) {
           const file = req.files.upi_qr[0];
           const result = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
+            const stream = imagekit.uploader.upload_stream(
               { folder: "shopkeepers/upi_qr" },
               (error, result) => {
                 if (error) return reject(error);

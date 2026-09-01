@@ -1,9 +1,13 @@
-import { v2 as cloudinary } from "cloudinary";
+// Deprecated shim: Cloudinary -> ImageKit migration
+// This file kept for backward compatibility; it now re-exports ImageKit shim
+// so existing `import cloudinary from "../config/cloudinary.js"` continues to work.
+// New code should import from "./imagekit.js" directly.
+import imagekitShim from "./imagekit.js";
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  console.warn(
+    "⚠️ CLOUDINARY env vars detected — project has migrated to ImageKit. Use IMAGEKIT_* vars instead. Falling back to ImageKit shim."
+  );
+}
 
-export default cloudinary;
+export default imagekitShim;

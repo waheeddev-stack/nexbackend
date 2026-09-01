@@ -11,7 +11,7 @@ New-joiner guide for the **nexbackend** Core API. The exhaustive endpoint catalo
 | Customer App | NexKirana | React Native (Expo) | Customer shopping app |
 | Shopkeeper App | shopkeeper | React Native (Expo) | Merchant ops app |
 | Admin Panel | admin-1 | React + Vite | Web console |
-| Core API | nexbackend | Node/Express 5, MySQL (TiDB Cloud) | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
+| Core API | nexbackend | Node/Express 5, PostgreSQL (Neon) via `pg` + ImageKit | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
 | Global Inventory API | inventory-backend | Node/Express, PostgreSQL (Neon) | Product catalog & AI recommendations service |
 
 Prod URLs: Core API `https://nexbackend.onrender.com`; Global Inventory API port `3001`; Chatbot `https://zeu-backend.onrender.com`. Cross-cutting: JWE JWT (jose) issued here, shared JWT_SECRET with inventory-backend; Socket.IO; FCM + Expo push.
@@ -57,7 +57,7 @@ All use `node-cron` and run against the shared `mysql2` pool (`config/db.js`).
 
 ### Recommendations / inventory bridge to inventory-backend
 - `services/recommendation.service.js` computes recommendations **locally** from this DB (co-purchase graph, Jaccard content similarity, category affinity, popularity) — no outbound HTTP call.
-- The inventory-backend peer service is a separate Node/Express + PostgreSQL (Neon) app on port `3001`. The bridge is **not** an HTTP call from this repo; it is enabled by the **shared `JWT_SECRET`** so tokens minted here are verifiable there (token portability). `config/inventory.db.bridge.js` and `utils/inventory.service.bridge.js` operate on *this* TiDB pool (`deductStockForOrder`, `restoreStockForOrder`, `syncAvailableStockStatus`, `handleAutoRestock`) — single connection source, no duplicate Sequelize instance. `global_products` (catalog) lives in this DB.
+- The inventory-backend peer service is a separate Node/Express + PostgreSQL (Neon) app on port `3001`. The bridge is **not** an HTTP call from this repo; it is enabled by the **shared `JWT_SECRET`** so tokens minted here are verifiable there (token portability). `config/inventory.db.bridge.js` and `utils/inventory.service.bridge.js` operate on *this* Neon Postgres pool (`deductStockForOrder`, `restoreStockForOrder`, `syncAvailableStockStatus`, `handleAutoRestock`) — single `pg` Pool, no duplicate Sequelize. `global_products` (catalog) lives in this DB.
 
 ---
 
@@ -78,7 +78,7 @@ npm run test:service-status
 npm run test:service-status:pbt
 ```
 
-Configure a TiDB Cloud (MySQL-compatible) instance and set `DB_HOST/DB_USER/DB_PASS/DB_NAME`, `DB_SSL=true`. On boot the server self-heals schema: adds `users.wallet` and `orders.instant_discount` columns if missing, creates `stock_restoration_log`, initializes service-status tables from `migrations/001_create_service_status_tables.sql`, and starts the three crons.
+Configure a **Neon Postgres** DB and set `DATABASE_URL` (or `PGHOST/PGUSER/PGPASSWORD/PGDATABASE`) — legacy `DB_HOST/DB_USER/DB_PASS/DB_NAME` still works via compat layer but `DATABASE_URL` is preferred. Set `PGSSLMODE=require`. On boot the server self-heals schema: adds `users.wallet` and `orders.instant_discount` columns if missing, creates `stock_restoration_log`, initializes service-status tables from `migrations/001_create_service_status_tables.sql`, resets sequences to start at 1 (`migrations/007_reset_auto_increment_to_one.sql`), and starts the three crons. Fresh DB: run `psql $DATABASE_URL -f schema/nexkirana_postgres_schema.sql`.
 
 ---
 
@@ -92,16 +92,26 @@ Sourced from `.env.example`. Validation lives in `config/environment.js` (`requi
 | `ADMIN_PASSWORD` | No | `qwI41L5U47RwaI47DasA` | Admin login password | `config/environment.js`, `adminRoute.js` |
 | `JWT_SECRET` | **Yes** | — | JWE key (≥32 chars); **shared with inventory-backend** | `utils/jweToken.js`, `config/environment.js` |
 | `JWT_EXPIRES_IN` | No | `7d` | Token lifetime | `config/environment.js` |
-| `DB_HOST` | **Yes** | — | TiDB/MySQL host | `config/db.js`, `config/environment.js` |
-| `DB_USER` | **Yes** | — | DB user | `config/db.js` |
-| `DB_PASS` | **Yes** | — | DB password | `config/db.js` |
-| `DB_NAME` | **Yes** | — | Database name | `config/db.js` |
-| `DB_PORT` | No | `4000` (README); `config` fallback `3306` | DB port | `config/environment.js` |
-| `DB_SSL` | No | `false` | Enable TLS to DB (set `true` for TiDB) | `config/db.js`, `config/environment.js` |
+| `DATABASE_URL` | **Yes** | — | Neon Postgres connection string `postgresql://...?sslmode=require` (preferred) | `config/db.js`, `config/environment.js` |
+| `PGHOST` | No* | — | Neon host fallback | `config/db.js` |
+| `PGUSER` | No* | — | Neon user | `config/db.js` |
+| `PGPASSWORD` | No* | — | Neon password | `config/db.js` |
+| `PGDATABASE` | No* | — | Neon database | `config/db.js` |
+| `PGPORT` | No | `5432` | Neon port | `config/db.js` |
+| `PGSSLMODE` | No | `require` | PG SSL mode | `config/db.js` |
+| `DB_HOST` | No | — | Legacy TiDB host (deprecated, compatibility via `pg` translator) | `config/db.js` |
+| `DB_USER` | No | — | Legacy user | `config/db.js` |
+| `DB_PASS` | No | — | Legacy password | `config/db.js` |
+| `DB_NAME` | No | — | Legacy database | `config/db.js` |
+| `DB_PORT` | No | `5432` | Legacy port | `config/environment.js` |
+| `DB_SSL` | No | `true` | Legacy SSL flag | `config/db.js`, `config/environment.js` |
 | `DB_SSL_CA` | No | — | Path to CA cert (optional) | `config/environment.js` |
-| `CLOUDINARY_CLOUD_NAME` | No | — | Cloudinary cloud | `config/cloudinary.js` |
-| `CLOUDINARY_API_KEY` | No | — | Cloudinary key | `config/cloudinary.js` |
-| `CLOUDINARY_API_SECRET` | No | — | Cloudinary secret | `config/cloudinary.js` |
+| `IMAGEKIT_PUBLIC_KEY` | **Yes** | — | ImageKit public key | `config/imagekit.js` |
+| `IMAGEKIT_PRIVATE_KEY` | **Yes** | — | ImageKit private key | `config/imagekit.js` |
+| `IMAGEKIT_URL_ENDPOINT` | **Yes** | — | ImageKit URL endpoint | `config/imagekit.js` |
+| `CLOUDINARY_CLOUD_NAME` | No | — | Cloudinary cloud (deprecated shim → ImageKit) | `config/cloudinary.js` |
+| `CLOUDINARY_API_KEY` | No | — | Cloudinary key (deprecated) | `config/cloudinary.js` |
+| `CLOUDINARY_API_SECRET` | No | — | Cloudinary secret (deprecated) | `config/cloudinary.js` |
 | `NODE_ENV` | No | `development` | Mode; toggles CORS/prod headers | `config/environment.js`, `security.js` |
 | `PORT` | No | `5000` | Listen port | `server.js`, `config/environment.js` |
 | `GOOGLE_CLIENT_ID` | No | — | Google OAuth web client ID | `utils/googleAuth.js`, `googleAuthRoute.js` |
@@ -143,7 +153,7 @@ Optional/future-use (placeholders in `.env.example`): `RAZORPAY_KEY_ID/SECRET`, 
 
 ## Database Schema (summary)
 
-MySQL/TiDB Cloud. Main tables (`README.md#database-schema`):
+**Neon Postgres** (migrated from MySQL/TiDB; `pg` pool, sequences start at 1 via `SERIAL`). Legacy MySQL schema kept at `schema/nexkirana_complete_schema.sql` with `AUTO_INCREMENT=1`. Fresh Postgres schema: `schema/nexkirana_postgres_schema.sql`. Main tables (`README.md#database-schema`):
 
 | Table | Purpose |
 |-------|---------|
@@ -211,7 +221,7 @@ Server (`server.js:154`) rooms: `shop_<id>`, `customer_<id>`, `admin`.
 |-----|----------|--------|
 | `subscription.status.cron.js` | Hourly `0 * * * *` | `active`→`grace_period`→`suspended` by payment/grace dates; logs distribution |
 | `inventory.restock.cron.js` | Daily `0 0 * * *` (override `RESTOCK_CRON_SCHEDULE`) | Restores `stock=0` products to `baselineQty` (skips `INVISIBLE`) |
-| `shoppingList.cleanup.cron.js` | Daily `0 0 * * *` | Deletes `shopping_lists` > 15 days old + their Cloudinary images |
+| `shoppingList.cleanup.cron.js` | Daily `0 0 * * *` | Deletes `shopping_lists` > 15 days old + their ImageKit images (migrated from Cloudinary) |
 
 ---
 
@@ -219,7 +229,7 @@ Server (`server.js:154`) rooms: `shop_<id>`, `customer_<id>`, `admin`.
 
 - `RENDER=true` (or `ALLOW_PARTIAL_ENV=true`) lets the app boot even when required env vars are absent — used so Render can start before secret injection.
 - **CORS per env:** production allow-list is hardcoded in `config/environment.js:corsOrigins` (`nexadminpanel.vercel.app`, `nexkirana-admin.vercel.app`, `nexkirana.vercel.app`); `security.js:corsConfig` also permits `exp://`/`exps://` Expo origins. Development = allow all. The Socket.IO CORS handler currently allows all origins in production as a fallback (see `server.js:99`).
-- Set `NODE_ENV=production` for HSTS + redacted errors + prod CORS. `DB_SSL=true` required for TiDB Cloud.
+- Set `NODE_ENV=production` for HSTS + redacted errors + prod CORS. Neon: `DATABASE_URL` with `?sslmode=require` or `PGSSLMODE=require` (legacy `DB_SSL=true` still honored). Sequences start at 1 via `migrations/007_reset_auto_increment_to_one.sql`.
 - Health: `/health` and `/api/socket-status` are unauthenticated for uptime checks.
 
 ---

@@ -1,10 +1,11 @@
 /**
  * Inventory Database Bridge
  *
- * This module provides direct access to the shared mysql2 pool for inventory operations.
+ * This module provides direct access to the shared Neon Postgres (pg) pool for inventory operations.
  * It eliminates the duplicate Sequelize instance and uses the existing database connection.
  *
  * CRITICAL: This file uses the SAME database connection pool as the rest of the backend.
+ * Migrated from mysql2/TiDB to pg/Neon Postgres.
  */
 
 import pool from "./db.js";
@@ -46,7 +47,7 @@ export async function initializeInventoryDB() {
     // Test connection to verify database access
     const connection = await pool.getConnection();
     connection.release();
-    console.log("✅ Inventory DB bridge: Using shared mysql2 pool");
+    console.log("✅ Inventory DB bridge: Using shared Neon Postgres (pg) pool");
     return { success: true };
   } catch (error) {
     console.error("❌ Inventory DB bridge initialization failed:", error);

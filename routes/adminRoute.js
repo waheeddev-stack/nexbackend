@@ -4,7 +4,8 @@ import verifyAdminToken from "../middleware/adminAuth.js";
 
 import pool from "../config/db.js";
 import upload from "../config/upload.js";
-import cloudinary from "../config/cloudinary.js";
+import imagekit from "../config/imagekit.js";
+import cloudinary from "../config/cloudinary.js"; // shim -> imagekit
 import streamifier from "streamifier";
 import { processPaymentApproval } from "../utils/subscription.js";
 import { createJWEToken } from "../utils/jweToken.js";
@@ -568,7 +569,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 //       if (req.file) {
 //         const streamUpload = () =>
 //           new Promise((resolve, reject) => {
-//             const stream = cloudinary.uploader.upload_stream(
+//             const stream = imagekit.uploader.upload_stream(
 //               (error, result) => {
 //                 if (result) resolve(result);
 //                 else reject(error);
@@ -610,7 +611,7 @@ adminRouter.get("/dashboard", verifyAdminToken, async (req, res) => {
 //       if (req.file) {
 //         const streamUpload = () =>
 //           new Promise((resolve, reject) => {
-//             const stream = cloudinary.uploader.upload_stream(
+//             const stream = imagekit.uploader.upload_stream(
 //               (error, result) => {
 //                 if (result) resolve(result);
 //                 else reject(error);
@@ -2263,7 +2264,7 @@ adminRouter.put(
         try {
           // Upload to Cloudinary
           const result = await new Promise((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
+            const uploadStream = imagekit.uploader.upload_stream(
               {
                 resource_type: "image",
                 folder: "nexkirana/payment-qr",

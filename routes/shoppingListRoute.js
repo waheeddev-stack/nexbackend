@@ -1,7 +1,7 @@
 import express from "express";
 import pool from "../config/db.js";
 import upload from "../config/upload.js";
-import cloudinary from "../config/cloudinary.js";
+import imagekit from "../config/imagekit.js";
 import verifyToken from "../middleware/auth.js";
 import streamifier from "streamifier";
 
@@ -14,7 +14,8 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
     const { items } = req.body;
 
     let imageUrl = null;
-    let cloudinaryPublicId = null;
+    let imagekitFileId = null;
+    let cloudinaryPublicId = null; // legacy alias
 
     // Validate that at least items (text) or an image is provided
     if (!items && !req.file) {
@@ -28,7 +29,7 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
     if (req.file) {
       try {
         const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
+          const stream = imagekit.uploader.upload_stream(
             { folder: "shopping_lists" },
             (error, result) => {
               if (error) return reject(error);
@@ -37,21 +38,22 @@ router.post("/", verifyToken, upload.single("image"), async (req, res) => {
           );
           streamifier.createReadStream(req.file.buffer).pipe(stream);
         });
-        imageUrl = result.secure_url;
-        cloudinaryPublicId = result.public_id;
+        imageUrl = result.secure_url || result.url;
+        imagekitFileId = result.fileId || result.public_id;
+        cloudinaryPublicId = imagekitFileId;
       } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
+        console.error("ImageKit upload error:", uploadError);
         return res.status(500).json({
           success: false,
-          message: "Failed to upload image to Cloudinary",
+          message: "Failed to upload image to ImageKit",
         });
       }
     }
 
-    // Save list to database
+    // Save list to database (store both columns for backward compat)
     const [result] = await pool.query(
-      "INSERT INTO shopping_lists (user_id, items, image_url, cloudinary_public_id) VALUES (?, ?, ?, ?)",
-      [userId, items || null, imageUrl, cloudinaryPublicId]
+      "INSERT INTO shopping_lists (user_id, items, image_url, cloudinary_public_id, imagekit_file_id) VALUES (?, ?, ?, ?, ?)",
+      [userId, items || null, imageUrl, cloudinaryPublicId, imagekitFileId]
     );
 
     // Fetch the newly created shopping list record
@@ -134,15 +136,15 @@ router.get("/:id/image", verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /api/shopping-list/:id - Manually delete a shopping list and its associated Cloudinary image
+// DELETE /api/shopping-list/:id - Manually delete a shopping list and its associated ImageKit image
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const listId = req.params.id;
 
-    // Retrieve list to check ownership and get Cloudinary public ID
+    // Retrieve list to check ownership and get ImageKit file ID
     const [[list]] = await pool.query(
-      "SELECT id, user_id, cloudinary_public_id FROM shopping_lists WHERE id = ? AND user_id = ?",
+      "SELECT id, user_id, cloudinary_public_id, imagekit_file_id FROM shopping_lists WHERE id = ? AND user_id = ?",
       [listId, userId]
     );
 
@@ -153,14 +155,15 @@ router.delete("/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Delete image from Cloudinary
-    if (list.cloudinary_public_id) {
+    // Delete image from ImageKit (fallback to legacy Cloudinary id)
+    const fileId = list.imagekit_file_id || list.cloudinary_public_id;
+    if (fileId) {
       try {
-        await cloudinary.uploader.destroy(list.cloudinary_public_id);
-      } catch (cloudinaryError) {
+        await imagekit.uploader.destroy(fileId);
+      } catch (imagekitError) {
         console.error(
-          `Failed to delete Cloudinary image on manual delete:`,
-          cloudinaryError
+          `Failed to delete ImageKit image on manual delete:`,
+          imagekitError
         );
       }
     }

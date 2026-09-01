@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS `admins` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=60001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ----------------------------------------------------------------------------
 -- Table: users
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
   UNIQUE KEY `referralcode` (`referralcode`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=630001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ----------------------------------------------------------------------------
 -- Table: refer_transaction
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS `shopkeepers` (
   UNIQUE KEY `email` (`email`),
   INDEX `idx_shopkeepers_online` (`is_online`),
   INDEX `idx_is_deleted` (`is_deleted`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=570001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ============================================================================
 -- PRODUCT TABLES
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS `global_products` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_barcode` (`barcode`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=540001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ----------------------------------------------------------------------------
 -- Table: products
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS `products` (
   INDEX `idx_baseline_qty` (`baselineQty`),
   FOREIGN KEY (`shop_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`global_product_id`) REFERENCES `global_products`(`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=600001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ============================================================================
 -- ORDER TABLES
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   INDEX `idx_orders_scheduled` (`scheduled_time`),
   FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`shopkeeper_id`) REFERENCES `shopkeepers`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2220001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ----------------------------------------------------------------------------
 -- Table: order_items
@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS `order_items` (
   KEY `fk_product_id` (`product_id`),
   FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`product_id`) REFERENCES `products`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1770001;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=1;
 
 -- ============================================================================
 -- INVENTORY MANAGEMENT TABLES

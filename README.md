@@ -11,7 +11,7 @@ A Node.js/Express backend server for NexKirana — a kirana (grocery) store mana
 | Customer App | `NexKirana` | React Native (Expo) | Customer shopping: nearby shops, cart/checkout, delivery tracking, store credits, referrals, in-app chatbot |
 | Shopkeeper App | `shopkeeper` | React Native (Expo) | Merchant ops: orders, inventory, barcode, analytics, slab billing, customer loyalty |
 | Admin Panel | `admin-1` | React + Vite | Web console: verify shopkeepers, manage global catalog, monitor orders/payments, broadcast pushes |
-| **Core API** | **`nexbackend`** | Node.js / Express 5, MySQL (TiDB Cloud) | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
+| **Core API** | **`nexbackend`** | Node.js / Express 5, PostgreSQL (Neon) via `pg` • ImageKit | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
 | Global Inventory API | `inventory-backend` | Node.js / Express, PostgreSQL (Neon) | Product catalog & AI recommendations service |
 
 **Environments (production)**
@@ -33,14 +33,15 @@ A Node.js/Express backend server for NexKirana — a kirana (grocery) store mana
 
 - **Runtime:** Node.js (>=18.17)
 - **Framework:** Express 5
-- **Database:** MySQL / TiDB Cloud (via `mysql2`)
+- **Database:** PostgreSQL (Neon) via `pg` (migrated from MySQL/TiDB `mysql2`; `config/db.js` auto-translates legacy `?` placeholders to `$n`)
 - **Auth:** JWE (Encrypted JWT) using `jose`
 - **Push Notifications:** Expo Push SDK & Firebase Cloud Messaging
-- **File Uploads:** Multer + Cloudinary
+- **File Uploads:** Multer + ImageKit (`@imagekit/nodejs` / `imagekit`); `config/cloudinary.js` remains as shim for backward compat
 - **Real-time:** Socket.IO
 - **Email:** Nodemailer / Resend
 - **Cron:** node-cron
 - **Testing:** Jest
+- **Sequences:** All tables `SERIAL` / identity sequences start at **1** (see `schema/nexkirana_postgres_schema.sql` + `migrations/007_reset_auto_increment_to_one.sql`)
 
 ## Quick Start
 
@@ -80,18 +81,28 @@ npm run lint
 | `NODE_ENV` | No | `development` | Environment mode |
 | `PORT` | No | `5000` | Server port |
 | `JWT_SECRET` | **Yes** | — | JWE encryption key (min 32 chars) |
-| `DB_HOST` | **Yes** | — | Database host (TiDB Cloud) |
-| `DB_PORT` | No | `4000` | Database port (standard fallback for TiDB Cloud) |
-| `DB_USER` | **Yes** | — | Database user |
-| `DB_PASS` | **Yes** | — | Database password |
-| `DB_NAME` | **Yes** | — | Database name |
-| `DB_SSL` | No | `false` | Enable SSL for DB connection |
+| `DATABASE_URL` | **Yes** (or PG*) | — | Neon Postgres connection string `postgresql://...?sslmode=require` (preferred) |
+| `PGHOST` | No* | — | Neon host (fallback if `DATABASE_URL` absent) |
+| `PGPORT` | No | `5432` | Postgres port |
+| `PGUSER` | No* | — | Neon user |
+| `PGPASSWORD` | No* | — | Neon password |
+| `PGDATABASE` | No* | — | Neon database |
+| `PGSSLMODE` | No | `require` | PG SSL mode |
+| `DB_HOST` | No | — | Legacy TiDB host (deprecated, kept for rollback) |
+| `DB_PORT` | No | `5432` | Legacy port |
+| `DB_USER` | No | — | Legacy user |
+| `DB_PASS` | No | — | Legacy password |
+| `DB_NAME` | No | — | Legacy DB name |
+| `DB_SSL` | No | `true` | Legacy SSL flag |
 | `DB_SSL_CA` | No | — | Optional path to SSL CA certificate |
 | `ADMIN_EMAIL` | No | `nexkirana@kirana.com` | Admin login email |
 | `ADMIN_PASSWORD` | No | `qwI41L5U47RwaI47DasA` | Admin login password |
-| `CLOUDINARY_CLOUD_NAME` | No | — | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | No | — | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | No | — | Cloudinary API secret |
+| `IMAGEKIT_PUBLIC_KEY` | **Yes** | — | ImageKit public key |
+| `IMAGEKIT_PRIVATE_KEY` | **Yes** | — | ImageKit private key |
+| `IMAGEKIT_URL_ENDPOINT` | **Yes** | — | ImageKit URL endpoint `https://ik.imagekit.io/...` |
+| `CLOUDINARY_CLOUD_NAME` | No | — | Cloudinary cloud name (deprecated shim) |
+| `CLOUDINARY_API_KEY` | No | — | Cloudinary API key (deprecated) |
+| `CLOUDINARY_API_SECRET` | No | — | Cloudinary API secret (deprecated) |
 | `GOOGLE_CLIENT_ID` | No | — | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth client secret |
 | `GOOGLE_CALLBACK_URL` | No | — | Google OAuth redirect callback URL |
@@ -653,7 +664,7 @@ Runs **every hour** to:
 Runs **daily at midnight** to restore stock for out-of-stock products (stock = 0) back to their `baselineQty`. Configurable via `RESTOCK_CRON_SCHEDULE` env var.
 
 ## `shoppingList.cleanup.cron.js` — Shopping List Cleanup
-Runs **daily at midnight** to purge database records and associated Cloudinary uploaded images for shopping lists older than 15 days, enforcing the data retention policy.
+Runs **daily at midnight** to purge database records and associated ImageKit uploaded images for shopping lists older than 15 days, enforcing the data retention policy. (Migrated from Cloudinary; `config/cloudinary.js` is now a shim.)
 
 ---
 
@@ -661,10 +672,11 @@ Runs **daily at midnight** to purge database records and associated Cloudinary u
 
 | File | Description |
 |------|-------------|
-| `config/db.js` | MySQL/TiDB Cloud connection pool (SSL support, utf8mb4 charset) |
+| `config/db.js` | Neon Postgres `pg.Pool` (SSL, `?`→`$n` translation, legacy MySQL DDL shims; sequences start at 1) |
+| `config/imagekit.js` | ImageKit SDK initialization for image uploads (`IMAGEKIT_*`) |
+| `config/cloudinary.js` | Deprecated shim — re-exports ImageKit (`uploader.upload_stream` / `destroy`) for backward compat |
 | `config/environment.js` | Environment validation and config aggregation |
 | `config/constants.js` | App-wide constants: timer duration, slot config, wellness tiers, order statuses, delivery fees, rate limits, push notification config |
-| `config/cloudinary.js` | Cloudinary SDK initialization for image uploads |
 | `config/upload.js` | Multer configuration (memoryStorage, 10MB limit, image filter) |
 | `config/firebase.js` | Firebase Admin SDK for FCM (sendNotification, sendToTopic) |
 | `config/email.js` | Nodemailer/Resend email transport (used by password reset) |
@@ -675,7 +687,7 @@ Runs **daily at midnight** to purge database records and associated Cloudinary u
 
 # Database Schema
 
-The schema uses a MySQL/TiDB Cloud database with the following main tables:
+The schema uses **Neon Postgres** (fresh DB via `schema/nexkirana_postgres_schema.sql`; legacy MySQL file `schema/nexkirana_complete_schema.sql` kept with `AUTO_INCREMENT=1`). All identity sequences start at **1** (`migrations/007_reset_auto_increment_to_one.sql`). Main tables:
 
 | Table | Description |
 |-------|-------------|
