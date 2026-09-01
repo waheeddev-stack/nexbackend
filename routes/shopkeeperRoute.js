@@ -1742,6 +1742,23 @@ shopkeeperRouter.post(
           .json({ success: false, message: "Failed to upload image" });
       }
 
+      // Validate global_product_id FK - nullify if not found locally to avoid 23503 violation
+      let globalProductId = req.body.global_product_id != null ? Number(req.body.global_product_id) : null;
+      if (globalProductId != null && !Number.isNaN(globalProductId)) {
+        try {
+          const [gExists] = await pool.execute("SELECT id FROM global_products WHERE id = ?", [globalProductId]);
+          if (gExists.length === 0) {
+            console.warn(`⚠️ global_product_id ${globalProductId} not in local global_products - nullifying to avoid FK violation`);
+            globalProductId = null;
+          }
+        } catch (e) {
+          console.warn("global_products check failed, nullifying FK:", e.message);
+          globalProductId = null;
+        }
+      } else {
+        globalProductId = null;
+      }
+
       const [result] = await pool.execute(
         `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -1757,9 +1774,7 @@ shopkeeperRouter.post(
           finalBaselineQty,
           imageUrl,
           JSON.stringify(imagesArr),
-          req.body.global_product_id != null
-            ? Number(req.body.global_product_id)
-            : null,
+          globalProductId,
           barcode != null && String(barcode).trim() !== ""
             ? String(barcode).trim()
             : null,
@@ -1783,6 +1798,10 @@ shopkeeperRouter.post(
       // Surface duplicate barcode etc as 400 instead of 500
       if (err.code === 'ER_DUP_ENTRY' || err.message?.includes('Duplicate')) {
         return res.status(409).json({ success: false, message: 'Duplicate barcode or product already exists', error: err.message });
+      }
+      // Postgres FK violation (e.g. global_product_id not in global_products)
+      if (err.code === '23503' || err.message?.includes('violates foreign key') || err.message?.includes('global_product_id')) {
+        return res.status(400).json({ success: false, message: 'Invalid global_product_id - referenced product does not exist', error: err.detail || err.message });
       }
       res.status(500).json({ success: false, message: "Server error" });
     }
@@ -1906,9 +1925,22 @@ shopkeeperRouter.post(
         }
       }
 
+      // Validate globalId FK locally — nullify if not present to avoid 23503
+      let insertGlobalId = globalId;
+      try {
+        const [gExists] = await pool.execute("SELECT id FROM global_products WHERE id = ?", [globalId]);
+        if (gExists.length === 0) {
+          console.warn(`⚠️ global_product_id ${globalId} not in local global_products - inserting with NULL FK (import from inventory-backend)`);
+          insertGlobalId = null;
+        }
+      } catch (e) {
+        console.warn("global_products check failed in import, nullifying FK:", e.message);
+        insertGlobalId = null;
+      }
+
       const [result] = await pool.execute(
         `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [shop_id, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, imageUrl, JSON.stringify(imagesArr), globalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
+        [shop_id, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, imageUrl, JSON.stringify(imagesArr), insertGlobalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
       );
       const [created] = await pool.execute("SELECT * FROM products WHERE id = ?", [result.insertId]);
       res.status(201).json({ success: true, id: result.insertId, product: created[0], message: `Imported "${name}" from global catalog (global_id=${globalId}) to shop ${shop_id}` });
@@ -1916,6 +1948,9 @@ shopkeeperRouter.post(
       console.error("Import from global error:", err);
       if (err.code === 'ER_DUP_ENTRY') {
         return res.status(409).json({ success: false, message: 'Duplicate entry (barcode likely)', error: err.message });
+      }
+      if (err.code === '23503' || err.message?.includes('violates foreign key')) {
+        return res.status(400).json({ success: false, message: 'Invalid global_product_id FK', error: err.detail || err.message });
       }
       res.status(500).json({ success: false, message: "Server error", error: err.message });
     }
