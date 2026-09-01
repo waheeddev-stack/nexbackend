@@ -6,17 +6,36 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 const { Pool } = pg;
 
+// Normalize connection string to silence pg-connection-string SSL warning
+// pg v8+ warns when sslmode=require/prefer/verify-ca are used as aliases for verify-full.
+// We explicitly set verify-full to preserve current behavior (with rejectUnauthorized:false)
+// or use uselibpqcompat=true if you want libpq compat. See https://www.postgresql.org/docs/current/libpq-ssl.html
+function normalizeConnectionString(cs) {
+  try {
+    const url = new URL(cs);
+    const mode = url.searchParams.get("sslmode");
+    if (mode === "require" || mode === "prefer" || mode === "verify-ca") {
+      url.searchParams.set("sslmode", "verify-full");
+      return url.toString();
+    }
+    return cs;
+  } catch {
+    return cs.replace(/sslmode=(require|prefer|verify-ca)/g, "sslmode=verify-full");
+  }
+}
+
 // Resolve Neon / Postgres connection
 function buildConnectionConfig() {
   // Prefer DATABASE_URL / NEON_DATABASE_URL / POSTGRES_URL
-  const connectionString =
+  const rawConnectionString =
     process.env.DATABASE_URL ||
     process.env.NEON_DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.NEON_POSTGRES_URL ||
     null;
 
-  if (connectionString) {
+  if (rawConnectionString) {
+    const connectionString = normalizeConnectionString(rawConnectionString);
     return {
       connectionString,
       ssl: { rejectUnauthorized: false },
@@ -148,6 +167,9 @@ function translateMySQLSyntax(sql) {
   s = s.replace(/\bINTEGER\s+AUTO_INCREMENT\b/gi, "SERIAL");
   s = s.replace(/\bINT\s+AUTO_INCREMENT\b/gi, "SERIAL");
   s = s.replace(/\bAUTO_INCREMENT\b/gi, "");
+
+  // MySQL -> PG compatibility: RAND() -> RANDOM()
+  s = s.replace(/\bRAND\s*\(\s*\)/gi, "RANDOM()");
 
   // MySQL NOW() is same in PG, but pg uses NOW()
   // IF NOT EXISTS is supported

@@ -23,6 +23,23 @@ let cronJob = null;
  */
 async function updateSubscriptionStatuses() {
   try {
+    // Guard: skip if shopkeepers table does not exist (fresh DB before migration)
+    try {
+      const [chk] = await pool.query(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='shopkeepers' LIMIT 1"
+      );
+      if (!chk || chk.length === 0) {
+        console.warn(
+          "⚠️ shopkeepers table not found — skipping subscription status check (run migration: node run-migration.js schema/nexkirana_postgres_schema.sql)"
+        );
+        return;
+      }
+    } catch (chkErr) {
+      // If check itself fails, log and skip to avoid crash loop
+      console.warn("⚠️ subscription check skipped — table existence check failed:", chkErr.message);
+      return;
+    }
+
     const now = new Date();
 
     // 1. Move active accounts to grace_period if payment is overdue
@@ -84,6 +101,15 @@ async function updateSubscriptionStatuses() {
       });
     }
   } catch (error) {
+    // 42P01 = undefined_table — downgrade to warning so logs aren't spammed after DB reset
+    if (error && error.code === "42P01") {
+      console.warn(
+        "⚠️ Subscription status check skipped — relation does not exist:",
+        error.message,
+        "(run migration: node run-migration.js schema/nexkirana_postgres_schema.sql)"
+      );
+      return;
+    }
     console.error("❌ Subscription status update error:", error);
   }
 }

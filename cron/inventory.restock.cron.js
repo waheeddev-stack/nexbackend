@@ -71,7 +71,7 @@ export function startRestockCron() {
         SELECT id, name, shop_id, stock, baselineQty
         FROM products
         WHERE stock > 0 AND baselineQty > 0
-        ORDER BY RAND()
+        ORDER BY RANDOM()
         LIMIT 5
       `);
 
