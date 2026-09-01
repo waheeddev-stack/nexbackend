@@ -22,9 +22,10 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
     let queryParams = [];
 
     // Add status filtering based on query parameter
+    // Postgres: is_verified SMALLINT, pending = IS NULL ('' is MySQL artifact, invalid in PG)
     if (status && status !== "all") {
       if (status === "pending") {
-        whereClause += " AND (is_verified IS NULL OR is_verified = '')";
+        whereClause += " AND is_verified IS NULL";
       } else if (status === "approved") {
         whereClause += " AND is_verified = ?";
         queryParams.push(1);
@@ -58,7 +59,7 @@ adminRouter.get("/shopkeepers", verifyAdminToken, async (req, res) => {
         COUNT(*) as total,
         COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
         COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
-        COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
+        COUNT(CASE WHEN is_verified IS NULL THEN 1 END) as pending
       FROM shopkeepers 
       WHERE id IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
     `);
@@ -85,15 +86,15 @@ adminRouter.get("/shopkeepers/stats", verifyAdminToken, async (req, res) => {
         COUNT(*) as total,
         COUNT(CASE WHEN is_verified = 1 THEN 1 END) as approved,
         COUNT(CASE WHEN is_verified = 0 THEN 1 END) as rejected,
-        COUNT(CASE WHEN is_verified IS NULL OR is_verified = '' THEN 1 END) as pending
+        COUNT(CASE WHEN is_verified IS NULL THEN 1 END) as pending
       FROM shopkeepers 
       WHERE id IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
     `);
 
     const [recentActivity] = await pool.execute(`
       SELECT 
-        COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as new_this_week,
-        COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_this_month
+        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '7 days' THEN 1 END) as new_this_week,
+        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_this_month
       FROM shopkeepers 
       WHERE id IS NOT NULL AND (is_deleted = 0 OR is_deleted IS NULL)
     `);

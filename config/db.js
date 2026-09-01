@@ -139,6 +139,11 @@ function translateMySQLSyntax(sql) {
     }
   }
 
+  // MySQL empty-string integer comparison -> IS NULL (e.g., is_verified = '' in Postgres SMALLINT)
+  // Handles pending shopkeeper checks: is_verified IS NULL OR is_verified = '' -> is_verified IS NULL
+  s = s.replace(/(\w+)\s*=\s*''/g, "$1 IS NULL");
+  s = s.replace(/IS NULL\s+OR\s+\w+\s+IS NULL/g, "IS NULL");
+
   // Transaction keywords
   if (/^START\s+TRANSACTION/i.test(trimmed)) return "BEGIN";
   // DATE_SUB(NOW(), INTERVAL 15 DAY) -> NOW() - INTERVAL '15 days'
