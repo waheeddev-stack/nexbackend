@@ -18,6 +18,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import pool from "../config/db.js";
+import nodeFetch from "node-fetch";
+import imagekit from "../config/imagekit.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,7 +98,37 @@ async function fetchGlobalViaDb(id) {
     brand: row.brand,
     weight: row.weight,
     unit: row.unit,
-  };
+   };
+}
+
+// Download an image from a URL and upload to ImageKit.
+async function reuploadImageToImageKit(imageUrl) {
+  if (!imageUrl) return null;
+
+   try {
+    // Download image from URL
+    const response = await nodeFetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.statusText}`);
+    }
+    const buffer = await response.buffer();
+
+    // Upload to ImageKit
+    const streamifier = await import("streamifier");
+    return new Promise((resolve, reject) => {
+      const stream = imagekit.uploader.upload_stream(
+        { folder: "products" },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result.secure_url);
+        }
+      );
+      streamifier.default.createReadStream(buffer).pipe(stream);
+    });
+  } catch (error) {
+    console.error(`Failed to re-upload image ${imageUrl}:`, error.message);
+    return imageUrl; // Return original URL on failure
+  }
 }
 
 async function main() {
@@ -146,17 +178,30 @@ async function main() {
   const formattedPrice = parseFloat(parsedPrice.toFixed(2));
   const parsedMrp = mrpArg != null ? mrpArg : formattedPrice;
   const formattedMrp = parseFloat(parsedMrp.toFixed(2));
-  const finalBaselineQty = stockArg != null ? stockArg : 7;
-  const finalStock = finalBaselineQty;
-  const imageUrl = g.image || (Array.isArray(g.images) && g.images[0]) || null;
-  const imagesArr = Array.isArray(g.images) && g.images.length ? g.images : (imageUrl ? [imageUrl] : []);
+   const finalBaselineQty = stockArg != null ? stockArg : 7;
+   const finalStock = finalBaselineQty;
+   const imageUrl = g.image || (Array.isArray(g.images) && g.images[0]) || null;
+   const imagesArr = Array.isArray(g.images) && g.images.length ? g.images : (imageUrl ? [imageUrl] : []);
 
-  // 5. Insert
-  const [result] = await pool.execute(
-    `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [shopId, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, imageUrl, JSON.stringify(imagesArr), globalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
-  );
+   // Re-upload images from Cloudinary to ImageKit
+   console.log(`Re-uploading ${imagesArr.length} image(s) from Cloudinary to ImageKit for product: ${name}`);
+   let imagekitImageUrls = [];
+   for (let i = 0; i < imagesArr.length; i++) {
+     const cloudinaryUrl = imagesArr[i];
+     const imagekitUrl = await reuploadImageToImageKit(cloudinaryUrl);
+     imagekitImageUrls.push(imagekitUrl || cloudinaryUrl); // Use original if re-upload fails
+   }
+
+   // Extract primary image and convert array to single image with ImageKit URLs
+   const finalImageUrl = imagekitImageUrls[0] || imageUrl;
+   const finalImagesArr = imagekitImageUrls.length ? imagekitImageUrls : (finalImageUrl ? [finalImageUrl] : []);
+
+   // 5. Insert
+   const [result] = await pool.execute(
+     `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     [shopId, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, finalImageUrl, JSON.stringify(finalImagesArr), globalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
+   );
   console.log(`✅ Inserted as products.id=${result.insertId}`);
 
   const [created] = await pool.execute("SELECT * FROM products WHERE id = ?", [result.insertId]);

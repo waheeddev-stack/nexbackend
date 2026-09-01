@@ -4,6 +4,7 @@ import express from "express";
 import imagekit from "../config/imagekit.js";
 import cloudinary from "../config/cloudinary.js"; // shim -> imagekit
 import pool from "../config/db.js";
+import nodeFetch from "node-fetch";
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMPush, isFCMToken } from "../utils/fcmPush.js";
 import upload from "../config/upload.js";
@@ -34,6 +35,28 @@ const uploadBufferToCloudinary = async (buffer, folder = "products") => {
     streamifier.default.createReadStream(buffer).pipe(stream);
   });
 };
+
+// Download an image from a URL and upload to ImageKit.
+// This is used for re-uploading images from Cloudinary to ImageKit during import.
+async function reuploadImageToImageKit(imageUrl) {
+  if (!imageUrl) return null;
+
+  try {
+    // Download image from URL
+    const response = await nodeFetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.statusText}`);
+    }
+    const buffer = await response.buffer();
+
+    // Upload to ImageKit
+    const result = await uploadBufferToCloudinary(buffer);
+    return result.secure_url;
+  } catch (error) {
+    console.error(`Failed to re-upload image ${imageUrl}:`, error.message);
+    return imageUrl; // Return original URL on failure
+  }
+}
 
 // Collect product image URLs from a request.
 // Supports a legacy single `image` file and/or multiple `images` files, plus an
@@ -1914,10 +1937,23 @@ shopkeeperRouter.post(
       if (Number.isNaN(finalBaselineQty) || finalBaselineQty < 0) finalBaselineQty = 7;
       let finalStock = finalBaselineQty;
 
-      const imageUrl = globalProduct.image || (Array.isArray(globalProduct.images) && globalProduct.images[0]) || null;
-      const imagesArr = Array.isArray(globalProduct.images) && globalProduct.images.length ? globalProduct.images : (imageUrl ? [imageUrl] : []);
+       const imageUrl = globalProduct.image || (Array.isArray(globalProduct.images) && globalProduct.images[0]) || null;
+       const imagesArr = Array.isArray(globalProduct.images) && globalProduct.images.length ? globalProduct.images : (imageUrl ? [imageUrl] : []);
 
-      // Check duplicate barcode in this shop's products
+       // Re-upload images from Cloudinary to ImageKit
+       console.log(`Re-uploading ${imagesArr.length} image(s) from Cloudinary to ImageKit for product: ${name}`);
+       let imagekitImageUrls = [];
+       for (let i = 0; i < imagesArr.length; i++) {
+         const cloudinaryUrl = imagesArr[i];
+         const imagekitUrl = await reuploadImageToImageKit(cloudinaryUrl);
+         imagekitImageUrls.push(imagekitUrl || cloudinaryUrl); // Use original if re-upload fails
+       }
+
+       // Extract primary image and convert array to single image with ImageKit URLs
+       const finalImageUrl = imagekitImageUrls[0] || imageUrl;
+       const finalImagesArr = imagekitImageUrls.length ? imagekitImageUrls : (finalImageUrl ? [finalImageUrl] : []);
+
+       // Check duplicate barcode in this shop's products
       if (barcode) {
         const [dup] = await pool.execute("SELECT id FROM products WHERE barcode = ? AND shop_id = ? LIMIT 1", [barcode, shop_id]);
         if (dup.length > 0) {
@@ -1938,10 +1974,10 @@ shopkeeperRouter.post(
         insertGlobalId = null;
       }
 
-      const [result] = await pool.execute(
-        `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [shop_id, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, imageUrl, JSON.stringify(imagesArr), insertGlobalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
-      );
+       const [result] = await pool.execute(
+         `INSERT INTO products (shop_id, name, description, category, price, mrp, stock, baselineQty, image, images, global_product_id, barcode, available_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         [shop_id, name.trim(), description, category, formattedPrice, formattedMrp, finalStock, finalBaselineQty, finalImageUrl, JSON.stringify(finalImagesArr), insertGlobalId, barcode, finalStock > 0 ? "IN STOCK" : "OUT OF STOCK"]
+       );
       const [created] = await pool.execute("SELECT * FROM products WHERE id = ?", [result.insertId]);
       res.status(201).json({ success: true, id: result.insertId, product: created[0], message: `Imported "${name}" from global catalog (global_id=${globalId}) to shop ${shop_id}` });
     } catch (err) {
