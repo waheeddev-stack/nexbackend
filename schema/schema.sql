@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS shopkeepers (
   upi_qr VARCHAR(255),
   latitude DECIMAL(10,8),
   longitude DECIMAL(11,8),
-  is_verified TINYINT(1) DEFAULT 0,
+  is_verified TINYINT(1) DEFAULT NULL,
   refresh_token VARCHAR(500),
   is_online TINYINT(1) DEFAULT 1,
   is_deleted TINYINT(1) DEFAULT 0,

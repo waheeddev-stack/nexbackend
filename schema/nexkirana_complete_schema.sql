@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS `shopkeepers` (
   `upi_qr` VARCHAR(255) DEFAULT NULL,
   `latitude` DECIMAL(10,8) DEFAULT NULL,
   `longitude` DECIMAL(11,8) DEFAULT NULL,
-  `is_verified` TINYINT(1) DEFAULT 0,
+  `is_verified` TINYINT(1) DEFAULT NULL,
   `refresh_token` VARCHAR(500) DEFAULT NULL,
   -- Online status
   `is_online` TINYINT(1) DEFAULT 1,

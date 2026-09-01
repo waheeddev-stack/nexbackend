@@ -436,11 +436,11 @@ router.post("/google/shopkeepers/register", async (req, res) => {
     );
     const nextId = maxIdResult[0].max_id + 1;
 
-    // Create new shopkeeper
+    // Create new shopkeeper — is_verified NULL = pending approval
     await pool.execute(
       `INSERT INTO shopkeepers 
-       (id, name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token, is_verified) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       [
         nextId,
         googleUser.name,
@@ -468,7 +468,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
       latitude,
       longitude,
       is_online: 0,
-      subscription_status: "trial",
+      subscription_status: "active",
     };
 
     // Generate tokens

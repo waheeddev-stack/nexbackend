@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS shopkeepers (
   upi_qr VARCHAR(255) DEFAULT NULL,
   latitude DECIMAL(10,8) DEFAULT NULL,
   longitude DECIMAL(11,8) DEFAULT NULL,
-  is_verified SMALLINT DEFAULT 0,
+  is_verified SMALLINT DEFAULT NULL,
   refresh_token VARCHAR(500) DEFAULT NULL,
   is_online SMALLINT DEFAULT 1,
   is_deleted SMALLINT DEFAULT 0,

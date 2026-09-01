@@ -5,7 +5,7 @@ dotenv.config();
 
 /**
  * Middleware to check shopkeeper subscription status
- * Blocks access if trial expired and payment overdue beyond grace period
+ * Blocks access if payment overdue beyond grace period
  *
  * Can be enabled/disabled via ENFORCE_SUBSCRIPTIONS environment variable
  */
@@ -28,7 +28,6 @@ export const checkSubscriptionStatus = async (req, res, next) => {
     console.log(`🔍 Subscription check for shopkeeper ${shopkeeperId}:`, {
       status: status.status,
       isActive: status.isActive,
-      trialDaysRemaining: status.trialDaysRemaining,
       needsPayment: status.needsPayment,
     });
 
@@ -43,7 +42,6 @@ export const checkSubscriptionStatus = async (req, res, next) => {
         days_overdue: status.daysOverdue,
         next_payment_due: status.nextPaymentDue,
         grace_period_end: status.gracePeriodEnd,
-        trial_ended: status.trialEndDate,
       });
     }
 
@@ -63,7 +61,7 @@ export const checkSubscriptionStatus = async (req, res, next) => {
     // Attach full status to request for use in routes
     req.subscriptionStatus = status;
 
-    // Allow access if trial active or payment current
+    // Allow access if payment current
     next();
   } catch (err) {
     console.error("❌ Subscription check error:", err);

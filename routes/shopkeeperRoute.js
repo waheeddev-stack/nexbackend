@@ -826,9 +826,9 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
 
     console.log("Manually generating ID:", nextId);
 
-    // Insert new shopkeeper with explicit ID
+    // Insert new shopkeeper with explicit ID — is_verified NULL = pending (admin sees Approve/Reject)
     const [result] = await pool.execute(
-      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       [
         nextId,
         name,
@@ -2396,7 +2396,7 @@ shopkeeperRouter.get(
 
       // Get shopkeeper subscription info
       const [shopkeeper] = await pool.execute(
-        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due
+        `SELECT shop_scale, subscription_status, next_payment_due
        FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
       );
@@ -2437,7 +2437,6 @@ shopkeeperRouter.get(
           pending_amount: pendingPayments[0]?.pending_amount || 0,
           subscription_status: shopData.subscription_status || "active",
           shop_scale: shopData.shop_scale || "small",
-          trial_ends_at: shopData.trial_ends_at,
           next_payment_due: shopData.next_payment_due,
           total_orders: orders.length,
           delivered_orders: bill.totalOrdersProcessed,
@@ -2535,7 +2534,7 @@ shopkeeperRouter.get(
 
       // Get shopkeeper subscription details
       const [shopkeeper] = await pool.execute(
-        `SELECT shop_scale, subscription_status, trial_ends_at, next_payment_due, last_payment_date, grace_period_end
+        `SELECT shop_scale, subscription_status, next_payment_due, last_payment_date, grace_period_end
         FROM shopkeepers WHERE id = ?`,
         [shopkeeper_id]
       );
@@ -2709,7 +2708,6 @@ shopkeeperRouter.get("/subscription-status", verifyToken, async (req, res) => {
         subscription_status: data.subscription_status || "active",
         graceDaysRemaining,
         daysUntilDue,
-        is_trial_active: false,
         is_verified: data.is_verified === 1 || data.is_verified === true,
         can_access:
           data.subscription_status !== "suspended" &&
