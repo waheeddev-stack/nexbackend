@@ -84,6 +84,9 @@ const imagekitShim = {
       return {
         write(chunk) {
           chunks.push(chunk);
+          // Return true so Readable.pipe() never waits for a 'drain' event
+          // (this is not a real Writable — backpressure does not apply).
+          return true;
         },
         end(chunk) {
           if (chunk) chunks.push(chunk);
@@ -93,9 +96,16 @@ const imagekitShim = {
             .then((res) => callback(null, res))
             .catch((err) => callback(err));
         },
-        // streamifier compatibility: pipe support
+        // streamifier / Readable.pipe compatibility: pipe() requires these
+        // to exist on the destination.
         on() {
           return this;
+        },
+        once() {
+          return this;
+        },
+        emit() {
+          return true;
         },
       };
     },

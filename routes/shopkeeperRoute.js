@@ -47,7 +47,7 @@ async function reuploadImageToImageKit(imageUrl) {
     if (!response.ok) {
       throw new Error(`Failed to download image: ${response.statusText}`);
     }
-    const buffer = await response.buffer();
+    const buffer = Buffer.from(await response.arrayBuffer());
 
     // Upload to ImageKit
     const result = await uploadBufferToCloudinary(buffer);
@@ -55,6 +55,59 @@ async function reuploadImageToImageKit(imageUrl) {
   } catch (error) {
     console.error(`Failed to re-upload image ${imageUrl}:`, error.message);
     return imageUrl; // Return original URL on failure
+  }
+}
+
+// Fetch a global product from inventory-backend by id.
+// Tries the live HTTP API first (using the caller's auth header when given —
+// inventory-backend accepts the same JWT_SECRET so shopkeeper tokens work there),
+// then falls back to a direct Postgres query against the inventory-backend database
+// (only when INVENTORY_DATABASE_URL explicitly points at the inventory Neon DB).
+// The local `global_products` table in nexbackend is NOT the source of truth for
+// catalog images — inventory-backend is.
+async function getGlobalProductById(globalId, authHeader) {
+  const INVENTORY_URL = process.env.INVENTORY_BACKEND_URL || "https://inventory-backend-lgpi.onrender.com";
+  try {
+    const res = await nodeFetch(`${INVENTORY_URL}/api/shopkeeper/global-products`, authHeader ? { headers: { Authorization: authHeader } } : undefined);
+    if (!res.ok) throw new Error(`inventory-backend responded ${res.status}`);
+    const json = await res.json();
+    const list = json.products || json.data || [];
+    const found = list.find((p) => Number(p.id) === Number(globalId));
+    if (found) return found;
+    throw new Error(`global product ${globalId} not found via HTTP (list size ${list.length})`);
+  } catch (httpErr) {
+    console.warn(`getGlobalProductById HTTP fetch failed: ${httpErr.message} — trying direct DB fallback`);
+    // Fallback: direct Postgres query against inventory-backend's Neon DB.
+    // IMPORTANT: never fall back to DATABASE_URL — that is nexbackend's OWN database.
+    const connStr = process.env.INVENTORY_DATABASE_URL;
+    if (!connStr) {
+      console.warn("getGlobalProductById: INVENTORY_DATABASE_URL not set — no fallback available");
+      return null;
+    }
+    try {
+      const { Pool } = await import("pg");
+      const pgPool = new Pool({ connectionString: connStr, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 8000 });
+      const r = await pgPool.query("SELECT * FROM global_products WHERE id = $1", [Number(globalId)]);
+      await pgPool.end();
+      if (r.rows.length === 0) return null;
+      const row = r.rows[0];
+      return {
+        id: row.id,
+        name: row.name,
+        price: row.price,
+        category: row.category,
+        description: row.description,
+        image: row.image,
+        images: row.images || (row.image ? [row.image] : []),
+        barcode: row.barcode,
+        brand: row.brand,
+        weight: row.weight,
+        unit: row.unit,
+      };
+    } catch (pgErr) {
+      console.warn("getGlobalProductById direct DB fallback failed:", pgErr.message);
+      return null;
+    }
   }
 }
 
@@ -1765,18 +1818,101 @@ shopkeeperRouter.post(
           .json({ success: false, message: "Failed to upload image" });
       }
 
-      // Validate global_product_id FK - nullify if not found locally to avoid 23503 violation
+      // Validate global_product_id FK. If the id is not in the LOCAL global_products
+      // table, fetch the product from inventory-backend (the catalog source of truth),
+      // upsert it locally so the FK link is preserved, and (when the client did not
+      // upload its own images) re-upload the catalog images to ImageKit.
       let globalProductId = req.body.global_product_id != null ? Number(req.body.global_product_id) : null;
+      let globalProductData = null;
       if (globalProductId != null && !Number.isNaN(globalProductId)) {
+        // Check the local catalog cache first. If the row exists but has no image
+        // data (e.g. synced before the `images` column existed), treat it as stale.
+        let localRowStale = true;
         try {
-          const [gExists] = await pool.execute("SELECT id FROM global_products WHERE id = ?", [globalProductId]);
-          if (gExists.length === 0) {
-            console.warn(`⚠️ global_product_id ${globalProductId} not in local global_products - nullifying to avoid FK violation`);
-            globalProductId = null;
+          const [gRow] = await pool.execute("SELECT id, name, price, category, description, image, images, barcode FROM global_products WHERE id = ?", [globalProductId]);
+          if (gRow.length > 0) {
+            let localImages = gRow[0].images;
+            if (typeof localImages === "string") {
+              try { localImages = JSON.parse(localImages); } catch { localImages = []; }
+            }
+            const hasImages = Array.isArray(localImages) && localImages.length > 0;
+            if (hasImages) {
+              globalProductData = {
+                id: gRow[0].id,
+                name: gRow[0].name,
+                price: gRow[0].price,
+                category: gRow[0].category,
+                description: gRow[0].description,
+                image: gRow[0].image,
+                images: Array.isArray(localImages) && localImages.length ? localImages : (gRow[0].image ? [gRow[0].image] : []),
+                barcode: gRow[0].barcode,
+              };
+              localRowStale = false;
+            }
           }
         } catch (e) {
-          console.warn("global_products check failed, nullifying FK:", e.message);
+          console.warn("local global_products fetch failed:", e.message);
+        }
+
+        if (localRowStale) {
+          // Not cached locally (or cache is stale) — fetch from inventory-backend,
+          // the catalog source of truth, and upsert so the FK link is preserved.
+          globalProductData = await getGlobalProductById(globalProductId, req.headers.authorization);
+          if (globalProductData) {
+            try {
+              await pool.execute(
+                `INSERT INTO global_products (id, name, price, category, description, image, images, barcode)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET
+                   image = EXCLUDED.image,
+                   images = EXCLUDED.images`,
+                [
+                  globalProductId,
+                  globalProductData.name,
+                  parseFloat(Number(globalProductData.price).toFixed(2)),
+                  globalProductData.category || null,
+                  globalProductData.description || null,
+                  globalProductData.image || null,
+                  JSON.stringify(
+                    Array.isArray(globalProductData.images) && globalProductData.images.length
+                      ? globalProductData.images
+                      : globalProductData.image
+                        ? [globalProductData.image]
+                        : []
+                  ),
+                  globalProductData.barcode || null,
+                ]
+              );
+              console.log(`✅ Synced global product ${globalProductId} from inventory-backend into local global_products`);
+            } catch (e) {
+              console.warn("global_products upsert failed (continuing — FK may still be valid):", e.message);
+            }
+          }
+        }
+
+        if (!globalProductData) {
+          console.warn(`⚠️ global_product_id ${globalProductId} not found in inventory-backend - nullifying FK`);
           globalProductId = null;
+        }
+
+        // When the client did not upload its own images, use the catalog images.
+        // Catalog images live in Cloudinary (inventory-backend) — re-upload to ImageKit.
+        if (globalProductId != null && !imageUrl && globalProductData) {
+          const catalogImages = Array.isArray(globalProductData.images) && globalProductData.images.length
+            ? globalProductData.images
+            : globalProductData.image
+              ? [globalProductData.image]
+              : [];
+          if (catalogImages.length > 0) {
+            console.log(`Re-uploading ${catalogImages.length} catalog image(s) from Cloudinary to ImageKit for product: ${name}`);
+            const imagekitUrls = [];
+            for (const catalogUrl of catalogImages) {
+              const imagekitUrl = await reuploadImageToImageKit(catalogUrl);
+              imagekitUrls.push(imagekitUrl || catalogUrl);
+            }
+            imageUrl = imagekitUrls[0] || null;
+            imagesArr = imagekitUrls;
+          }
         }
       } else {
         globalProductId = null;
@@ -1864,57 +2000,10 @@ shopkeeperRouter.post(
       }
 
       // Fetch from inventory-backend via HTTP (uses shared JWT_SECRET so shopkeeper token works as shopkeeper token there)
-      const INVENTORY_URL = process.env.INVENTORY_BACKEND_URL || "https://inventory-backend-lgpi.onrender.com";
-      // Use the shopkeeper's own token to authenticate to inventory-backend as shopkeeper (it accepts shopkeeper role)
       const authHeader = req.headers.authorization;
-      let globalProduct = null;
-      try {
-        const fetchRes = await fetch(`${INVENTORY_URL}/api/shopkeeper/global-products`, {
-          headers: { Authorization: authHeader },
-        });
-        if (!fetchRes.ok) {
-          const text = await fetchRes.text();
-          throw new Error(`inventory-backend responded ${fetchRes.status}: ${text.slice(0,300)}`);
-        }
-        const json = await fetchRes.json();
-        const list = json.products || json.data || [];
-        globalProduct = list.find(p => Number(p.id) === globalId);
-        if (!globalProduct) {
-          // Fallback: try admin endpoint with same token if shopkeeper browse filtered it out
-          // Try fetching single via admin endpoint if token is admin (rare)
-          throw new Error(`Global product ${globalId} not found in catalog (available: ${list.length})`);
-        }
-      } catch (fetchErr) {
-        console.error("Fetch global product failed:", fetchErr);
-        // Fallback path: direct Postgres query if INVENTORY_DATABASE_URL is configured (for server-to-server sync)
-        if (process.env.INVENTORY_DATABASE_URL || process.env.DATABASE_URL?.includes("neon.tech")) {
-          try {
-            const { Pool } = await import("pg");
-            const connStr = process.env.INVENTORY_DATABASE_URL || process.env.DATABASE_URL;
-            const pgPool = new Pool({ connectionString: connStr, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
-            const pgRes = await pgPool.query("SELECT * FROM global_products WHERE id = $1", [globalId]);
-            await pgPool.end();
-            if (pgRes.rows.length === 0) throw new Error(`Global product ${globalId} not found via direct DB`);
-            const r = pgRes.rows[0];
-            globalProduct = {
-              id: r.id,
-              name: r.name,
-              price: r.price,
-              category: r.category,
-              description: r.description,
-              image: r.image,
-              images: r.images || [],
-              barcode: r.barcode,
-              brand: r.brand,
-              weight: r.weight,
-              unit: r.unit,
-            };
-          } catch (pgErr) {
-            return res.status(502).json({ success: false, message: "Failed to fetch global product from inventory-backend", error: fetchErr.message, pgError: pgErr.message });
-          }
-        } else {
-          return res.status(502).json({ success: false, message: "Failed to fetch global product from inventory-backend", error: fetchErr.message });
-        }
+      let globalProduct = await getGlobalProductById(globalId, authHeader);
+      if (!globalProduct) {
+        return res.status(502).json({ success: false, message: `Failed to fetch global product ${globalId} from inventory-backend (HTTP and direct DB fallback both failed)` });
       }
 
       // Map fields
@@ -1961,16 +2050,36 @@ shopkeeperRouter.post(
         }
       }
 
-      // Validate globalId FK locally — nullify if not present to avoid 23503
+      // Upsert the global product into the LOCAL global_products table so the
+      // products.global_product_id FK reference is preserved (local table may be
+      // empty — inventory-backend is the catalog source of truth).
       let insertGlobalId = globalId;
       try {
-        const [gExists] = await pool.execute("SELECT id FROM global_products WHERE id = ?", [globalId]);
-        if (gExists.length === 0) {
-          console.warn(`⚠️ global_product_id ${globalId} not in local global_products - inserting with NULL FK (import from inventory-backend)`);
-          insertGlobalId = null;
-        }
+        await pool.execute(
+          `INSERT INTO global_products (id, name, price, category, description, image, images, barcode)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (id) DO UPDATE SET
+             image = EXCLUDED.image,
+             images = EXCLUDED.images`,
+          [
+            globalId,
+            globalProduct.name,
+            formattedPrice,
+            globalProduct.category || null,
+            globalProduct.description || null,
+            finalImageUrl || globalProduct.image || null,
+            JSON.stringify(
+              Array.isArray(globalProduct.images) && globalProduct.images.length
+                ? globalProduct.images
+                : finalImageUrl
+                  ? [finalImageUrl]
+                  : []
+            ),
+            barcode,
+          ]
+        );
       } catch (e) {
-        console.warn("global_products check failed in import, nullifying FK:", e.message);
+        console.warn("global_products upsert failed, inserting with NULL FK:", e.message);
         insertGlobalId = null;
       }
 
