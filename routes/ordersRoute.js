@@ -989,6 +989,27 @@ async function createOrderHandler(req, res) {
       orderType === "pickup";
     const finalScheduledTime = isPickup ? null : scheduledTime;
 
+    // Delivery orders require a valid delivery slot; pickup orders do not
+    if (!isPickup) {
+      const parsedSlot = finalScheduledTime
+        ? new Date(finalScheduledTime)
+        : null;
+      if (
+        !finalScheduledTime ||
+        !parsedSlot ||
+        parsedSlot.toString() === "Invalid Date" ||
+        isNaN(parsedSlot.getTime())
+      ) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message:
+            "A valid delivery time slot is required for home delivery orders. Please select a slot and try again.",
+          code: "DELIVERY_SLOT_REQUIRED",
+        });
+      }
+    }
+
     // Calculate raw subtotal (pre-discount) for tiered discount and points validation
     const rawSubtotal =
       req.body.subtotal || reqTotalAmount || grandTotal || total;
@@ -1122,22 +1143,15 @@ async function createOrderHandler(req, res) {
 
     const finalTotal = rawSubtotal - instantDiscount - pointsDiscount;
 
-    // Get next order ID (TiDB doesn't support auto-increment reliably)
-    const [maxOrderId] = await connection.execute(
-      "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
-    );
-    const orderId = maxOrderId[0].nextId;
-
     // walletCredit stored as credits_earned in point units (10 points = ₹1)
     const creditsEarned = Math.round(walletCredit * 10);
 
     // Precompute timer timestamps for click & collect
     const now = new Date();
-    // Insert order
-    await connection.execute(
+    // Insert order — id is SERIAL (Postgres), auto-generated; insertId from RETURNING id
+    const [orderResult] = await connection.execute(
       `
       INSERT INTO orders (
-        id,
         user_id, 
         shopkeeper_id, 
         status, 
@@ -1154,10 +1168,9 @@ async function createOrderHandler(req, res) {
         order_type,
         scheduled_time,
         created_at
-      ) VALUES (?, ?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ) VALUES (?, ?, 'Pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `,
       [
-        orderId,
         userId,
         shopkeeperId,
         paymentMethod,
@@ -1178,16 +1191,19 @@ async function createOrderHandler(req, res) {
         finalScheduledTime,
       ]
     );
+    const orderId = orderResult.insertId;
+    if (!orderId) {
+      await connection.rollback();
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create order. Please try again.",
+        code: "ORDER_ID_GENERATION_FAILED",
+      });
+    }
 
     // OPTIMIZATION: Batch insert order items (saves ~200-400ms per item)
     if (items.length > 0) {
-      // Get starting item ID
-      const [maxItemId] = await connection.execute(
-        "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items"
-      );
-      let itemId = maxItemId[0].nextId;
-
-      // Build batch insert query
+      // Build batch insert query — item ids are SERIAL, auto-generated
       const itemValues = [];
       const itemParams = [];
       const stockUpdates = [];
@@ -1203,19 +1219,17 @@ async function createOrderHandler(req, res) {
         }
 
         // Add to batch insert
-        itemValues.push("(?, ?, ?, ?, ?)");
-        itemParams.push(itemId, orderId, productId, quantity, price);
+        itemValues.push("(?, ?, ?, ?)");
+        itemParams.push(orderId, productId, quantity, price);
 
         // Prepare stock update
         stockUpdates.push({ productId, quantity });
-
-        itemId++;
       }
 
       // Single batch insert for all items (instead of N queries)
       if (itemValues.length > 0) {
         await connection.execute(
-          `INSERT INTO order_items (id, order_id, product_id, quantity, price) 
+          `INSERT INTO order_items (order_id, product_id, quantity, price) 
            VALUES ${itemValues.join(", ")}`,
           itemParams
         );

@@ -892,21 +892,10 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
       }
     }
 
-    // WORKAROUND: Manual ID generation for TiDB Cloud
-    // TiDB Cloud doesn't support AUTO_INCREMENT on existing columns
-    // Generate ID manually until table is recreated with AUTO_RANDOM
-    const [maxIdResult] = await pool.execute(
-      "SELECT COALESCE(MAX(id), 0) as max_id FROM shopkeepers"
-    );
-    const nextId = maxIdResult[0].max_id + 1;
-
-    console.log("Manually generating ID:", nextId);
-
-    // Insert new shopkeeper with explicit ID — is_verified NULL = pending (admin sees Approve/Reject)
+    // Insert new shopkeeper — id is SERIAL (Postgres), auto-generated; is_verified NULL = pending (admin sees Approve/Reject)
     const [result] = await pool.execute(
-      `INSERT INTO shopkeepers (id, name, email, password, phone, shop_name, address, latitude, longitude, img, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      `INSERT INTO shopkeepers (name, email, password, phone, shop_name, address, latitude, longitude, img, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       [
-        nextId,
         name,
         email,
         hashedPassword,
@@ -919,7 +908,7 @@ shopkeeperRouter.post("/signup", upload.single("img"), async (req, res) => {
       ]
     );
 
-    const newShopkeeperId = result.insertId || nextId;
+    const newShopkeeperId = result.insertId;
     console.log("New shopkeeper created with ID:", newShopkeeperId);
 
     // Validate ID
@@ -3898,18 +3887,13 @@ shopkeeperRouter.post(
             .json({ success: false, message: "Customer not found" });
         }
 
-        // Generate next order ID
-        const [[maxOrderId]] = await conn.execute(
-          "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM orders"
+        // Insert the order — id is SERIAL (Postgres), auto-generated
+        const [orderResult] = await conn.execute(
+          `INSERT INTO orders (user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, order_type, created_at)
+           VALUES (?, ?, 'Completed', 'manual', ?, ?, 0, 1, 'manual', NOW())`,
+          [customer_id, shopkeeper_id, finalAmount, creditsEarned]
         );
-        const orderId = maxOrderId.nextId;
-
-        // Insert the order - directly completed with credits granted
-        await conn.execute(
-          `INSERT INTO orders (id, user_id, shopkeeper_id, status, payment_method, total_amount, credits_earned, credits_used, credits_granted, order_type, created_at)
-           VALUES (?, ?, ?, 'Completed', 'manual', ?, ?, 0, 1, 'manual', NOW())`,
-          [orderId, customer_id, shopkeeper_id, finalAmount, creditsEarned]
-        );
+        const orderId = orderResult.insertId;
 
         // Grant credits to customer immediately
         if (creditsEarned > 0) {
@@ -3921,11 +3905,6 @@ shopkeeperRouter.post(
 
         // Insert order items if provided
         if (items && Array.isArray(items) && items.length > 0) {
-          const [[maxItemId]] = await conn.execute(
-            "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items"
-          );
-          let itemId = maxItemId.nextId;
-
           const itemValues = [];
           const itemParams = [];
           for (const item of items) {
@@ -3933,13 +3912,13 @@ shopkeeperRouter.post(
             const quantity = item.quantity || item.qty || 1;
             const price = item.price || 0;
             if (!productId) continue;
-            itemValues.push("(?, ?, ?, ?, ?)");
-            itemParams.push(itemId++, orderId, productId, quantity, price);
+            itemValues.push("(?, ?, ?, ?)");
+            itemParams.push(orderId, productId, quantity, price);
           }
 
           if (itemValues.length > 0) {
             await conn.execute(
-              `INSERT INTO order_items (id, order_id, product_id, quantity, price) VALUES ${itemValues.join(", ")}`,
+              `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ${itemValues.join(", ")}`,
               itemParams
             );
           }

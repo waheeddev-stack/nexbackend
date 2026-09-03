@@ -380,22 +380,17 @@ userrouter.post("/signup", authRateLimit, async (req, res) => {
     // Hash the password
     const hashedPassword = await bcrypt.hash(validatedData.password, 12); // Increased rounds for better security
 
-    // Get the next available ID (since auto-increment isn't working)
-    const [maxIdResult] = await pool.execute(
-      "SELECT MAX(id) as maxId FROM users"
-    );
-    const nextId = (maxIdResult[0].maxId || 0) + 1;
-
+    // Insert new user — id is SERIAL (Postgres), auto-generated
     const MAX_ATTEMPTS = 5;
     let inserted = false;
+    let nextId = null;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const referralcode = generatereferralCode(validatedData.name);
       try {
-        // Insert new user into database with explicit ID
-        await pool.execute(
-          "INSERT INTO users (id, name, email, password, phone, referralcode) VALUES (?, ?, ?, ?, ?, ?)",
+        // Insert new user into database
+        const [result] = await pool.execute(
+          "INSERT INTO users (name, email, password, phone, referralcode) VALUES (?, ?, ?, ?, ?)",
           [
-            nextId,
             validatedData.name,
             validatedData.email,
             hashedPassword,
@@ -403,10 +398,12 @@ userrouter.post("/signup", authRateLimit, async (req, res) => {
             referralcode,
           ]
         );
+        nextId = result.insertId;
         inserted = true;
         break;
       } catch (error) {
-        if (error.errno === 1062) {
+        // MySQL 1062 or Postgres 23505 = duplicate key (e.g. referralcode collision) — retry
+        if (error.errno === 1062 || error.code === "23505") {
           continue;
         }
         console.log("New User couldn't be added: " + error);

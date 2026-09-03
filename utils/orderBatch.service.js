@@ -93,15 +93,9 @@ export async function batchCreateOrderItems(connection, orderId, items) {
     return [];
   }
 
-  // Get next item ID
-  const [[{ nextId }]] = await connection.execute(
-    "SELECT COALESCE(MAX(id), 0) + 1 as nextId FROM order_items"
-  );
-
-  // Prepare batch insert data
+  // Prepare batch insert data — item ids are SERIAL (Postgres), auto-generated
   const values = [];
   const placeholders = [];
-  let itemId = nextId;
 
   for (const item of items) {
     const productId = item.productId || item.product_id;
@@ -113,9 +107,8 @@ export async function batchCreateOrderItems(connection, orderId, items) {
       continue;
     }
 
-    placeholders.push("(?, ?, ?, ?, ?)");
-    values.push(itemId, orderId, productId, quantity, price);
-    itemId++;
+    placeholders.push("(?, ?, ?, ?)");
+    values.push(orderId, productId, quantity, price);
   }
 
   if (placeholders.length === 0) {
@@ -123,13 +116,12 @@ export async function batchCreateOrderItems(connection, orderId, items) {
   }
 
   // Single multi-row insert
-  const query = `INSERT INTO order_items (id, order_id, product_id, quantity, price)
+  const query = `INSERT INTO order_items (order_id, product_id, quantity, price)
                  VALUES ${placeholders.join(",")}`;
 
   await connection.execute(query, values);
 
-  return items.map((item, idx) => ({
-    itemId: nextId + idx,
+  return items.map((item) => ({
     productId: item.productId || item.product_id,
     quantity: item.quantity || item.qty || 1,
   }));

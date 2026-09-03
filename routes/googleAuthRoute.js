@@ -430,19 +430,12 @@ router.post("/google/shopkeepers/register", async (req, res) => {
       });
     }
 
-    // Get the next available ID manually due to TiDB auto-increment limitations
-    const [maxIdResult] = await pool.execute(
-      "SELECT COALESCE(MAX(id), 0) as max_id FROM shopkeepers"
-    );
-    const nextId = maxIdResult[0].max_id + 1;
-
-    // Create new shopkeeper — is_verified NULL = pending approval
-    await pool.execute(
+    // Create new shopkeeper — id is SERIAL (Postgres), auto-generated; is_verified NULL = pending approval
+    const [insertResult] = await pool.execute(
       `INSERT INTO shopkeepers 
-       (id, name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token, is_verified) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+       (name, shop_name, email, password, phone, address, google_id, img, latitude, longitude, expo_push_token, is_verified) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       [
-        nextId,
         googleUser.name,
         shopName,
         googleUser.email,
@@ -456,6 +449,7 @@ router.post("/google/shopkeepers/register", async (req, res) => {
         expoPushToken || null,
       ]
     );
+    const nextId = insertResult.insertId;
 
     const shopkeeper = {
       id: nextId,
