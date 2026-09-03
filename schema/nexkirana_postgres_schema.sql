@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS orders (
   pickup_code VARCHAR(10) DEFAULT NULL,
   timer_started_at TIMESTAMPTZ DEFAULT NULL,
   timer_expires_at TIMESTAMPTZ DEFAULT NULL,
+  cancellation_reason TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_id, status);

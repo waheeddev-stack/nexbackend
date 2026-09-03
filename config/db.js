@@ -303,13 +303,13 @@ const db = {
           return [{ affectedRows: 0 }, []];
         }
         if (trimmed === "COMMIT") {
-          await client.query("COMMIT");
           inTransaction = false;
+          await client.query("COMMIT");
           return [{ affectedRows: 0 }, []];
         }
         if (trimmed === "ROLLBACK") {
-          await client.query("ROLLBACK");
           inTransaction = false;
+          await client.query("ROLLBACK");
           return [{ affectedRows: 0 }, []];
         }
         const result = await runQuery(sql, params, client);
@@ -325,6 +325,22 @@ const db = {
       },
       execute: async function (sql, params) {
         return this.query(sql, params);
+      },
+      // mysql2-style transaction API (routes call these directly)
+      beginTransaction: async () => {
+        inTransaction = true;
+        await client.query("BEGIN");
+        return [{ affectedRows: 0 }, []];
+      },
+      commit: async () => {
+        inTransaction = false;
+        await client.query("COMMIT");
+        return [{ affectedRows: 0 }, []];
+      },
+      rollback: async () => {
+        inTransaction = false;
+        await client.query("ROLLBACK");
+        return [{ affectedRows: 0 }, []];
       },
       release: () => {
         client.release();

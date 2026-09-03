@@ -327,18 +327,18 @@ router.get("/", verifyToken, async (req, res) => {
       `
       SELECT 
         o.id,
-        o.id as orderId,
+        o.id as "orderId",
         o.id as order_id,
-        o.user_id as userId,
+        o.user_id as "userId",
         o.user_id as user_id,
-        o.shopkeeper_id as shopkeeperId,
+        o.shopkeeper_id as "shopkeeperId",
         o.shopkeeper_id as shopkeeper_id,
         CASE 
           WHEN o.status IN ('Completed', 'Delivered') THEN 'completed'
           WHEN o.status = 'Cancelled' THEN 'cancelled'
           ELSE 'pending'
         END as status,
-        o.status as originalStatus,
+        o.status as "originalStatus",
         o.total_amount,
         o.instant_discount,
         o.credits_earned,
@@ -372,14 +372,14 @@ router.get("/", verifyToken, async (req, res) => {
       const [items] = await pool.execute(
         `
         SELECT 
-          oi.order_id as orderId,
-          oi.product_id as productId,
+          oi.order_id as "orderId",
+          oi.product_id as "productId",
           oi.quantity,
           oi.price,
           p.mrp,
-          p.name as productName,
-          p.image as productImage,
-          p.category as productCategory
+          p.name as "productName",
+          p.image as "productImage",
+          p.category as "productCategory"
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
         WHERE oi.order_id IN (${placeholders})
@@ -845,8 +845,8 @@ router.get("/:orderId/status", verifyToken, async (req, res) => {
 
     const [orderInfo] = await pool.execute(
       `
-      SELECT id, id as orderId, status, pickup_code,
-      total_amount as totalAmount, instant_discount as instantDiscount, credits_earned as creditsEarned, credits_granted as creditsGranted, created_at as createdAt
+      SELECT id, id as "orderId", status, pickup_code,
+      total_amount as "totalAmount", instant_discount as "instantDiscount", credits_earned as "creditsEarned", credits_granted as "creditsGranted", created_at as "createdAt"
       FROM orders 
       WHERE id = ? AND user_id = ?
     `,

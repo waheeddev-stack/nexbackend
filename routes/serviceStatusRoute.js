@@ -15,8 +15,8 @@ serviceStatusRouter.get("/status", async (req, res) => {
       SELECT 
         ss.status,
         ss.message,
-        ss.updated_at as lastUpdated,
-        a.email as updatedBy
+        ss.updated_at as "lastUpdated",
+        a.email as "updatedBy"
       FROM service_status ss
       LEFT JOIN admins a ON ss.updated_by = a.id
       WHERE ss.is_active = TRUE
@@ -37,11 +37,15 @@ serviceStatusRouter.get("/status", async (req, res) => {
 
     const statusRecord = rows[0];
     console.log("Returning status:", statusRecord.status);
+    // Postgres returns TIMESTAMPTZ as Date objects; guard against null/undefined
+    const rawLastUpdated = statusRecord.lastUpdated ?? statusRecord.lastupdated ?? null;
     res.json({
       status: statusRecord.status,
       message: statusRecord.message,
-      lastUpdated: statusRecord.lastUpdated.toISOString(),
-      updatedBy: statusRecord.updatedBy || "system",
+      lastUpdated: rawLastUpdated
+        ? new Date(rawLastUpdated).toISOString()
+        : new Date().toISOString(),
+      updatedBy: statusRecord.updatedBy || statusRecord.updatedby || "system",
     });
   } catch (error) {
     console.error("Error fetching service status:", error);
