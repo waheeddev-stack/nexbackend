@@ -13,6 +13,8 @@ async function ensureCallbackTable() {
       CREATE TABLE IF NOT EXISTS callback_requests (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        shopkeeper_id INTEGER,
+        source VARCHAR(20) DEFAULT 'customer',
         name VARCHAR(255),
         phone VARCHAR(20) NOT NULL,
         email VARCHAR(255),
@@ -24,7 +26,20 @@ async function ensureCallbackTable() {
         notes TEXT
       )
     `);
-    // ensure status check via index (not constraint to keep compatible)
+    // Migration: add source/shopkeeper_id columns for pre-existing tables
+    const addColumnIfMissing = async (column, ddl) => {
+      try {
+        const [cols] = await pool.execute(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'callback_requests' AND column_name = ?
+        `, [column]);
+        if (cols.length === 0) await pool.execute(ddl);
+      } catch (e) {
+        console.warn(`callback_requests migration (${column}) failed:`, e.message);
+      }
+    };
+    await addColumnIfMissing("shopkeeper_id", "ALTER TABLE callback_requests ADD COLUMN shopkeeper_id INTEGER");
+    await addColumnIfMissing("source", "ALTER TABLE callback_requests ADD COLUMN source VARCHAR(20) DEFAULT 'customer'");
     tableEnsured = true;
     console.log("✅ callback_requests table ready");
   } catch (err) {
@@ -39,10 +54,11 @@ callbackRouter.post("/", verifyToken, async (req, res) => {
   try {
     await ensureCallbackTable();
     const userId = req.user?.id || null;
+    const source = req.user?.role === "shopkeeper" ? "shopkeeper" : "customer";
     let { phone, email, name } = req.body || {};
 
-    // Fallback: derive from users table if not supplied
-    if ((!phone || !email || !name) && userId) {
+    // Fallback: derive from users table if not supplied (customers)
+    if ((!phone || !email || !name) && userId && source === "customer") {
       try {
         const [rows] = await pool.execute(
           "SELECT name, phone, email FROM users WHERE id = ?",
@@ -104,8 +120,8 @@ callbackRouter.post("/", verifyToken, async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO callback_requests (user_id, name, phone, email, status) VALUES (?, ?, ?, ?, 'pending')`,
-      [userId, name, phone, email]
+      `INSERT INTO callback_requests (user_id, shopkeeper_id, source, name, phone, email, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      [source === "shopkeeper" ? null : userId, source === "shopkeeper" ? userId : null, source, name, phone, email]
     );
 
     // Emit socket to admin room if available
@@ -114,7 +130,9 @@ callbackRouter.post("/", verifyToken, async (req, res) => {
       if (io) {
         io.to("admin").emit("callbackRequest", {
           id: result.insertId,
-          user_id: userId,
+          user_id: source === "shopkeeper" ? null : userId,
+          shopkeeper_id: source === "shopkeeper" ? userId : null,
+          source,
           name,
           phone,
           email,
@@ -130,7 +148,9 @@ callbackRouter.post("/", verifyToken, async (req, res) => {
       requestId: result.insertId,
       data: {
         id: result.insertId,
-        user_id: userId,
+        user_id: source === "shopkeeper" ? null : userId,
+        shopkeeper_id: source === "shopkeeper" ? userId : null,
+        source,
         name,
         phone,
         email,
@@ -169,7 +189,7 @@ callbackRouter.post("/guest", async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO callback_requests (user_id, name, phone, email, status) VALUES (NULL, ?, ?, ?, 'pending')`,
+      `INSERT INTO callback_requests (user_id, shopkeeper_id, source, name, phone, email, status) VALUES (NULL, NULL, 'guest', ?, ?, ?, 'pending')`,
       [name, phone, email]
     );
 
@@ -193,8 +213,10 @@ callbackRouter.post("/guest", async (req, res) => {
 callbackRouter.get("/my", verifyToken, async (req, res) => {
   try {
     await ensureCallbackTable();
+    const isShopkeeper = req.user?.role === "shopkeeper";
+    const idCol = isShopkeeper ? "shopkeeper_id" : "user_id";
     const [rows] = await pool.execute(
-      "SELECT id, name, phone, email, status, created_at, updated_at, called_at FROM callback_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+      `SELECT id, name, phone, email, status, created_at, updated_at, called_at FROM callback_requests WHERE ${idCol} = ? ORDER BY created_at DESC LIMIT 50`,
       [req.user.id]
     );
     return res.json({ success: true, data: rows });

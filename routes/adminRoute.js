@@ -1785,27 +1785,34 @@ function ensureCallbackTableAdmin() {
   return ensureCallbackTableAdminPromise;
 }
 
-// GET /api/admin/callback-requests - list queue (filter: status=all|pending|called)
+// GET /api/admin/callback-requests - list queue (filter: status=all|pending|called, source=all|customer|shopkeeper|guest)
 adminRouter.get("/callback-requests", verifyAdminToken, async (req, res) => {
   try {
     await ensureCallbackTableAdmin();
-    const { status = "all" } = req.query;
-    let where = "";
+    const { status = "all", source = "all" } = req.query;
+    const conditions = [];
     const params = [];
     if (status === "pending" || status === "to_be_called") {
-      where = "WHERE c.status = 'pending'";
+      conditions.push("c.status = 'pending'");
     } else if (status === "called") {
-      where = "WHERE c.status = 'called'";
+      conditions.push("c.status = 'called'");
     }
+    if (["customer", "shopkeeper", "guest"].includes(source)) {
+      conditions.push("c.source = ?");
+      params.push(source);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const [rows] = await pool.execute(
-      `SELECT c.id, c.user_id, c.name, c.phone, c.email, c.status, c.created_at, c.updated_at, c.called_at, c.called_by, c.notes,
-              u.name as user_name, u.email as user_email, u.phone as user_phone
+      `SELECT c.id, c.user_id, c.shopkeeper_id, c.source, c.name, c.phone, c.email, c.status, c.created_at, c.updated_at, c.called_at, c.called_by, c.notes,
+              u.name as user_name, u.email as user_email, u.phone as user_phone,
+              s.shop_name as shopkeeper_shop_name, s.name as shopkeeper_name, s.email as shopkeeper_email
        FROM callback_requests c
        LEFT JOIN users u ON c.user_id = u.id
+       LEFT JOIN shopkeepers s ON c.shopkeeper_id = s.id
        ${where}
        ORDER BY
-         CASE WHEN c.status = 'pending' THEN 0 ELSE 1 END,
-         c.created_at DESC
+          CASE WHEN c.status = 'pending' THEN 0 ELSE 1 END,
+          c.created_at DESC
        LIMIT 500`,
       params
     );
@@ -1813,7 +1820,10 @@ adminRouter.get("/callback-requests", verifyAdminToken, async (req, res) => {
       SELECT
         COUNT(*)::int as total,
         COUNT(CASE WHEN status = 'pending' THEN 1 END)::int as pending,
-        COUNT(CASE WHEN status = 'called' THEN 1 END)::int as called
+        COUNT(CASE WHEN status = 'called' THEN 1 END)::int as called,
+        COUNT(CASE WHEN source = 'shopkeeper' THEN 1 END)::int as shopkeeper,
+        COUNT(CASE WHEN source = 'customer' THEN 1 END)::int as customer,
+        COUNT(CASE WHEN source = 'guest' THEN 1 END)::int as guest
       FROM callback_requests
     `);
     res.json({ success: true, data: rows, counts: counts[0] });
