@@ -229,7 +229,9 @@ function toPG(sql, params = []) {
 
   // Fix double parentheses for IN clause: "IN (( $1, $2 ))" -> "IN ( $1, $2 )"
   outSql = outSql.replace(/IN\s*\(\s*\(\s*/g, "IN (");
-  outSql = outSql.replace(/\s*\)\s*\)/g, ")");
+  // Fix double-close for IN with array placeholders only (avoid breaking math like cos(radians($1))))
+  outSql = outSql.replace(/IN\s*\((\$[^)]+)\)\s*\)/g, "IN ($1)");
+  // Do not globally replace "))" -> ")" as it breaks math expressions
 
   // Edge: if we consumed fewer params than ? count due to array handling, adjust
   // Remaining params (if any) already handled.

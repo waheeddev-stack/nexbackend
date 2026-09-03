@@ -29,7 +29,8 @@ router.post("/resolve", async (req, res) => {
     const maxLng = userLng + BBOX;
 
     const [rows] = await pool.execute(
-      `SELECT
+      `SELECT * FROM (
+         SELECT
           id,
           shop_name AS name,
           address,
@@ -48,7 +49,8 @@ router.post("/resolve", async (req, res) => {
           AND subscription_status NOT IN ('suspended')
           AND latitude BETWEEN ? AND ?
           AND longitude BETWEEN ? AND ?
-        HAVING distance_km <= ?
+       ) AS sub
+        WHERE distance_km <= ?
         ORDER BY distance_km ASC
         LIMIT 5`,
       [userLat, userLng, userLat, minLat, maxLat, minLng, maxLng, MAX_DIST_KM]

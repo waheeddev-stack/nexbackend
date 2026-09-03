@@ -79,7 +79,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
     // Formula: (6371 * acos(cos(radians(user_lat)) * cos(radians(shop_lat)) * cos(radians(shop_lng) - radians(user_lng)) + sin(radians(user_lat)) * sin(radians(shop_lat))))
     // Returns distance in km (not meters) to be compatible with formatDistance
     const [allPotentialShops] = await pool.execute(
-      `SELECT id, name, shop_name, address, phone, latitude, longitude, img, COALESCE(is_online, 1) AS is_online, is_verified, home_delivery_active,
+      `SELECT * FROM (
+         SELECT id, name, shop_name, address, phone, latitude, longitude, img, COALESCE(is_online, 1) AS is_online, is_verified, home_delivery_active,
               CASE
                 WHEN latitude IS NOT NULL AND longitude IS NOT NULL AND latitude != 0 AND longitude != 0
                 THEN (6371 * acos(
@@ -94,7 +95,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
        FROM shopkeepers
        WHERE is_verified = 1
          AND subscription_status NOT IN ('suspended', 'grace_period')
-       HAVING distance <= ? OR distance = 999999
+       ) AS sub
+       WHERE distance <= ? OR distance = 999999
        ORDER BY distance ASC`,
       [lat, lng, lat, finalRadiusKm]
     );
@@ -160,7 +162,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
 
     // Check for unverified shops nearby (for debugging)
     const [unverifiedShops] = await pool.execute(
-      `SELECT id, name, shop_name, is_verified, is_online,
+      `SELECT * FROM (
+         SELECT id, name, shop_name, is_verified, is_online,
               (6371 * acos(
                  LEAST(1, GREATEST(-1,
                    cos(radians(?)) * cos(radians(latitude)) *
@@ -176,7 +179,8 @@ userrouter.get("/nearby-shops", async (req, res) => {
          AND latitude != 0 
          AND longitude != 0
          AND is_verified = 0
-       HAVING distance <= ?
+       ) AS sub
+       WHERE distance <= ?
        ORDER BY distance ASC`,
       [lat, lng, lat, minLat, maxLat, minLng, maxLng, finalRadiusKm]
     );
