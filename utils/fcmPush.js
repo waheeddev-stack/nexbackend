@@ -37,7 +37,24 @@ function initializeFirebase() {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
-      console.log("✅ Firebase Admin SDK initialized with service account");
+
+      // Loud misconfiguration check: the service account MUST belong to the
+      // same Firebase project as the mobile apps, else every send fails with
+      // messaging/mismatched-credential ("SenderId mismatch").
+      const expectedProject =
+        process.env.FIREBASE_PROJECT_ID || "zeu-mobile";
+      if (
+        serviceAccount.project_id &&
+        serviceAccount.project_id !== expectedProject
+      ) {
+        console.error(
+          `❌ FCM MISCONFIGURATION: FIREBASE_SERVICE_ACCOUNT(_KEY) is for project "${serviceAccount.project_id}" but the mobile apps use "${expectedProject}". All FCM sends will fail with SenderId mismatch. Download the service account key from Firebase console -> ${expectedProject} -> Settings -> Service accounts and set it as FIREBASE_SERVICE_ACCOUNT_KEY.`
+        );
+      }
+
+      console.log(
+        `✅ Firebase Admin SDK initialized with service account (project: ${serviceAccount.project_id})`
+      );
     } else {
       // Use application default credentials
       admin.initializeApp({

@@ -7,27 +7,34 @@ const initializeFirebase = () => {
   if (firebaseApp) return firebaseApp;
 
   try {
-    // For production, use service account key
-    // For development, you can use the default credentials
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-      const serviceAccount = JSON.parse(
-        process.env.FIREBASE_SERVICE_ACCOUNT_KEY
-      );
+    // Service account key from env (single-line JSON)
+    // MUST belong to the SAME Firebase project as the mobile apps (zeu-mobile,
+    // sender 50454345450) or FCM sends fail with "SenderId mismatch".
+    const serviceAccountJson =
+      process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+      process.env.FIREBASE_SERVICE_ACCOUNT;
+
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
       firebaseApp = admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        projectId: "nexkirana-c9da5",
+        projectId: serviceAccount.project_id,
       });
-    } else {
-      // Fallback for development - you'll need to set up Application Default Credentials
       console.log(
-        "⚠️ Using default Firebase credentials. Set FIREBASE_SERVICE_ACCOUNT_KEY for production."
+        `✅ Firebase Admin SDK initialized for project: ${serviceAccount.project_id}`
+      );
+    } else {
+      // Expected Firebase project of the mobile apps — used for a loud misconfig check
+      const expectedProject =
+        process.env.FIREBASE_PROJECT_ID || "zeu-mobile";
+      console.warn(
+        "⚠️ FIREBASE_SERVICE_ACCOUNT_KEY not set. Set it to the service account of the SAME Firebase project as the mobile apps, or FCM sends will fail."
       );
       firebaseApp = admin.initializeApp({
-        projectId: "nexkirana-c9da5",
+        projectId: expectedProject,
       });
     }
 
-    console.log("✅ Firebase Admin SDK initialized successfully");
     return firebaseApp;
   } catch (error) {
     console.error(
