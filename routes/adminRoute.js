@@ -2532,6 +2532,154 @@ adminRouter.put("/support-tickets/:id", verifyAdminToken, async (req, res) => {
   }
 });
 
+// ============================================================================
+// CALLBACK REQUESTS QUEUE (Call Support)
+// ============================================================================
+let ensureCallbackTableAdminPromise = null;
+function ensureCallbackTableAdmin() {
+  if (!ensureCallbackTableAdminPromise) {
+    ensureCallbackTableAdminPromise = pool
+      .execute(`
+        CREATE TABLE IF NOT EXISTS callback_requests (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          name VARCHAR(255),
+          phone VARCHAR(20) NOT NULL,
+          email VARCHAR(255),
+          status VARCHAR(20) DEFAULT 'pending',
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW(),
+          called_at TIMESTAMP,
+          called_by INTEGER,
+          notes TEXT
+        )
+      `)
+      .catch((err) => {
+        ensureCallbackTableAdminPromise = null;
+        throw err;
+      });
+  }
+  return ensureCallbackTableAdminPromise;
+}
+
+// GET /api/admin/callback-requests - list queue (filter: status=all|pending|called)
+adminRouter.get("/callback-requests", verifyAdminToken, async (req, res) => {
+  try {
+    await ensureCallbackTableAdmin();
+    const { status = "all" } = req.query;
+    let where = "";
+    const params = [];
+    if (status === "pending" || status === "to_be_called") {
+      where = "WHERE c.status = 'pending'";
+    } else if (status === "called") {
+      where = "WHERE c.status = 'called'";
+    }
+    const [rows] = await pool.execute(
+      `SELECT c.id, c.user_id, c.name, c.phone, c.email, c.status, c.created_at, c.updated_at, c.called_at, c.called_by, c.notes,
+              u.name as user_name, u.email as user_email, u.phone as user_phone
+       FROM callback_requests c
+       LEFT JOIN users u ON c.user_id = u.id
+       ${where}
+       ORDER BY
+         CASE WHEN c.status = 'pending' THEN 0 ELSE 1 END,
+         c.created_at DESC
+       LIMIT 500`,
+      params
+    );
+    const [counts] = await pool.execute(`
+      SELECT
+        COUNT(*)::int as total,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END)::int as pending,
+        COUNT(CASE WHEN status = 'called' THEN 1 END)::int as called
+      FROM callback_requests
+    `);
+    res.json({ success: true, data: rows, counts: counts[0] });
+  } catch (err) {
+    console.error("Get callback queue error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// GET /api/admin/callback-requests/stats - quick counts
+adminRouter.get("/callback-requests/stats", verifyAdminToken, async (req, res) => {
+  try {
+    await ensureCallbackTableAdmin();
+    const [counts] = await pool.execute(`
+      SELECT
+        COUNT(*)::int as total,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END)::int as pending,
+        COUNT(CASE WHEN status = 'called' THEN 1 END)::int as called
+      FROM callback_requests
+    `);
+    res.json({ success: true, data: counts[0] });
+  } catch (err) {
+    console.error("Callback stats error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PATCH /api/admin/callback-requests/:id - mark called / to be called
+// body: { status: "called" | "pending", notes? }
+adminRouter.patch("/callback-requests/:id", verifyAdminToken, async (req, res) => {
+  try {
+    await ensureCallbackTableAdmin();
+    const id = parseInt(req.params.id);
+    if (!id || isNaN(id)) return res.status(400).json({ success: false, message: "Invalid id" });
+    const { status, notes } = req.body || {};
+    if (!["called", "pending", "to_be_called"].includes(status)) {
+      return res.status(400).json({ success: false, message: "status must be 'called' or 'pending'" });
+    }
+    const normalized = status === "to_be_called" ? "pending" : status;
+    const [existing] = await pool.execute("SELECT id, status FROM callback_requests WHERE id = ?", [id]);
+    if (existing.length === 0) return res.status(404).json({ success: false, message: "Callback request not found" });
+
+    const updates = [];
+    const params = [];
+    updates.push("status = ?");
+    params.push(normalized);
+    updates.push("updated_at = NOW()");
+    if (normalized === "called") {
+      updates.push("called_at = NOW()");
+      updates.push("called_by = ?");
+      params.push(req.admin?.id || null);
+    } else {
+      updates.push("called_at = NULL");
+      updates.push("called_by = NULL");
+    }
+    if (notes !== undefined) {
+      updates.push("notes = ?");
+      params.push(String(notes).slice(0, 2000));
+    }
+    params.push(id);
+    await pool.execute(`UPDATE callback_requests SET ${updates.join(", ")} WHERE id = ?`, params);
+
+    const [updated] = await pool.execute("SELECT * FROM callback_requests WHERE id = ?", [id]);
+    // optional socket notify
+    try {
+      const io = req.io || req.app?.get?.("io");
+      if (io) io.to("admin").emit("callbackStatusUpdate", updated[0]);
+    } catch {}
+    res.json({ success: true, message: `Marked as ${normalized}`, data: updated[0] });
+  } catch (err) {
+    console.error("Update callback status error:", err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+// DELETE /api/admin/callback-requests/:id
+adminRouter.delete("/callback-requests/:id", verifyAdminToken, async (req, res) => {
+  try {
+    await ensureCallbackTableAdmin();
+    const id = parseInt(req.params.id);
+    const [result] = await pool.execute("DELETE FROM callback_requests WHERE id = ?", [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: "Not found" });
+    res.json({ success: true, message: "Deleted" });
+  } catch (err) {
+    console.error("Delete callback error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ⚠️ CATCH-ALL ROUTES - MUST BE LAST! ⚠️
 // These routes use /:id which matches any path, so they must be defined after all specific routes
 

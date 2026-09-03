@@ -21,6 +21,7 @@ import shoppingListRouter from "./routes/shoppingListRoute.js";
 import supportTicketRouter from "./routes/supportTicketRoute.js";
 import shopResolveRoute from "./routes/shopResolveRoute.js";
 import storesRouter from "./routes/storesRoute.js";
+import callbackRouter from "./routes/callbackRoute.js";
 import db from "./config/db.js";
 
 // Import inventory management integration components
@@ -507,6 +508,8 @@ app.use("/api/navigation", navigationRouter);
 app.use("/api/shops", shopResolveRoute);
 app.use("/api/stores", storesRouter);
 app.use("/api/shopkeeper", supportTicketRouter);
+app.use("/api/callbacks", callbackRouter);
+app.use("/api/user/callback-request", callbackRouter);
 
 // 404 handler for unmatched routes (MUST be last)
 app.use(securityMiddleware.notFoundHandler);
@@ -559,6 +562,29 @@ server.listen(PORT, "0.0.0.0", async () => {
     }
   } catch (error) {
     console.error("❌ Failed to initialize 'instant_discount' column:", error);
+  }
+
+  // Initialize callback_requests table (support callback queue)
+  try {
+    console.log("🔧 Initializing callback_requests table...");
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS callback_requests (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        name VARCHAR(255),
+        phone VARCHAR(20) NOT NULL,
+        email VARCHAR(255),
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        called_at TIMESTAMP,
+        called_by INTEGER,
+        notes TEXT
+      )
+    `);
+    console.log("✅ callback_requests table ready");
+  } catch (error) {
+    console.error("❌ Failed to initialize callback_requests table:", error);
   }
 
   // Initialize inventory integration
