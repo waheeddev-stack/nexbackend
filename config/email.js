@@ -109,8 +109,9 @@ const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
     // Skip verify() as it can hang - we'll catch errors during send instead
     console.log("[EMAIL] Transporter created, proceeding to send email...");
 
-    // Create reset link (adjust URL based on your app's deep linking setup)
-    const resetLink = `nexkirana://reset-password?token=${resetToken}`;
+    // Direct app deep link (button) + website fallback (copy/paste) — zeu app com.zeu.customer
+    const resetLink = `zeu://reset-password?token=${encodeURIComponent(resetToken)}`;
+    const webLink = `https://app.zeu.in/reset-password?token=${encodeURIComponent(resetToken)}`;
 
     const mailOptions = {
       from: {
@@ -191,7 +192,7 @@ const sendPasswordResetEmailGmail = async (to, resetToken, userName) => {
                                 background-color: #f3f3f3; 
                                 border: 1px solid #ddd;
                                 border-radius: 3px;">
-                        ${resetLink}
+                        ${webLink}
                       </p>
                       
                       <!-- Security Notice -->
@@ -289,6 +290,9 @@ To proceed with resetting your password, please click the link below or copy
 and paste it into your browser:
 
 ${resetLink}
+
+If the button doesn't work, use this website link:
+${webLink}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔒 SECURITY INFORMATION

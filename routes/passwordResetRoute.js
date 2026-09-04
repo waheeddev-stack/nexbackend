@@ -338,8 +338,6 @@ router.post("/reset", async (req, res) => {
   }
 });
 
-export default router;
-
 /**
  * @route   GET /api/password-reset/redirect
  * @desc    Redirect to app deep link for password reset (email link handler)
@@ -368,7 +366,9 @@ router.get("/redirect", (req, res) => {
     `);
   }
 
-  const deepLink = `nexkirana://reset-password?token=${encodeURIComponent(token)}`;
+  const deepLink = `zeu://reset-password?token=${encodeURIComponent(token)}`;
+  const legacyLink = `nexkirana://reset-password?token=${encodeURIComponent(token)}`;
+  const webLink = `https://app.zeu.in/reset-password?token=${encodeURIComponent(token)}`;
 
   res.send(`
     <!DOCTYPE html>
@@ -376,19 +376,21 @@ router.get("/redirect", (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Opening NexKirana App...</title>
+      <title>Opening zeu App...</title>
     </head>
     <body style="font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
       <div style="background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 500px; text-align: center;">
         <div style="border: 4px solid #f3f3f3; border-top: 4px solid #667eea; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px;"></div>
-        <h1 style="color: #333; margin: 0 0 10px 0; font-size: 24px;">Opening NexKirana App...</h1>
+        <h1 style="color: #333; margin: 0 0 10px 0; font-size: 24px;">Opening zeu App...</h1>
         <p style="color: #666; line-height: 1.6; margin: 0 0 20px 0;">Please wait while we redirect you to the app.</p>
         <a href="${deepLink}" style="display: inline-block; background: #667eea; color: white; padding: 12px 30px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 10px;">Open App Manually</a>
+        <p style="margin-top: 12px;"><a href="${webLink}" style="color: #667eea; font-size: 13px;">Or open in browser (app.zeu.in)</a></p>
         <div id="instructions" style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: left; display: none;">
           <h2 style="font-size: 16px; margin: 0 0 10px 0; color: #333;">App Not Opening?</h2>
           <ol style="margin: 0; padding-left: 20px; color: #666;">
-            <li style="margin-bottom: 8px;">Make sure the NexKirana app is installed</li>
+            <li style="margin-bottom: 8px;">Make sure the zeu app (com.zeu.customer) is installed</li>
             <li style="margin-bottom: 8px;">Click "Open App Manually" above</li>
+            <li style="margin-bottom: 8px;">Or <a href="${webLink}" style="color:#667eea;">open in browser</a></li>
             <li style="margin-bottom: 8px;">Still having issues? Request a new reset from the app</li>
           </ol>
         </div>
@@ -400,13 +402,16 @@ router.get("/redirect", (req, res) => {
         }
       </style>
       <script>
+        // Try zeu:// first, fallback to legacy nexkirana:// then web
         window.location.href = '${deepLink}';
+        setTimeout(function(){ window.location.href = '${legacyLink}'; }, 700);
         setTimeout(function() {
           document.getElementById('instructions').style.display = 'block';
         }, 3000);
         document.querySelector('a').addEventListener('click', function(e) {
           e.preventDefault();
           window.location.href = '${deepLink}';
+          setTimeout(function(){ window.location.href = '${legacyLink}'; }, 400);
           setTimeout(function() {
             document.getElementById('instructions').style.display = 'block';
           }, 1000);
@@ -416,3 +421,5 @@ router.get("/redirect", (req, res) => {
     </html>
   `);
 });
+
+export default router;

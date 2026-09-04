@@ -1,15 +1,15 @@
-# NexKirana Backend
+# Zeu Backend
 
-A Node.js/Express backend server for NexKirana — a kirana (grocery) store management platform connecting shopkeepers and customers.
+A Node.js/Express backend server for Zeu — a kirana (grocery) store management platform connecting shopkeepers and customers.
 
-## NexKirana Platform — System Overview
+## Zeu Platform — System Overview
 
-`nexbackend` is the **Core API** of the NexKirana platform, a neighbourhood grocery (kirana) commerce system linking **customers**, **shopkeepers**, and **platform admins**. The platform is split into five repositories:
+`nexbackend` is the **Core API** of the Zeu platform, a neighbourhood grocery (kirana) commerce system linking **customers**, **shopkeepers**, and **platform admins**. The platform is split into five repositories:
 
 | Component | Repository | Stack | Responsibility |
 |-----------|------------|-------|----------------|
-| Customer App | `NexKirana` | React Native (Expo) | Customer shopping: nearby shops, cart/checkout, delivery tracking, store credits, referrals, in-app chatbot |
-| Shopkeeper App | `shopkeeper` | React Native (Expo) | Merchant ops: orders, inventory, barcode, analytics, slab billing, customer loyalty |
+| Customer App | `Zeu` | React Native (Expo) | Customer shopping: nearby shops, cart/checkout, delivery tracking, store credits, referrals, in-app chatbot |
+| ZeuKeeper App | `shopkeeper` (ZeuKeeper) | React Native (Expo) | Merchant ops: orders, inventory, barcode, analytics, slab billing, customer loyalty |
 | Admin Panel | `admin-1` | React + Vite | Web console: verify shopkeepers, manage global catalog, monitor orders/payments, broadcast pushes |
 | **Core API** | **`nexbackend`** | Node.js / Express 5, PostgreSQL (Neon) via `pg` • ImageKit | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
 | Global Inventory API | `inventory-backend` | Node.js / Express, PostgreSQL (Neon) | Product catalog & AI recommendations service |
@@ -25,7 +25,8 @@ A Node.js/Express backend server for NexKirana — a kirana (grocery) store mana
 - *Real-time:* Socket.IO for live order status, delivery tracking, and admin broadcasts.
 - *Push:* Expo Push Notifications + Firebase Cloud Messaging (FCM).
 - *OTA:* Both Expo apps use **EAS Update** with channels `development` / `preview` / `production` and `runtimeVersion` policy `appVersion` (`npm run ota:<channel>`).
-- *Data retention:* customer shopping lists are purged after 15 days (daily cron).
+- *Data retention:* customer shopping lists are purged after 15 days (daily cron) — per [`PRIVACY_POLICY.md`](../PRIVACY_POLICY.md) §6 (account +2y, orders 7y, billing 8y, push tokens +90d, analytics 13m, logs 90d).
+- *Legal:* Brand is **Zeu** (customer) / **ZeuKeeper** (shopkeeper); contact `privacy@zeu.com`; DPDP Act 2023; source of truth [`PRIVACY_POLICY.md`](../PRIVACY_POLICY.md) (v1.0, Sep 4 2026). Mobile apps expose tabbed `PrivacyPolicyModal` (Privacy | Terms) from that file on signup/signin/profile.
 
 ---
 

@@ -49,12 +49,19 @@ export const sendPasswordResetEmailResend = async (
       );
     }
 
-    // Use HTTPS link that redirects to deep link (works better in emails)
+    // Direct app deep link — opens zeu app at reset-password screen (package com.zeu.customer)
+    const appDeepLink = `zeu://reset-password?token=${encodeURIComponent(resetToken)}`;
+    const legacyDeepLink = `nexkirana://reset-password?token=${encodeURIComponent(resetToken)}`;
+    // Website fallback — used when the app button doesn't work (copy/paste link)
+    const webLink = `https://app.zeu.in/reset-password?token=${encodeURIComponent(resetToken)}`;
+    // HTTPS backend fallback (legacy intermediate page that then redirects to app)
     const backendUrl =
       process.env.RESET_REDIRECT_URL ||
       process.env.RENDER_EXTERNAL_URL ||
       "https://nexbackend.onrender.com";
-    const resetLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
+    const backendRedirectLink = `${backendUrl}/api/password-reset/redirect?token=${encodeURIComponent(resetToken)}`;
+    // RESET_LINK points to app deep link (button), fallback shows website link
+    const resetLink = appDeepLink;
 
     const templateId = process.env.RESEND_TEMPLATE_PASSWORD_RESET;
 
@@ -166,7 +173,7 @@ This email was sent to: ${to}
                                 padding: 12px; 
                                 background-color: #f3f3f3; 
                                 border: 1px solid #ddd;">
-                        ${resetLink}
+                        ${webLink}
                       </p>
                       
                       <!-- Security Notice -->
@@ -210,6 +217,9 @@ This email was sent to: ${to}
     let sendPayload;
     if (templateId) {
       console.log(`[RESEND] Using template: ${templateId}`);
+      console.log(`[RESEND] RESET_LINK (app deep link): ${resetLink}`);
+      console.log(`[RESEND] Web fallback link: ${webLink}`);
+      console.log(`[RESEND] Backend fallback link: ${backendRedirectLink}`);
       sendPayload = {
         from: message.from,
         to: message.to,
@@ -217,9 +227,33 @@ This email was sent to: ${to}
         template: {
           id: templateId,
           variables: {
+            // Primary — button link (app deep link)
             RESET_LINK: resetLink,
             USER_NAME: userName || "Customer",
             EXPIRY_MINUTES: "60",
+            // Token aliases — ensures token is available no matter what variable name your Resend template uses
+            TOKEN: resetToken,
+            token: resetToken,
+            RESET_TOKEN: resetToken,
+            resetToken: resetToken,
+            RESETTOKEN: resetToken,
+            // App / website link aliases (all point to same app deep link)
+            APP_LINK: appDeepLink,
+            DEEP_LINK: appDeepLink,
+            ZEU_LINK: appDeepLink,
+            NEXKIRANA_LINK: legacyDeepLink,
+            LEGACY_LINK: legacyDeepLink,
+            RESET_URL: resetLink,
+            RESETLINK: resetLink,
+            LINK: resetLink,
+            URL: resetLink,
+            // Website fallback link (HTTPS) — use for "button not working" copy/paste
+            WEB_LINK: webLink,
+            WEBSITE_LINK: webLink,
+            HTTPS_LINK: webLink,
+            FALLBACK_LINK: webLink,
+            BACKEND_LINK: backendRedirectLink,
+            REDIRECT_LINK: backendRedirectLink,
           },
         },
       };

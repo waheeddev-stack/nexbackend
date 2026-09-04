@@ -4,12 +4,12 @@ New-joiner guide for the **nexbackend** Core API. The exhaustive endpoint catalo
 
 ---
 
-## NexKirana Platform — System Overview
+## Zeu Platform — System Overview
 
 | Component | Repository | Stack | Responsibility |
 |-----------|------------|-------|----------------|
-| Customer App | NexKirana | React Native (Expo) | Customer shopping app |
-| Shopkeeper App | shopkeeper | React Native (Expo) | Merchant ops app |
+| Customer App | Zeu | React Native (Expo) | Customer shopping app |
+| ZeuKeeper App | shopkeeper (ZeuKeeper) | React Native (Expo) | Merchant ops app |
 | Admin Panel | admin-1 | React + Vite | Web console |
 | Core API | nexbackend | Node/Express 5, PostgreSQL (Neon) via `pg` + ImageKit | Main REST + Socket.IO API: auth, users, shops, orders, inventory, subscriptions, notifications, recommendations, navigation |
 | Global Inventory API | inventory-backend | Node/Express, PostgreSQL (Neon) | Product catalog & AI recommendations service |
@@ -119,7 +119,7 @@ Sourced from `.env.example`. Validation lives in `config/environment.js` (`requi
 | `GOOGLE_CALLBACK_URL` | No | — | Google OAuth redirect | `googleAuthRoute.js` |
 | `RESEND_API_KEY` | No | — | Resend email key (prod email) | `config/email.resend.js` |
 | `RESEND_FROM_EMAIL` | No | `noreply@reset.nexkirana.in` | From address | `config/email.resend.js` |
-| `RESEND_FROM_NAME` | No | `NexKirana` | From name | `config/email.resend.js` |
+| `RESEND_FROM_NAME` | No | `Zeu` | From name | `config/email.resend.js` |
 | `RESEND_TEMPLATE_PASSWORD_RESET` | No | — | Resend template id | `passwordResetRoute.js` |
 | `RESET_REDIRECT_URL` | No | `https://nexbackend.onrender.com` | Password-reset deep link base | `deepLinkRedirect.js` |
 | `EMAIL_USER` | No | — | Gmail SMTP user (dev only) | `config/email.js` |

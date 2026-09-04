@@ -67,8 +67,10 @@ router.get("/reset-password", (req, res) => {
     `);
   }
 
-  // Create the deep link
-  const deepLink = `nexkirana://reset-password?token=${encodeURIComponent(token)}`;
+  // Create the deep links — zeu is primary (com.zeu.customer), nexkirana is legacy
+  const deepLink = `zeu://reset-password?token=${encodeURIComponent(token)}`;
+  const legacyLink = `nexkirana://reset-password?token=${encodeURIComponent(token)}`;
+  const webLink = `https://app.zeu.in/reset-password?token=${encodeURIComponent(token)}`;
 
   // Send HTML page that attempts to open the app
   res.send(`
@@ -159,24 +161,26 @@ router.get("/reset-password", (req, res) => {
     <body>
       <div class="container">
         <div class="spinner"></div>
-        <h1>Opening NexKirana App...</h1>
+        <h1>Opening zeu App...</h1>
         <p>Please wait while we redirect you to the app.</p>
         <a href="${deepLink}" class="button" id="openAppBtn">Open App Manually</a>
+        <p style="margin-top:12px;"><a href="${webLink}" style="color:#667eea; font-size:13px;">Or open in browser (app.zeu.in)</a></p>
         
         <div class="instructions" id="instructions">
           <h2>App Not Opening?</h2>
           <ol>
-            <li>Make sure the NexKirana app is installed on your device</li>
+            <li>Make sure the zeu app (com.zeu.customer) is installed on your device</li>
             <li>Click the "Open App Manually" button above</li>
-            <li>If that doesn't work, copy the link and open it in your browser</li>
+            <li>Or <a href="${webLink}" style="color:#667eea;">open in browser</a></li>
             <li>Still having issues? Request a new password reset from the app</li>
           </ol>
         </div>
       </div>
 
       <script>
-        // Attempt to open the app immediately
+        // Attempt to open the app immediately — try zeu:// then legacy
         window.location.href = '${deepLink}';
+        setTimeout(function(){ window.location.href = '${legacyLink}'; }, 700);
         
         // Show instructions after 3 seconds if still on page
         setTimeout(function() {
@@ -187,6 +191,7 @@ router.get("/reset-password", (req, res) => {
         document.getElementById('openAppBtn').addEventListener('click', function(e) {
           e.preventDefault();
           window.location.href = '${deepLink}';
+          setTimeout(function(){ window.location.href = '${legacyLink}'; }, 400);
           
           // Show instructions immediately after manual click
           setTimeout(function() {
