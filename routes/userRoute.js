@@ -254,8 +254,26 @@ userrouter.get("/nearby-shops", async (req, res) => {
 // PUBLIC: Get paginated products for a shop (used by "See All" page)
 userrouter.post("/get-products", async (req, res) => {
   try {
-    const { shopid, last_product_send_id, limit } = req.body;
-    const shopId = parseInt(shopid);
+    const { shopid, shop_id, last_product_send_id, limit, query: searchQuery } = req.body;
+    // Support both shopid and shop_id (frontend sends shop_id) and query-based search
+    const rawShopId = shopid ?? shop_id;
+    const shopId = parseInt(rawShopId);
+    // If searchQuery present without shopId, do search across visible products
+    if (searchQuery && (!rawShopId || isNaN(shopId))) {
+      const searchTerm = String(searchQuery).trim();
+      if (searchTerm.length > 0) {
+        const searchLimit = Math.max(1, Math.min(parseInt(limit) || 50, 200));
+        const [rows] = await pool.query(
+          `SELECT id AS product_id, shop_id, name, description, image, images, category, price, mrp, stock, created_at
+           FROM products
+           WHERE (name LIKE ? OR category LIKE ? OR description LIKE ?)
+             AND (available_stock IS NULL OR available_stock != 'INVISIBLE')
+           ORDER BY created_at DESC LIMIT ?`,
+          [`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, searchLimit]
+        );
+        return res.json({ success: true, products: rows, hasMore: false });
+      }
+    }
     const pageLimit = Math.max(1, Math.min(parseInt(limit) || 50, 200));
     const fetchLimit = pageLimit + 1;
     const lastId = parseInt(last_product_send_id) || 0;

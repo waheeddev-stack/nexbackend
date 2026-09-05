@@ -1,5 +1,7 @@
 import express from "express";
 import db from "../config/db.js";
+import verifyToken from "../middleware/auth.js";
+import verifyAdminToken from "../middleware/adminAuth.js";
 
 const serviceStatusRouter = express.Router();
 
@@ -59,11 +61,9 @@ serviceStatusRouter.get("/status", async (req, res) => {
 });
 
 /**
- * POST /api/service/toggle
- *
- * Toggle service status (temporarily public for debugging)
+ * POST /api/service/toggle - admin only
  */
-serviceStatusRouter.post("/toggle", async (req, res) => {
+serviceStatusRouter.post("/toggle", verifyToken, verifyAdminToken, async (req, res) => {
   try {
     const { status, message } = req.body;
     const adminId = req.admin?.id || 1; // Use authenticated admin ID or default to 1
@@ -148,11 +148,9 @@ serviceStatusRouter.post("/toggle", async (req, res) => {
 });
 
 /**
- * GET /api/service/history
- *
- * Get service status history (temporarily public for debugging)
+ * GET /api/service/history - admin only
  */
-serviceStatusRouter.get("/history", async (req, res) => {
+serviceStatusRouter.get("/history", verifyToken, verifyAdminToken, async (req, res) => {
   try {
     let limit = parseInt(req.query.limit) || 50;
     let offset = parseInt(req.query.offset) || 0;

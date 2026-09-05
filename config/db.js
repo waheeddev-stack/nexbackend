@@ -147,12 +147,19 @@ function translateMySQLSyntax(sql) {
   // Transaction keywords
   if (/^START\s+TRANSACTION/i.test(trimmed)) return "BEGIN";
   // DATE_SUB(NOW(), INTERVAL 15 DAY) -> NOW() - INTERVAL '15 days'
+  // Weekly start (Monday) — Postgres DATE_TRUNC('week') is Monday-based, matches MySQL WEEKDAY logic
+  s = s.replace(/DATE_ADD\s*\(\s*DATE_SUB\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*INTERVAL\s+WEEKDAY\s*\(\s*CURDATE\s*\(\s*\)\s*\)\s+DAY\s*\)\s*,\s*INTERVAL\s+7\s+DAY\s*\)/gi, "DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '7 days'");
+  s = s.replace(/DATE_SUB\s*\(\s*DATE_SUB\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*INTERVAL\s+WEEKDAY\s*\(\s*CURDATE\s*\(\s*\)\s*\)\s+DAY\s*\)\s*,\s*INTERVAL\s+7\s+DAY\s*\)/gi, "DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '7 days'");
+  s = s.replace(/DATE_SUB\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*INTERVAL\s+WEEKDAY\s*\(\s*CURDATE\s*\(\s*\)\s*\)\s+DAY\s*\)/gi, "DATE_TRUNC('week', CURRENT_DATE)");
   s = s.replace(/DATE_SUB\s*\(\s*NOW\s*\(\s*\)\s*,\s*INTERVAL\s+(\d+)\s+DAY\s*\)/gi, "NOW() - INTERVAL '$1 days'");
   s = s.replace(/DATE_SUB\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*INTERVAL\s+(\d+)\s+DAY\s*\)/gi, "CURRENT_DATE - INTERVAL '$1 days'");
   s = s.replace(/DATE_ADD\s*\(\s*DATE_FORMAT\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*'[^']+'\s*\)\s*,\s*INTERVAL\s+1\s+MONTH\s*\)/gi, "(DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month')");
   s = s.replace(/DATE_FORMAT\s*\(\s*CURDATE\s*\(\s*\)\s*,\s*'%Y-%m-01'\s*\)/gi, "DATE_TRUNC('month', CURRENT_DATE)");
   s = s.replace(/CURDATE\s*\(\s*\)/gi, "CURRENT_DATE");
   s = s.replace(/WEEKDAY\s*\(\s*CURDATE\s*\(\s*\)\s*\)/gi, "EXTRACT(DOW FROM CURRENT_DATE)::int");
+  // Generic DATE_SUB/DATE_ADD fallback for remaining cases (e.g., DATE_SUB(col, INTERVAL 1 MONTH))
+  s = s.replace(/DATE_SUB\s*\(\s*([^,]+?)\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)/gi, "$1 - INTERVAL '$2 $3'");
+  s = s.replace(/DATE_ADD\s*\(\s*([^,]+?)\s*,\s*INTERVAL\s+(\d+)\s+(\w+)\s*\)/gi, "$1 + INTERVAL '$2 $3'");
   // generic DATE_SUB with placeholder: DATE_SUB(NOW(), INTERVAL ? DAY) — keep for pg? not needed
 
   // Remove MySQL ENGINE / CHARSET / COLLATE tails in DDL
@@ -172,6 +179,14 @@ function translateMySQLSyntax(sql) {
   s = s.replace(/\bINTEGER\s+AUTO_INCREMENT\b/gi, "SERIAL");
   s = s.replace(/\bINT\s+AUTO_INCREMENT\b/gi, "SERIAL");
   s = s.replace(/\bAUTO_INCREMENT\b/gi, "");
+
+  // DATE(col) -> col::date, MONTH(col)/YEAR(col) -> EXTRACT — must run after CURDATE/WEEKDAY rewrites
+  s = s.replace(/\bDATE\s*\(\s*([^)]+?)\s*\)/gi, "($1)::date");
+  s = s.replace(/\bMONTH\s*\(\s*([^)]+?)\s*\)/gi, "EXTRACT(MONTH FROM $1)");
+  s = s.replace(/\bYEAR\s*\(\s*([^)]+?)\s*\)/gi, "EXTRACT(YEAR FROM $1)");
+
+  // SHOW INDEX FROM tbl WHERE Key_name LIKE '%x%' -> pg_indexes (for google oauth migration)
+  s = s.replace(/^SHOW\s+INDEX\s+FROM\s+[`"]?(\w+)[`"]?\s+WHERE\s+Key_name\s+LIKE\s+['"]([^'"]+)['"]/i, "SELECT indexname FROM pg_indexes WHERE tablename='$1' AND indexname LIKE '$2'");
 
   // MySQL -> PG compatibility: RAND() -> RANDOM()
   s = s.replace(/\bRAND\s*\(\s*\)/gi, "RANDOM()");

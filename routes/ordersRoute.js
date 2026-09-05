@@ -623,11 +623,9 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
       });
     }
 
-    // First, delete order items
+    // First, delete order items (PG-compatible: use subquery)
     await pool.execute(
-      `DELETE oi FROM order_items oi
-       INNER JOIN orders o ON oi.order_id = o.id
-       WHERE o.user_id = ?`,
+      `DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE user_id = ?)`,
       [userId]
     );
 
@@ -648,6 +646,40 @@ router.delete("/clear-all", verifyToken, async (req, res) => {
       .status(500)
       .json({ success: false, message: "Server error while clearing orders" });
   }
+});
+
+// ============================================================================
+// SMART REORDER - must be BEFORE /:orderId to avoid shadowing
+// ============================================================================
+router.get("/repeat-order", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [orders] = await pool.execute(
+      `SELECT id, total_amount, created_at FROM orders WHERE user_id = ? AND status IN ('Completed', 'Delivered') ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (orders.length === 0) return res.status(404).json({ success: false, message: "No completed orders found" });
+    const lastOrder = orders[0];
+    const [items] = await pool.execute(
+      `SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image, p.category FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?`,
+      [lastOrder.id]
+    );
+    return res.status(200).json({ success: true, order: lastOrder, items: items.map((item) => ({ product_id: item.product_id, quantity: item.quantity, price: parseFloat(item.price), name: item.name, image: item.image, category: item.category })) });
+  } catch (err) { console.error("Error fetching repeat order:", err); res.status(500).json({ success: false, message: "Error fetching repeat order" }); }
+});
+
+router.post("/repeat-order/:orderid", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id; const orderId = req.params.orderid;
+    const [verifyOrder] = await pool.execute(`SELECT * FROM orders WHERE id = ? AND user_id = ?`, [orderId, userId]);
+    if (verifyOrder.length === 0) return res.status(404).json({ success: false, message: "No order of the user found of the specified id." });
+    const oldOrder = verifyOrder[0];
+    const [items] = await pool.query(`SELECT product_id, quantity, price FROM order_items WHERE order_id = ?`, [orderId]);
+    if (items.length === 0) return res.status(404).json({ success: false, message: "No items found for this order" });
+    const totalAmount = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    req.body = { items: items.map((i) => ({ productId: i.product_id, quantity: i.quantity, price: i.price })), shopkeeperId: oldOrder.shopkeeper_id, deliveryType: oldOrder.order_type || "delivery", totalAmount, paymentMethod: oldOrder.payment_method || "cod", deliveryAddress: oldOrder.delivery_address, latitude: oldOrder.latitude, longitude: oldOrder.longitude };
+    return createOrderHandler(req, res);
+  } catch (err) { console.error("Repeat order error:", err); res.status(500).json({ success: false, message: "Error creating repeat order" }); }
 });
 
 // ============================================================================
@@ -1419,110 +1451,7 @@ async function createOrderHandler(req, res) {
 }
 router.post("/", verifyToken, createOrderHandler);
 
-router.get("/repeat-order", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const [orders] = await pool.execute(
-      `SELECT id, total_amount, created_at FROM orders
-       WHERE user_id = ? AND status IN ('Completed', 'Delivered')
-       ORDER BY created_at DESC LIMIT 1`,
-      [userId]
-    );
-
-    if (orders.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "No completed orders found" });
-    }
-
-    const lastOrder = orders[0];
-    const [items] = await pool.execute(
-      `SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image, p.category
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [lastOrder.id]
-    );
-
-    return res.status(200).json({
-      success: true,
-      order: lastOrder,
-      items: items.map((item) => ({
-        product_id: item.product_id,
-        quantity: item.quantity,
-        price: parseFloat(item.price),
-        name: item.name,
-        image: item.image,
-        category: item.category,
-      })),
-    });
-  } catch (err) {
-    console.error("Error fetching repeat order:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error fetching repeat order" });
-  }
-});
-
-router.post("/repeat-order/:orderid", verifyToken, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const orderId = req.params.orderid;
-    const [verifyOrder] = await pool.execute(
-      `SELECT * FROM orders WHERE id = ? AND user_id = ?`,
-      [orderId, userId]
-    );
-    if (verifyOrder.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No order of the user found of the specified id.",
-      });
-    }
-    const oldOrder = verifyOrder[0];
-    // Fetch the items from that order
-    const [items] = await pool.query(
-      `SELECT product_id, quantity, price FROM order_items WHERE order_id = ?`,
-      [orderId]
-    );
-
-    if (items.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No items found for this order",
-      });
-    }
-
-    const totalAmount = items.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
-
-    // Reshape req.body to match what createOrderHandler expects
-    req.body = {
-      items: items.map((i) => ({
-        productId: i.product_id,
-        quantity: i.quantity,
-        price: i.price,
-      })),
-      shopkeeperId: oldOrder.shopkeeper_id,
-      deliveryType: oldOrder.order_type || "delivery",
-      totalAmount,
-      paymentMethod: oldOrder.payment_method || "cod",
-      deliveryAddress: oldOrder.delivery_address,
-      latitude: oldOrder.latitude,
-      longitude: oldOrder.longitude,
-    };
-
-    // Delegate to the shared order-creation logic
-    return createOrderHandler(req, res);
-  } catch (err) {
-    console.error("Error creating repeat order:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error creating repeat order" });
-  }
-});
+// duplicate moved above before /:orderId — kept as no-op alias (original removed)
 
 // ============================================================================
 // UPDATE ORDER STATUS

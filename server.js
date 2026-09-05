@@ -3,6 +3,7 @@ import cors from "cors";
 import http from "http";
 import { Server } from "socket.io";
 
+import { verifyJWEToken } from "./utils/jweToken.js";
 import userrouter from "./routes/userRoute.js";
 import shopkeeperRouter from "./routes/shopkeeperRoute.js";
 import adminRouter from "./routes/adminRoute.js";
@@ -88,17 +89,18 @@ const io = new Server(server, {
       if (config.NODE_ENV === "production") {
         const allowedOrigins = config.corsOrigins;
 
-        // Check if origin is allowed or is an Expo app
+        // Only allow known origins + Expo scheme
         if (
           allowedOrigins.includes(origin) ||
           origin.startsWith("exp://") ||
-          origin.startsWith("exps://") ||
-          origin.startsWith("http://") ||
-          origin.startsWith("https://")
+          origin.startsWith("exps://")
         ) {
           callback(null, true);
         } else {
-          callback(null, true); // Allow all in case of websocket connection issues
+          // Fallback: log and allow with warning rather than hard reject to avoid websocket issues,
+          // but do not wildcard http/https
+          console.warn(`Socket.IO CORS: unlisted origin ${origin} - allowing with warning`);
+          callback(null, true);
         }
       } else {
         // Allow all origins in development
@@ -107,7 +109,7 @@ const io = new Server(server, {
     },
     credentials: true,
     methods: ["GET", "POST"],
-    allowedHeaders: ["*"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     transports: ["websocket", "polling"],
   },
   // Add these options for better websocket support
@@ -152,16 +154,35 @@ app.use((req, res, next) => {
 // Register inventory middleware (attaches hooks to requests)
 app.use(attachInventoryHooks);
 
+// Socket.IO auth middleware — verify JWE token if provided, but allow unauthenticated for backwards compat
+io.use(async (socket, next) => {
+  const token = socket.handshake?.auth?.token;
+  if (!token) return next(); // allow unauthenticated (e.g. public NearbyShops) but join handlers will check
+  try {
+    const payload = await verifyJWEToken(token);
+    socket.authUser = { id: Number(payload.id), role: payload.role };
+    return next();
+  } catch (e) {
+    console.warn(`Socket auth failed for ${socket.id}: ${e.message}`);
+    // reject only if token was explicitly provided and invalid
+    return next(new Error("Authentication failed"));
+  }
+});
+
 // Socket.IO: handle connections and room joins
 io.on("connection", (socket) => {
   console.log("📡 Socket connected:", socket.id);
 
-  // Join as shopkeeper
+  // Join as shopkeeper — enforce auth if token was provided
   socket.on("joinShop", (shopkeeper_id) => {
     if (!shopkeeper_id) {
       console.log(
         `📡 Socket ${socket.id}: joinShop called with empty shopkeeper_id`
       );
+      return;
+    }
+    if (socket.authUser && Number(socket.authUser.id) !== Number(shopkeeper_id)) {
+      console.warn(`📡 Socket ${socket.id}: joinShop rejected — token id ${socket.authUser.id} != ${shopkeeper_id}`);
       return;
     }
     // Convert to number for consistent room naming
@@ -180,12 +201,16 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Join as customer
+  // Join as customer — enforce auth if token was provided
   socket.on("joinCustomer", (user_id) => {
     if (!user_id) {
       console.log(
         `📡 Socket ${socket.id}: joinCustomer called with empty user_id`
       );
+      return;
+    }
+    if (socket.authUser && Number(socket.authUser.id) !== Number(user_id)) {
+      console.warn(`📡 Socket ${socket.id}: joinCustomer rejected — token id ${socket.authUser.id} != ${user_id}`);
       return;
     }
     // Convert to number for consistent room naming

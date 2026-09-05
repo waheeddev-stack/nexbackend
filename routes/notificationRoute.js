@@ -2,11 +2,12 @@ import express from "express";
 import { sendExpoPush } from "../utils/expoPush.js";
 import { sendFCMNotification, sendFCMToTopic } from "../config/firebase.js";
 import pool from "../config/db.js";
+import verifyToken from "../middleware/auth.js";
 
 const notificationRouter = express.Router();
 
 // POST /send - Send notification (supports both Expo and FCM)
-notificationRouter.post("/send", async (req, res) => {
+notificationRouter.post("/send", verifyToken, async (req, res) => {
   try {
     const {
       token,
@@ -66,7 +67,7 @@ notificationRouter.post("/send", async (req, res) => {
 });
 
 // POST /send-fcm - Send FCM notification specifically
-notificationRouter.post("/send-fcm", async (req, res) => {
+notificationRouter.post("/send-fcm", verifyToken, async (req, res) => {
   try {
     const { tokens, title, body, data } = req.body;
     if (!tokens || !title || !body) {
@@ -84,7 +85,7 @@ notificationRouter.post("/send-fcm", async (req, res) => {
 });
 
 // POST /send-topic - Send to FCM topic
-notificationRouter.post("/send-topic", async (req, res) => {
+notificationRouter.post("/send-topic", verifyToken, async (req, res) => {
   try {
     const { topic, title, body, data } = req.body;
     if (!topic || !title || !body) {

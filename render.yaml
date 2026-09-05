@@ -69,3 +69,23 @@ services:
         value: Zeu
       - key: RESEND_TEMPLATE_PASSWORD_RESET
         value: password-reset
+      - key: INVENTORY_BACKEND_URL
+        sync: false
+      - key: INVENTORY_DATABASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: RESET_REDIRECT_URL
+        sync: false
+      - key: RESTOCK_CRON_SCHEDULE
+        sync: false
+      - key: ENFORCE_SUBSCRIPTIONS
+        sync: false

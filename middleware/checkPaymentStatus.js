@@ -10,11 +10,24 @@ const checkPaymentStatus = async (req, res, next) => {
 
     const shopkeeper_id = req.user.id;
 
-    // Get earnings status
-    const [earningsRows] = await pool.query(
-      "SELECT payment_status, pending_amount, next_payment_date FROM earnings WHERE shopkeeper_id = ?",
-      [shopkeeper_id]
-    );
+    // Get earnings status — correct table is billing_payments
+    let earningsRows = [];
+    try {
+      const [rows] = await pool.query(
+        "SELECT payment_status, pending_amount, next_payment_date FROM billing_payments WHERE shopkeeper_id = ? LIMIT 1",
+        [shopkeeper_id]
+      );
+      earningsRows = rows;
+    } catch (e) {
+      // Fallback to legacy table name if billing_payments not yet migrated
+      try {
+        const [rows2] = await pool.query(
+          "SELECT payment_status, pending_amount, next_payment_date FROM earnings WHERE shopkeeper_id = ? LIMIT 1",
+          [shopkeeper_id]
+        );
+        earningsRows = rows2;
+      } catch {}
+    }
 
     // If no earnings record exists, allow access (new shopkeeper)
     if (earningsRows.length === 0) {

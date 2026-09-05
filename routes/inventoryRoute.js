@@ -100,7 +100,8 @@ inventoryRouter.get("/by-available-stock", verifyToken, async (req, res) => {
     }
 
     if (is_visible_only === "true") {
-      query += " AND is_visible = 1";
+      // is_visible column may not exist on older schemas — filter by INVISIBLE status instead
+      query += " AND (available_stock IS NULL OR available_stock <> 'INVISIBLE')";
     }
 
     query += " ORDER BY created_at DESC";

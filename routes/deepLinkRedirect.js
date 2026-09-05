@@ -11,7 +11,7 @@ const router = express.Router();
  * It creates an HTML page that automatically redirects to the app's deep link.
  * If the app is not installed, it shows instructions.
  */
-router.get("/reset-password", (req, res) => {
+router.get("/", (req, res) => {
   const { token } = req.query;
 
   if (!token) {
