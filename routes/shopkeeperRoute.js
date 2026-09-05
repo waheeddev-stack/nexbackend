@@ -2435,7 +2435,7 @@ shopkeeperRouter.delete(
   }
 );
 
-// Update only stock for a shopkeeper's product
+// Update only stock / available_stock for a shopkeeper's product (supports both numeric stock and enum available_stock for backward compat with shopkeeper api.js)
 shopkeeperRouter.patch(
   "/products/:id/stock",
   verifyToken,
@@ -2444,7 +2444,21 @@ shopkeeperRouter.patch(
     try {
       const shop_id = req.user.id;
       const productId = req.params.id;
-      const { stock } = req.body;
+      const { stock, available_stock } = req.body;
+
+      // Backward compat: if available_stock enum is sent to this endpoint (legacy shopkeeper api.js), handle it as available_stock update
+      if (available_stock != null && stock == null) {
+        const validStatuses = ["IN STOCK", "OUT OF STOCK", "INVISIBLE"];
+        if (!validStatuses.includes(available_stock)) {
+          return res.status(400).json({ success: false, message: "Invalid available_stock value. Must be: IN STOCK, OUT OF STOCK, or INVISIBLE" });
+        }
+        const [existing2] = await pool.execute("SELECT id, available_stock FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+        if (existing2.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
+        const previousStatus = existing2[0].available_stock;
+        await pool.execute("UPDATE products SET available_stock = ? WHERE id = ? AND shop_id = ?", [available_stock, productId, shop_id]);
+        const [updated2] = await pool.execute("SELECT * FROM products WHERE id = ? AND shop_id = ?", [productId, shop_id]);
+        return res.json({ success: true, message: "Available stock updated", product: updated2[0], previous_status: previousStatus, new_status: available_stock });
+      }
 
       if (stock == null) {
         return res

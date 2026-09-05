@@ -219,6 +219,75 @@ inventoryRouter.get("/history/:productId", verifyToken, async (req, res) => {
   }
 });
 
+// POST /api/inventory/price-update - Update product price (missing endpoint for shopkeeper inventoryApi)
+inventoryRouter.post("/price-update", verifyToken, async (req, res) => {
+  try {
+    const { product_id, new_price, shop_id } = req.body;
+    const resolvedShopId = shop_id || req.user?.id || req.shopkeeper?.id;
+    if (!product_id || new_price == null) {
+      return res.status(400).json({ success: false, message: "product_id and new_price are required" });
+    }
+    const parsedPrice = Number(new_price);
+    if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+      return res.status(400).json({ success: false, message: "Invalid price" });
+    }
+    if (!resolvedShopId) {
+      return res.status(400).json({ success: false, message: "shop_id could not be determined from token" });
+    }
+    const [rows] = await db.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [product_id, resolvedShopId]);
+    if (rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
+    const product = rows[0];
+    if (product.mrp != null && parsedPrice > Number(product.mrp)) {
+      return res.status(400).json({ success: false, message: "Selling price cannot exceed MRP" });
+    }
+    const previousPrice = product.price;
+    await db.query("UPDATE products SET price = ? WHERE id = ? AND shop_id = ?", [parsedPrice, product_id, resolvedShopId]);
+    try {
+      await db.query(`INSERT INTO price_history (product_id, shop_id, old_price, new_price, changed_by) VALUES (?, ?, ?, ?, ?)`, [product_id, resolvedShopId, previousPrice, parsedPrice, req.user?.id || req.shopkeeper?.id]);
+    } catch (_) {
+      try { await db.query(`INSERT INTO inventory_logs (product_id, shop_id, action, previous_status, new_status, performed_by) VALUES (?, ?, 'price_change', ?, ?, ?)`, [product_id, resolvedShopId, String(previousPrice), String(parsedPrice), req.user?.id]); } catch {}
+    }
+    const [updated] = await db.query("SELECT * FROM products WHERE id = ? AND shop_id = ?", [product_id, resolvedShopId]);
+    res.json({ success: true, message: "Price updated", product: updated[0], previous_price: previousPrice, new_price: parsedPrice });
+  } catch (error) {
+    console.error("Price update error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
+// GET /api/inventory/price-history/:productId - Price change history
+inventoryRouter.get("/price-history/:productId", verifyToken, async (req, res) => {
+  try {
+    const { productId } = req.params;
+    let logs = [];
+    try {
+      const [rows] = await db.query(`SELECT * FROM price_history WHERE product_id = ? ORDER BY created_at DESC LIMIT 50`, [productId]);
+      logs = rows;
+    } catch {
+      const [rows2] = await db.query(`SELECT il.*, p.name as product_name FROM inventory_logs il LEFT JOIN products p ON il.product_id = p.id WHERE il.product_id = ? AND il.action = 'price_change' ORDER BY il.created_at DESC LIMIT 50`, [productId]);
+      logs = rows2;
+    }
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    console.error("Price history error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
+// GET /api/inventory/low-stock/:shopId - Low stock products
+inventoryRouter.get("/low-stock/:shopId", verifyToken, async (req, res) => {
+  try {
+    const { shopId } = req.params;
+    const threshold = parseInt(req.query.threshold || "3", 10);
+    if (!shopId) return res.status(400).json({ success: false, message: "shopId is required" });
+    const [products] = await db.query(`SELECT * FROM products WHERE shop_id = ? AND stock <= ? ORDER BY stock ASC`, [shopId, threshold]);
+    res.json({ success: true, data: products, threshold });
+  } catch (error) {
+    console.error("Low stock error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
 // POST /api/inventory/restock - Restock a product
 inventoryRouter.post("/restock", verifyToken, async (req, res) => {
   try {
