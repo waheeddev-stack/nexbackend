@@ -554,7 +554,7 @@ userrouter.get("/profile/:id", async (req, res) => {
   }
 });
 
-// UPDATE PROFILE (with image upload)
+// UPDATE PROFILE (with image upload) - supports full profile or address-only partial update
 userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   try {
     const {
@@ -569,25 +569,27 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
     } = req.body;
     const { id } = req.params;
 
-    // First, check if user exists
-    const [existingUser] = await pool.execute(
-      "SELECT id FROM users WHERE id = ?",
+    // First, check if user exists and fetch current values for fallback
+    const [existingUserRows] = await pool.execute(
+      "SELECT id, name, phone FROM users WHERE id = ?",
       [id]
     );
-    if (existingUser.length === 0) {
+    if (existingUserRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
     }
+    const existingUser = existingUserRows[0];
 
-    // VALIDATION: Name and phone are always required
-    if (!name || name.trim().length === 0) {
+    // Resolve name/phone: allow address-only updates by falling back to stored values
+    const resolvedName = name != null && String(name).trim().length > 0 ? String(name).trim() : existingUser.name;
+    const resolvedPhone = phone != null && String(phone).trim().length > 0 ? String(phone).trim() : existingUser.phone;
+    if (!resolvedName || resolvedName.trim().length === 0) {
       return res
         .status(400)
         .json({ success: false, message: "Name is required." });
     }
-
-    if (!phone || phone.trim().length === 0) {
+    if (!resolvedPhone || resolvedPhone.trim().length === 0) {
       return res
         .status(400)
         .json({ success: false, message: "Phone number is required." });
@@ -618,29 +620,32 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
 
     const fields = [];
     const values = [];
-    if (name) {
+    // Use resolved values so address-only updates preserve name/phone
+    if (name != null && String(name).trim().length > 0) {
       fields.push("name = ?");
-      values.push(name);
+      values.push(String(name).trim());
+    } else if (address != null || area !== undefined || landmark !== undefined || pincode !== undefined || latitude !== undefined || longitude !== undefined) {
+      // Address-only update path already validated resolvedName/ResolvedPhone exist, no need to rewrite them
     }
-    if (phone) {
+    if (phone != null && String(phone).trim().length > 0) {
       fields.push("phone = ?");
-      values.push(phone);
+      values.push(String(phone).trim());
     }
-    if (address) {
+    if (address !== undefined) {
       fields.push("address = ?");
-      values.push(address);
+      values.push(address != null ? String(address) : null);
     }
     if (area !== undefined) {
       fields.push("area = ?");
-      values.push(area);
+      values.push(area != null ? String(area) : null);
     }
     if (landmark !== undefined) {
       fields.push("landmark = ?");
-      values.push(landmark);
+      values.push(landmark != null ? String(landmark) : null);
     }
     if (pincode !== undefined) {
       fields.push("pincode = ?");
-      values.push(pincode);
+      values.push(pincode != null ? String(pincode) : null);
     }
     if (latitude !== undefined && latitude !== null && latitude !== "") {
       fields.push("latitude = ?");
@@ -684,6 +689,75 @@ userrouter.put("/profile/:id", upload.single("img"), async (req, res) => {
   } catch (err) {
     console.error("Profile update error:", err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Dedicated address update - supports POST /profile/address (backward compat for services/api.js saveAddress)
+// Also supports address-only updates without requiring name/phone
+userrouter.post("/profile/address", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { address, area, landmark, pincode, latitude, longitude } = req.body;
+    if (address == null || String(address).trim().length === 0) {
+      return res.status(400).json({ success: false, message: "Address is required." });
+    }
+    const fields = [];
+    const values = [];
+    fields.push("address = ?");
+    values.push(String(address).trim());
+    if (area !== undefined) { fields.push("area = ?"); values.push(area != null ? String(area) : null); }
+    if (landmark !== undefined) { fields.push("landmark = ?"); values.push(landmark != null ? String(landmark) : null); }
+    if (pincode !== undefined) { fields.push("pincode = ?"); values.push(pincode != null ? String(pincode) : null); }
+    if (latitude !== undefined && latitude !== null && latitude !== "") { fields.push("latitude = ?"); values.push(parseFloat(latitude)); }
+    if (longitude !== undefined && longitude !== null && longitude !== "") { fields.push("longitude = ?"); values.push(parseFloat(longitude)); }
+    values.push(userId);
+    await pool.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, values);
+    const [userRows] = await pool.execute("SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, latitude, longitude, created_at FROM users WHERE id = ?", [userId]);
+    return res.json({ success: true, user: userRows[0], message: "Address updated successfully" });
+  } catch (err) {
+    console.error("Profile address update error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// PATCH alias for partial profile updates (address-only) - mirrors PUT but allows PATCH method
+userrouter.patch("/profile/:id", upload.single("img"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, address, area, landmark, pincode, latitude, longitude } = req.body;
+    const [existingUserRows] = await pool.execute("SELECT id, name, phone FROM users WHERE id = ?", [id]);
+    if (existingUserRows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+    const existingUser = existingUserRows[0];
+    const resolvedName = name != null && String(name).trim().length > 0 ? String(name).trim() : existingUser.name;
+    const resolvedPhone = phone != null && String(phone).trim().length > 0 ? String(phone).trim() : existingUser.phone;
+    if (!resolvedName || !resolvedPhone) return res.status(400).json({ success: false, message: "Name and phone are required." });
+    let imgUrl = null;
+    if (req.file) {
+      const streamifier = await import("streamifier");
+      const result = await new Promise((resolve, reject) => {
+        const stream = imagekit.uploader.upload_stream({ folder: "users" }, (error, result) => { if (error) return reject(error); resolve(result); });
+        streamifier.default.createReadStream(req.file.buffer).pipe(stream);
+      });
+      imgUrl = result.secure_url || result.url;
+    }
+    const fields = []; const values = [];
+    if (name != null && String(name).trim().length > 0) { fields.push("name = ?"); values.push(String(name).trim()); }
+    if (phone != null && String(phone).trim().length > 0) { fields.push("phone = ?"); values.push(String(phone).trim()); }
+    if (address !== undefined) { fields.push("address = ?"); values.push(address != null ? String(address) : null); }
+    if (area !== undefined) { fields.push("area = ?"); values.push(area != null ? String(area) : null); }
+    if (landmark !== undefined) { fields.push("landmark = ?"); values.push(landmark != null ? String(landmark) : null); }
+    if (pincode !== undefined) { fields.push("pincode = ?"); values.push(pincode != null ? String(pincode) : null); }
+    if (latitude !== undefined && latitude !== null && latitude !== "") { fields.push("latitude = ?"); values.push(parseFloat(latitude)); }
+    if (longitude !== undefined && longitude !== null && longitude !== "") { fields.push("longitude = ?"); values.push(parseFloat(longitude)); }
+    if (imgUrl) { fields.push("img = ?"); values.push(imgUrl); }
+    if (fields.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
+    values.push(id);
+    await pool.execute(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, values);
+    const [userRows] = await pool.execute("SELECT id, name, email, phone, address, area, landmark, pincode, img, store_credits, referralcode, latitude, longitude, created_at FROM users WHERE id = ?", [id]);
+    return res.json({ success: true, user: userRows[0], message: "Profile updated successfully" });
+  } catch (err) {
+    console.error("Profile PATCH error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
