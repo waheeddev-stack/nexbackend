@@ -19,7 +19,7 @@ services:
       - 80
     labels:
       - 'traefik.enable=true'
-      - 'traefik.http.routers.logs-svc.rule=Host(`logs.piyushgarg.online`)'
+      - 'traefik.http.routers.logs-svc.rule=Host(`logs.zeu.co.in`)'
       - 'traefik.http.services.logs-svc.loadbalancer.server.port=80'
       - 'traefik.http.routers.logs-svc.entrypoints=websecure'
       - 'traefik.docker.network=traefik-dozzle'
