@@ -1,0 +1,43 @@
+# Version Control
+.git
+.github
+
+# Dependencies (installed in container)
+node_modules
+
+# Environment files
+.env
+.env.example
+
+# Code quality & testing
+.eslintrc.json
+.eslint.config.js
+.jest.config.js
+.prettierrc
+
+# Documentation
+README.md
+
+# Build & CI/CD
+Dockerfile
+render.yaml
+vercel.json
+
+# Development tools
+*.log
+npm-debug.log*
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp

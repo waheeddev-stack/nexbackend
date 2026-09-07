@@ -63,6 +63,3 @@ Thumbs.db
 .eslintrc.json
 .prettierrc
 eslint.config.js
-
-Dockerfile
-.dockerignore
