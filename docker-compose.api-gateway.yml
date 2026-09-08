@@ -20,6 +20,8 @@ services:
       - '--entrypoints.web.http.redirections.entrypoint.to=websecure'
       - '--entrypoints.web.http.redirections.entrypoint.scheme=https'
       - '--entrypoints.websecure.http.tls=true'
+      - '--entrypoints.web.http.aliasHeadersStrategy=delete'
+      - '--entrypoints.websecure.http.aliasHeadersStrategy=delete'
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock:ro'
       - './certificates/letsencrypt:/letsencrypt'
