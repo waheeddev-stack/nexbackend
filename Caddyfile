@@ -5,6 +5,13 @@
             header_up X-Real-IP {remote}
             header_up X-Forwarded-For {remote}
             header_up X-Forwarded-Proto {scheme}
+            # Enable websockets for socket.io
+            header_up Connection {>Connection}
+            header_up Upgrade {>Upgrade}
         }
+    }
+    # Health endpoint for Traefik / Docker
+    handle /health* {
+        reverse_proxy api-service:8080
     }
 }

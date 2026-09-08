@@ -5,15 +5,32 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    deploy:
-      replicas: 5
+    expose:
+      - "8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+    env_file:
+      - .env
+    restart: unless-stopped
     networks:
       - internal
+    # replicas via compose (swarm uses deploy.replicas, compose uses scale)
+    # Use: docker compose -f docker-compose.server.yml up -d --scale api-service=5
+    deploy:
+      replicas: 5
+      restart_policy:
+        condition: on-failure
 
   caddy:
-    image: caddy:latest
+    image: caddy:2-alpine
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api-service
+    expose:
+      - "80"
+    restart: unless-stopped
     labels:
       - 'traefik.enable=true'
       - 'traefik.http.routers.my-router.rule=Host(`api.zeu.co.in`)'
