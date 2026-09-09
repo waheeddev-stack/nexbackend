@@ -692,9 +692,10 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
 
     const shopkeeper = existingShopkeeper[0];
 
-    // Check if shopkeeper has active orders
+    // Check if shopkeeper has active orders — Pending/Processing/Preparing/Ready are considered active
+    // Schema statuses: Pending, Processing, Delivered, Cancelled, Completed
     const [activeOrders] = await pool.execute(
-      "SELECT COUNT(*) as count FROM orders WHERE shopkeeper_id = ? AND status IN ('Pending', 'Preparing', 'Ready')",
+      "SELECT COUNT(*) as count FROM orders WHERE shopkeeper_id = ? AND status IN ('Pending', 'Processing', 'Preparing', 'Ready')",
       [parseInt(shopkeeperId)]
     );
 
@@ -705,20 +706,32 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
       });
     }
 
-    // Delete shopkeeper (cascade will handle related records based on DB constraints)
+    // Soft-delete shopkeeper to avoid FK cascade data loss (orders/products remain for audit).
+    // Hard DELETE would cascade via ON DELETE CASCADE and permanently erase order history.
     const [result] = await pool.execute(
-      "DELETE FROM shopkeepers WHERE id = ?",
+      "UPDATE shopkeepers SET is_deleted = 1, deleted_at = NOW() WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)",
       [parseInt(shopkeeperId)]
     );
 
     if (result.affectedRows === 0) {
+      // Already soft-deleted or not found — check if already deleted
+      const [checkDeleted] = await pool.execute(
+        "SELECT id, is_deleted FROM shopkeepers WHERE id = ?",
+        [parseInt(shopkeeperId)]
+      );
+      if (checkDeleted.length > 0 && checkDeleted[0].is_deleted == 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Shopkeeper is already deleted",
+        });
+      }
       return res
         .status(404)
         .json({ success: false, message: "Failed to delete shopkeeper" });
     }
 
     console.log(
-      `✅ Deleted shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})`
+      `✅ Soft-deleted shopkeeper ${shopkeeperId} (${shopkeeper.name} - ${shopkeeper.shop_name})`
     );
 
     res.json({
@@ -734,8 +747,8 @@ adminRouter.delete("/shopkeepers/:id", verifyAdminToken, async (req, res) => {
   } catch (err) {
     console.error("Delete shopkeeper error:", err);
 
-    // Handle foreign key constraint errors
-    if (err.code === "ER_ROW_IS_REFERENCED_2") {
+    // Handle foreign key constraint errors (MySQL + Postgres codes)
+    if (err.code === "ER_ROW_IS_REFERENCED_2" || err.code === "23503") {
       return res.status(400).json({
         success: false,
         message:
