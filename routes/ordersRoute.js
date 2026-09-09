@@ -660,10 +660,20 @@ router.get("/repeat-order", verifyToken, async (req, res) => {
     );
     if (orders.length === 0) return res.status(404).json({ success: false, message: "No completed orders found" });
     const lastOrder = orders[0];
-    const [items] = await pool.execute(
-      `SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image, p.category FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?`,
+    const [itemsRaw] = await pool.execute(
+      `SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image, p.category, p.stock, p.available_stock FROM order_items oi LEFT JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?`,
       [lastOrder.id]
     );
+    // Filter out out-of-stock / invisible products so smart reorder doesn't suggest unavailable items
+    const items = itemsRaw.filter((it) => {
+      if (!it.name) return false; // product deleted
+      const stock = Number(it.stock);
+      const avail = String(it.available_stock || 'IN STOCK').toUpperCase();
+      if (avail === 'OUT OF STOCK' || avail === 'INVISIBLE') return false;
+      if (!Number.isNaN(stock) && stock <= 0) return false;
+      return true;
+    });
+    if (items.length === 0) return res.status(404).json({ success: false, message: "No reorderable items found (previous items are out of stock)" });
     return res.status(200).json({ success: true, order: lastOrder, items: items.map((item) => ({ product_id: item.product_id, quantity: item.quantity, price: parseFloat(item.price), name: item.name, image: item.image, category: item.category })) });
   } catch (err) { console.error("Error fetching repeat order:", err); res.status(500).json({ success: false, message: "Error fetching repeat order" }); }
 });
