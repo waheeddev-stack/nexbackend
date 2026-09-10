@@ -344,6 +344,7 @@ router.get("/", verifyToken, async (req, res) => {
         o.credits_earned,
         o.credits_used,
         o.payment_method,
+        o.order_type,
         o.delivery_address,
         o.latitude,
         o.longitude,

@@ -3922,10 +3922,36 @@ shopkeeperRouter.post(
         await conn.commit();
         conn.release();
 
+        // Push realtime event so NexKirana (customer) and Shopkeeper dashboards refresh
+        // Analytics/Dashboard revenue sums only Completed/Delivered, so emitting completed ensures immediate visibility.
+        try {
+          if (req.io) {
+            const payload = {
+              orderId: orderId,
+              order_id: orderId,
+              id: orderId,
+              status: "Completed",
+              payment_method: "manual",
+              order_type: "manual",
+              total_amount: finalAmount,
+              credits_earned: creditsEarned,
+              user_id: parseInt(customer_id),
+              shopkeeper_id: shopkeeper_id,
+            };
+            req.io.to(`shop_${shopkeeper_id}`).to(`shopkeeper_${shopkeeper_id}`).emit("orderCreated", payload);
+            req.io.to(`user_${customer_id}`).to(`customer_${customer_id}`).emit("orderCreated", payload);
+            req.io.to(`shop_${shopkeeper_id}`).emit("orderStatusUpdate", { orderId, status: "Completed" });
+            req.io.to(`user_${customer_id}`).emit("orderStatusUpdate", { orderId, status: "Completed" });
+            req.io.to("admin").emit("orderCreated", payload);
+          }
+        } catch (e) {
+          console.log("Manual order socket emit failed:", e.message);
+        }
+
         return res.status(201).json({
           success: true,
           message: "Order created and completed successfully",
-          order: { id: orderId, credits_earned: creditsEarned },
+          order: { id: orderId, order_id: orderId, credits_earned: creditsEarned },
         });
       } catch (err) {
         await conn.rollback();
