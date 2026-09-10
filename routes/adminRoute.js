@@ -1076,6 +1076,17 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
         whereConditions.push("o.status = 'Cancelled'");
       }
     }
+    // Delivery type filter — manual POS orders are order_type='manual' (visible for revenue sync)
+    const deliveryType = String(req.query.deliveryType || 'all').toLowerCase();
+    if (deliveryType !== 'all') {
+      if (deliveryType === 'manual' || deliveryType === 'in_store' || deliveryType === 'in-store') {
+        whereConditions.push("o.order_type = 'manual'");
+      } else if (deliveryType === 'store_pickup' || deliveryType === 'pickup') {
+        whereConditions.push("o.order_type IN ('store_pickup','pickup')");
+      } else if (deliveryType === 'home_delivery' || deliveryType === 'delivery') {
+        whereConditions.push("o.order_type IN ('home_delivery','delivery')");
+      }
+    }
 
     const whereClause =
       whereConditions.length > 0
@@ -1092,7 +1103,7 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
       FROM orders o
     `);
 
-    // Fetch orders with details
+     // Fetch orders with details — include order_type/payment so manual POS orders are distinguishable
     const [orders] = await pool.execute(
       `SELECT 
          o.id,
@@ -1108,6 +1119,8 @@ adminRouter.get("/orders", verifyAdminToken, async (req, res) => {
          o.credits_earned as creditsEarned,
          o.credits_used as creditsUsed,
          o.payment_method as paymentMethod,
+         o.order_type as orderType,
+         o.order_type as deliveryType,
          o.latitude,
          o.longitude,
          o.delivery_address as deliveryAddress,
