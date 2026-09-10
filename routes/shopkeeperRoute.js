@@ -2118,13 +2118,8 @@ shopkeeperRouter.put(
       }
 
       const [result] = await pool.execute(
-        "UPDATE products SET baselineQty = ?, stock = ? WHERE shop_id = ?",
-        [b, b, shop_id]
-      );
-
-      await pool.execute(
-        `UPDATE products SET available_stock = CASE WHEN stock = 0 THEN 'OUT OF STOCK' ELSE 'IN STOCK' END WHERE shop_id = ? AND available_stock <> 'INVISIBLE'`,
-        [shop_id]
+        "UPDATE products SET baselineQty = ? WHERE shop_id = ?",
+        [b, shop_id]
       );
 
       res.json({
@@ -2300,9 +2295,8 @@ shopkeeperRouter.put(
         values.push(s);
       }
 
-      // ✅ FIX: baselineQty handling. When stock is also provided (restock
-      // flow), apply both independently so the added quantity is not lost.
-      // Only sync stock to baseline when the caller did not send stock.
+      // baselineQty and stock are now fully decoupled: updating one
+      // does NOT affect the other.
       if (baselineQty != null) {
         const b = Number(baselineQty);
         if (Number.isNaN(b) || b < 0)
@@ -2311,11 +2305,6 @@ shopkeeperRouter.put(
             .json({ success: false, message: "Invalid baseline quantity" });
         fields.push("baselineQty = ?");
         values.push(b);
-        if (stock == null) {
-          // Baseline-only update: keep stock in sync with the new baseline
-          fields.push("stock = ?");
-          values.push(b);
-        }
       }
       if (req.body.barcode !== undefined) {
         fields.push("barcode = ?");
@@ -2358,21 +2347,13 @@ shopkeeperRouter.put(
         values
       );
 
-      if (available_stock == null) {
-        let resolvedStock = null;
-        if (stock != null) {
-          resolvedStock = Number(stock);
-        } else if (baselineQty != null) {
-          resolvedStock = Number(baselineQty);
-        }
-
-        if (resolvedStock != null) {
-          const syncStatus = resolvedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
-          await pool.execute(
-            `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
-            [syncStatus, productId]
-          );
-        }
+      if (available_stock == null && stock != null) {
+        const resolvedStock = Number(stock);
+        const syncStatus = resolvedStock === 0 ? "OUT OF STOCK" : "IN STOCK";
+        await pool.execute(
+          `UPDATE products SET available_stock = ? WHERE id = ? AND available_stock <> 'INVISIBLE'`,
+          [syncStatus, productId]
+        );
       }
 
       const [updated] = await pool.execute(
